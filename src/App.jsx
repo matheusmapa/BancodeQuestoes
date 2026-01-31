@@ -6,7 +6,7 @@ import {
   Square, Edit2, Check, Image as ImageIcon, RotateCcw, Home, List, Plus, 
   ChevronDown, ChevronUp, FileText, PlayCircle, Eye, PauseCircle, Save, 
   Database, User, Bell, Shield, Target, TrendingUp, Award, Info, XCircle, 
-  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map 
+  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, UploadCloud, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map 
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
