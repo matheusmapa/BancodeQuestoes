@@ -270,7 +270,7 @@ function LoginPage({ globalError }) {
               <h1 className="text-3xl font-bold tracking-tight">MedMaps</h1>
             </div>
             <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
-            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais barata.</p>
+            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo ao banco de questões mais barato do mercado!.</p>
           </div>
         </div>
         <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
