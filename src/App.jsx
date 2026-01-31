@@ -93,7 +93,6 @@ const calculateDetailedStats = (simulations, allQuestions) => {
 
   simulations.forEach(sim => {
     if (sim.status === 'finished' && sim.answersData) {
-      // Compatibilidade: Se tiver questionsData usa, senão remonta pelos IDs
       const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
       
       questions.forEach((q, idx) => {
@@ -290,7 +289,7 @@ function LoginPage({ globalError }) {
 function NotificationModal({ title, message, onClose, onConfirm, type = 'info', confirmText = "Entendido", cancelText = "Cancelar", isDangerous = false }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
         <div className="flex flex-col items-center text-center">
           <div className={`p-3 rounded-full mb-4 ${type === 'error' || isDangerous ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
              {type === 'error' || isDangerous ? <AlertTriangle size={32} /> : <Info size={32} />}
@@ -317,7 +316,7 @@ function GoalModal({ currentGoal, onSave, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
         <div className="text-center mb-6">
           <div className="bg-blue-100 p-3 rounded-full text-blue-600 inline-flex mb-4">
              <Target size={32} />
@@ -366,7 +365,7 @@ function ChangePasswordModal({ onClose, onSave, isLoading }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
         <div className="flex items-center gap-3 mb-6">
             <div className="bg-orange-100 p-3 rounded-full text-orange-600"><Key size={24} /></div>
             <h3 className="text-xl font-bold text-slate-900">Alterar Senha</h3>
@@ -417,7 +416,7 @@ function CreateStudentModal({ onClose, onSave, isLoading }) {
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
                 <div className="flex items-center gap-3 mb-6">
                     <div className="bg-blue-100 p-3 rounded-full text-blue-600"><UserPlus size={24} /></div>
                     <h3 className="text-xl font-bold text-slate-900">Novo Aluno</h3>
@@ -959,7 +958,7 @@ function Dashboard({ user, onLogout }) {
             </div>
             <section className="animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="flex items-center justify-between mb-6"><h3 className="text-xl font-bold text-slate-800">Grandes Áreas</h3></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{dynamicAreas.map((area) => (<AreaCard key={area.id} area={area} onClick={() => { setSelectedArea(area); setCurrentView('area_hub'); }} />))}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-8">{dynamicAreas.map((area) => (<AreaCard key={area.id} area={area} onClick={() => { setSelectedArea(area); setCurrentView('area_hub'); }} />))}</div>
             </section>
           </>
         );
@@ -1577,7 +1576,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
     }
   
     return (
-      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
+      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
         <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
         <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
         
@@ -1590,7 +1589,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
                 {selectedTopics.length === allTopicIds.length ? (
                     <><Square size={18} /> Desmarcar Tudo</>
                 ) : (
-                    <><CheckSquare size={18} /> Selecionar Tudo (Todas as Áreas)</>
+                    <><CheckSquare size={18} /> Selecionar Tudo</>
                 )}
             </button>
         </div>
@@ -1639,8 +1638,33 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
             );
           })}
         </div>
-        <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
+        
+        {/* CORREÇÃO DE Z-INDEX E POSITIONING PARA NÃO SOBREPOR A LISTA */}
+        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64">
+             <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start">
+                    <div>
+                        <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label>
+                        <div className="flex items-center gap-2">
+                            <input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                            <span className="text-xs text-gray-400">de {maxAvailable}</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}>
+                        <div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                            <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div>
+                        </div>
+                        <div className="text-sm">
+                            <span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span>
+                        </div>
+                    </div>
+                </div>
+                <button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>
+                    Começar Agora <ArrowRight size={20} />
+                </button>
+             </div>
         </div>
+      </div>
     );
 }
 
@@ -1675,7 +1699,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
     };
 
     return (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
             <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
             
@@ -1700,7 +1724,31 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
                </div>
             </div>
             
-            <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
+            {/* CORREÇÃO DE Z-INDEX E POSITIONING PARA NÃO SOBREPOR A LISTA */}
+            <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64">
+                <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start">
+                        <div>
+                            <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label>
+                            <div className="flex items-center gap-2">
+                                <input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                <span className="text-xs text-gray-400">de {maxAvailable}</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}>
+                            <div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                                <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div>
+                            </div>
+                            <div className="text-sm">
+                                <span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>
+                        Começar Agora <ArrowRight size={20} />
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -1904,15 +1952,107 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
     onPause(questions, userAnswers, currentIndex, initialData?.id);
   };
 
+  // --- NOVA BARRA DE NAVEGAÇÃO MOBILE (FIXA) ---
+  const MobileNavBar = () => (
+      <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-3 z-50 flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:hidden">
+          <button 
+              onClick={handlePrevious} 
+              disabled={currentIndex === 0}
+              className="p-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 rounded-xl bg-gray-50 border border-gray-100"
+          >
+              <ArrowLeft size={24} />
+          </button>
+          
+          <div className="flex-1 mx-3">
+            {status === 'unanswered' ? (
+                <button 
+                    onClick={handleConfirmAnswer} 
+                    disabled={!selectedOption} 
+                    className="w-full bg-blue-600 disabled:opacity-50 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 active:scale-95 transition-transform"
+                >
+                    Responder
+                </button>
+            ) : (
+                <button 
+                    onClick={handleRedo} 
+                    className="w-full text-blue-600 border border-blue-200 bg-blue-50 py-3 rounded-xl font-bold flex items-center justify-center gap-2"
+                >
+                    <RotateCcw size={18} /> Refazer
+                </button>
+            )}
+          </div>
+
+          <button 
+              onClick={handleNext} 
+              className="p-3 text-white bg-slate-900 rounded-xl shadow-lg"
+          >
+              <ArrowRight size={24} />
+          </button>
+      </div>
+  );
+
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6"><div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> Salvar e Sair</button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-4 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> Encerrar</button></div><div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div></div>
+    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-32 md:pb-0">
+      <div className="flex items-center justify-between mb-6 sticky top-14 md:top-0 bg-gray-50 z-30 py-4 border-b md:border-none border-gray-200">
+          <div className="flex gap-2">
+              <button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100">
+                  <PauseCircle size={18} className="mr-2" /> <span className="hidden md:inline">Salvar e Sair</span><span className="md:hidden">Sair</span>
+              </button>
+              <button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-3 py-2 rounded-lg">
+                  <XCircle size={18} className="mr-2" /> <span className="hidden md:inline">Encerrar</span>
+              </button>
+          </div>
+          <div className="flex items-center gap-4">
+              <div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div>
+              <div className="w-20 md:w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div>
+              </div>
+          </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200"><div className="flex gap-2 mb-4"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span></div><p className="text-lg text-slate-800 leading-relaxed mb-6">{currentQuestion.text}</p></div>
-          <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
+          <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200">
+              <div className="flex flex-wrap gap-2 mb-4">
+                  <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span>
+                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span>
+                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span>
+              </div>
+              <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6 font-medium">{currentQuestion.text}</p>
+          </div>
           
-          <div className="flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
+          <div className="space-y-3">
+              {currentQuestion.options.map((option) => { 
+                  let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; 
+                  let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; 
+                  if (selectedOption === option.id) { 
+                      itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; 
+                      icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; 
+                  } 
+                  if (status !== 'unanswered') { 
+                      if (option.id === currentQuestion.correctOptionId) { 
+                          itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; 
+                          icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; 
+                      } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { 
+                          itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; 
+                          icon = <XCircle size={20} className="text-red-600 fill-red-100" />; 
+                      } else { 
+                          itemClass = "border-gray-100 opacity-50"; 
+                      } 
+                  } 
+                  return (
+                      <button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 md:p-5 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}>
+                          <div className="mt-0.5 flex-shrink-0">{icon}</div>
+                          <span className={`font-medium text-base ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}>
+                              <span className="uppercase font-bold mr-2">{option.id})</span>{option.text}
+                          </span>
+                      </button>
+                  ); 
+              })}
+          </div>
+          
+          {/* BARRA DE NAVEGAÇÃO DESKTOP (Escondida no Mobile) */}
+          <div className="hidden md:flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
                 <button 
                     onClick={handlePrevious} 
                     disabled={currentIndex === 0}
@@ -1948,9 +2088,23 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
 
         </div>
         <div className="lg:col-span-1 space-y-6">
-           {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
+           {status !== 'unanswered' && (
+               <div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                   <div className="flex items-center gap-3 mb-3">
+                       {status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}
+                       <h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3>
+                   </div>
+                   <p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p>
+                   <div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5">
+                       <span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}
+                   </div>
+               </div>
+           )}
         </div>
       </div>
+      
+      {/* BARRA FIXA MOBILE */}
+      <MobileNavBar />
     </div>
   );
 }
