@@ -229,7 +229,7 @@ export default function App() {
   return <>{currentUser ? <Dashboard user={currentUser} onLogout={() => signOut(auth)} /> : <LoginPage globalError={globalLoginError} />}</>;
 }
 
-// ... [LoginPage, NotificationModal, GoalModal, ChangePasswordModal, CreateStudentModal, AddQuestionView kept same] ...
+// --- TELA DE LOGIN ---
 function LoginPage({ globalError }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -270,7 +270,7 @@ function LoginPage({ globalError }) {
               <h1 className="text-3xl font-bold tracking-tight">MedMaps</h1>
             </div>
             <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
-            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais barata.</p>
+            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo ao banco de questões mais barato do mercado!.</p>
           </div>
         </div>
         <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
@@ -1050,6 +1050,462 @@ function Dashboard({ user, onLogout }) {
   );
 }
 
+// ... SUB-VIEWS ...
+function StudentsView({ onBack }) {
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false); 
+  const [studentToDelete, setStudentToDelete] = useState(null);
+  
+  // Estado para edição de data e role
+  const [editingDateId, setEditingDateId] = useState(null);
+  const [editDate, setEditDate] = useState('');
+  const [editingRoleId, setEditingRoleId] = useState(null);
+
+  const fetchStudents = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "users"));
+      const studentsList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setStudents(studentsList);
+    } catch (error) {
+      console.error("Erro ao buscar alunos:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStudents();
+  }, []);
+
+  const handleCreateStudent = async (studentData) => {
+      if (isCreating) return; 
+      setIsCreating(true);
+
+      const appName = `SecondaryApp-${Date.now()}`;
+      let secondaryApp;
+
+      try {
+          secondaryApp = initializeApp(firebaseConfig, appName);
+          const secondaryAuth = getAuth(secondaryApp);
+
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, studentData.email, studentData.password);
+          const newUser = userCredential.user;
+
+          await updateProfile(newUser, { displayName: studentData.name });
+
+          const createdAt = new Date();
+          const subscriptionUntil = new Date(createdAt);
+          subscriptionUntil.setDate(subscriptionUntil.getDate() + 30);
+          // Ajusta para final do dia no fuso local
+          subscriptionUntil.setHours(23, 59, 59, 999);
+
+          await setDoc(doc(db, "users", newUser.uid), {
+              name: studentData.name,
+              email: studentData.email,
+              role: studentData.role,
+              dailyGoal: 50,
+              createdAt: createdAt.toISOString(),
+              subscriptionUntil: subscriptionUntil.toISOString() 
+          });
+
+          await setDoc(doc(db, "users", newUser.uid, "stats", "main"), {
+              correctAnswers: 0,
+              totalAnswers: 0,
+              questionsToday: 0,
+              streak: 0,
+              lastStudyDate: null
+          });
+
+          alert("Aluno criado com sucesso!"); 
+          setIsCreateModalOpen(false);
+          fetchStudents(); 
+          
+      } catch (error) {
+          console.error("Erro ao criar aluno:", error);
+          if (error.code === 'auth/email-already-in-use') {
+              alert("Erro: Este e-mail já tem um login ativo no Firebase. Como os dados foram excluídos anteriormente, o login ficou 'zumbi'. Use outro e-mail ou exclua o usuário manualmente no painel 'Authentication' do Firebase.");
+          } else {
+              alert("Erro ao criar aluno: " + error.message);
+          }
+      } finally {
+          if (secondaryApp) {
+              try {
+                  await deleteApp(secondaryApp); 
+              } catch (e) {
+                  console.error("Erro ao limpar app secundário", e);
+              }
+          }
+          setIsCreating(false); 
+      }
+  };
+
+  const confirmDeleteStudent = async () => {
+      if (!studentToDelete) return;
+      try {
+          const userId = studentToDelete.id;
+          await deleteDoc(doc(db, "users", userId));
+          
+          // Limpa subcoleções
+          const simsQuery = query(collection(db, `users/${userId}/simulations`));
+          const simsSnapshot = await getDocs(simsQuery);
+          const batch = writeBatch(db);
+          simsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+          const statsDoc = doc(db, `users/${userId}/stats`, 'main');
+          batch.delete(statsDoc);
+          
+          await batch.commit();
+          
+          alert("Dados do aluno excluídos com sucesso. O acesso à plataforma foi revogado.");
+          setStudents(prev => prev.filter(s => s.id !== userId));
+      } catch (error) {
+          console.error("Erro ao excluir:", error);
+          alert("Erro ao excluir dados do aluno.");
+      } finally {
+          setStudentToDelete(null);
+      }
+  };
+
+  // Funções de Edição de Assinatura
+  const startEditingDate = (student) => {
+    setEditingDateId(student.id);
+    setEditingRoleId(null); // Fecha edição de role
+    if(student.subscriptionUntil) {
+        // CORREÇÃO DE VISUALIZAÇÃO: Converte UTC para Data Local para preencher o input type="date"
+        const d = new Date(student.subscriptionUntil);
+        // Ajusta o fuso horário para pegar o ano-mês-dia local correto
+        const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+        setEditDate(localIso);
+    } else {
+        // Se não tiver data, pega hoje local
+        const d = new Date();
+        const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+        setEditDate(localIso);
+    }
+  };
+
+  const handleAdd30Days = () => {
+      // Pega a data que está no input (string YYYY-MM-DD)
+      if (!editDate) return;
+      
+      // Cria data baseada na string (isso cria UTC 00:00, mas ok para somar dias)
+      const parts = editDate.split('-');
+      const baseDate = new Date(parts[0], parts[1]-1, parts[2]); // Construtor local
+      
+      baseDate.setDate(baseDate.getDate() + 30);
+      
+      // Converte de volta para string YYYY-MM-DD para o input
+      const year = baseDate.getFullYear();
+      const month = String(baseDate.getMonth() + 1).padStart(2, '0');
+      const day = String(baseDate.getDate()).padStart(2, '0');
+      setEditDate(`${year}-${month}-${day}`);
+  };
+
+  const handleSaveDate = async (studentId) => {
+      try {
+           if(!editDate) return;
+           
+           // CORREÇÃO DE SALVAMENTO: Cria data local com hora 23:59:59
+           const parts = editDate.split('-');
+           const year = parseInt(parts[0]);
+           const month = parseInt(parts[1]) - 1;
+           const day = parseInt(parts[2]);
+           
+           const newDate = new Date(year, month, day, 23, 59, 59, 999);
+           const newDateIso = newDate.toISOString();
+           
+           await setDoc(doc(db, "users", studentId), { subscriptionUntil: newDateIso }, { merge: true });
+           
+           setStudents(prev => prev.map(s => s.id === studentId ? {...s, subscriptionUntil: newDateIso} : s));
+           setEditingDateId(null);
+      } catch (error) {
+          console.error("Erro ao atualizar data", error);
+          alert("Erro ao atualizar data de vencimento.");
+      }
+  };
+
+  // Funções de Edição de Função (Role)
+  const handleSaveRole = async (studentId, newRole) => {
+      try {
+           await setDoc(doc(db, "users", studentId), { role: newRole }, { merge: true });
+           
+           setStudents(prev => prev.map(s => s.id === studentId ? {...s, role: newRole} : s));
+           setEditingRoleId(null);
+      } catch (error) {
+          console.error("Erro ao atualizar função", error);
+          alert("Erro ao atualizar função.");
+      }
+  };
+
+  const getStatus = (isoString) => {
+      if(!isoString) return 'Encerrada';
+      return new Date(isoString) > new Date() ? 'Ativa' : 'Encerrada';
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-6xl mx-auto">
+      {isCreateModalOpen && <CreateStudentModal onClose={() => setIsCreateModalOpen(false)} onSave={handleCreateStudent} isLoading={isCreating} />}
+      
+      {studentToDelete && (
+          <NotificationModal 
+            title="Excluir Aluno?" 
+            message={`Tem certeza que deseja excluir os dados de ${studentToDelete.name}? Atenção: O login (email/senha) continuará existindo no sistema de autenticação do Firebase, mas o aluno perderá todo o acesso e histórico.`}
+            isDangerous={true}
+            confirmText="Sim, Excluir Dados"
+            cancelText="Cancelar"
+            type="error"
+            onClose={() => setStudentToDelete(null)}
+            onConfirm={confirmDeleteStudent}
+          />
+      )}
+      
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-4">
+            <button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium">
+            <ArrowLeft size={20} className="mr-2" /> Voltar
+            </button>
+            <h1 className="text-2xl font-bold text-slate-900">Gerenciar Alunos</h1>
+        </div>
+        <button onClick={() => setIsCreateModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-200 transition-all">
+            <Plus size={20} /> Adicionar Aluno
+        </button>
+      </div>
+
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-gray-500">Carregando alunos...</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="p-4 font-semibold text-gray-600">Nome</th>
+                  <th className="p-4 font-semibold text-gray-600">Email</th>
+                  <th className="p-4 font-semibold text-gray-600">Função</th>
+                  <th className="p-4 font-semibold text-gray-600">Matrícula</th>
+                  <th className="p-4 font-semibold text-gray-600">Vencimento</th>
+                  <th className="p-4 font-semibold text-gray-600 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {students.map((student) => {
+                  const status = getStatus(student.subscriptionUntil);
+                  const isEditingDate = editingDateId === student.id;
+                  const isEditingRole = editingRoleId === student.id;
+
+                  return (
+                  <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="p-4 font-medium text-slate-900">{student.name || 'Sem nome'}</td>
+                    <td className="p-4 text-gray-600">{student.email}</td>
+                    <td className="p-4">
+                      {isEditingRole ? (
+                          <select 
+                            value={student.role} 
+                            onChange={(e) => handleSaveRole(student.id, e.target.value)}
+                            onBlur={() => setEditingRoleId(null)}
+                            autoFocus
+                            className="bg-white border border-gray-300 rounded px-2 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                              <option value="student">ALUNO</option>
+                              <option value="admin">ADMIN</option>
+                          </select>
+                      ) : (
+                          <span 
+                            onClick={() => { setEditingRoleId(student.id); setEditingDateId(null); }}
+                            className={`px-2 py-1 rounded-full text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity ${student.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}
+                            title="Clique para alterar"
+                          >
+                            {student.role === 'admin' ? 'ADMIN' : 'ALUNO'}
+                          </span>
+                      )}
+                    </td>
+                    <td className="p-4">
+                        {student.role === 'admin' ? (
+                            <span className="text-gray-400 font-bold ml-4">-</span>
+                        ) : (
+                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${status === 'Ativa' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                {status.toUpperCase()}
+                            </span>
+                        )}
+                    </td>
+                    <td className="p-4 text-sm text-gray-600">
+                        {isEditingDate ? (
+                            <div className="flex items-center gap-2">
+                                <input 
+                                    type="date" 
+                                    value={editDate} 
+                                    onChange={(e) => setEditDate(e.target.value)}
+                                    className="border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                />
+                                <button onClick={handleAdd30Days} className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 text-xs font-bold whitespace-nowrap" title="Adicionar 30 dias">+30</button>
+                                <button onClick={() => handleSaveDate(student.id)} className="p-1 bg-emerald-100 text-emerald-600 rounded hover:bg-emerald-200"><Check size={16}/></button>
+                                <button onClick={() => setEditingDateId(null)} className="p-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200"><X size={16}/></button>
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 cursor-pointer group" onClick={() => startEditingDate(student)}>
+                                <span className={!student.subscriptionUntil ? 'text-gray-400 italic' : ''}>
+                                    {student.subscriptionUntil ? new Date(student.subscriptionUntil).toLocaleDateString('pt-BR') : 'Sem data'}
+                                </span>
+                                <Edit2 size={14} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
+                        )}
+                    </td>
+                    <td className="p-4 text-right">
+                        {student.role !== 'admin' && (
+                            <button 
+                                onClick={() => setStudentToDelete(student)}
+                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Excluir Aluno"
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        )}
+                    </td>
+                  </tr>
+                )})}
+              </tbody>
+            </table>
+            {students.length === 0 && (
+              <div className="p-8 text-center text-gray-500">Nenhum aluno encontrado.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
+  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null });
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  
+  const openModal = (type) => setModalConfig({ isOpen: true, type });
+  const handleConfirm = () => {
+    if (modalConfig.type === 'questions') onResetQuestions();
+    else if (modalConfig.type === 'history') onResetHistory();
+  };
+
+  // Estados para edição de perfil
+  const [name, setName] = useState(user.name || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [msg, setMsg] = useState(null); // { type: 'success'|'error', text: '' }
+
+  const handleSaveProfile = async () => {
+    setIsSaving(true);
+    setMsg(null);
+    try {
+        if(auth.currentUser) {
+            // Atualiza Auth Profile
+            await updateProfile(auth.currentUser, { displayName: name });
+            // Atualiza Firestore
+            await setDoc(doc(db, "users", user.uid), { name: name }, { merge: true });
+            setMsg({ type: 'success', text: 'Nome atualizado com sucesso!' });
+            // CORREÇÃO: Não recarrega mais a página
+        }
+    } catch (error) {
+        console.error(error);
+        setMsg({ type: 'error', text: 'Erro ao atualizar perfil.' });
+    } finally {
+        setIsSaving(false);
+    }
+  };
+
+  const handleSavePassword = async (currentPassword, newPassword) => {
+      setIsSaving(true);
+      setMsg(null);
+      try {
+          if (auth.currentUser) {
+              // Re-autenticação "fake" (valida a senha atual antes de trocar)
+              const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
+              await reauthenticateWithCredential(auth.currentUser, credential);
+              
+              // Se passou daqui, a senha atual está certa. Agora troca.
+              await updatePassword(auth.currentUser, newPassword);
+              
+              setMsg({ type: 'success', text: 'Senha alterada com sucesso!' });
+              setIsPasswordModalOpen(false); // Fecha o modal
+          }
+      } catch (error) {
+          console.error(error);
+          if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+               setMsg({ type: 'error', text: 'A senha atual está incorreta.' });
+          } else if (error.code === 'auth/too-many-requests') {
+               setMsg({ type: 'error', text: 'Muitas tentativas. Tente novamente mais tarde.' });
+          } else {
+              setMsg({ type: 'error', text: 'Erro ao alterar senha. Tente novamente.' });
+          }
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10">
+      <div className="flex items-center justify-between mb-8"><h1 className="text-3xl font-bold text-slate-900">Configurações</h1></div>
+      
+      {modalConfig.isOpen && (<NotificationModal title={modalConfig.type === 'questions' ? "Resetar Questões?" : "Apagar Tudo?"} message={modalConfig.type === 'questions' ? "Todas as questões voltarão a ser 'novas'. Seu histórico de acertos será apagado, mas sua sequência de dias (streak) será mantida." : "CUIDADO: Isso apagará TODO o seu histórico, incluindo sua sequência de dias (streak)."} isDangerous={true} confirmText={modalConfig.type === 'questions' ? "Sim, Resetar Questões" : "Sim, Apagar Tudo"} type="error" onClose={() => setModalConfig({ ...modalConfig, isOpen: false })} onConfirm={handleConfirm} />)}
+      
+      {isPasswordModalOpen && (
+          <ChangePasswordModal 
+            onClose={() => setIsPasswordModalOpen(false)} 
+            onSave={handleSavePassword}
+            isLoading={isSaving}
+          />
+      )}
+
+      {msg && (
+          <div className={`mb-6 p-4 rounded-xl border flex items-center gap-3 ${msg.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+              {msg.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+              <span className="font-medium">{msg.text}</span>
+          </div>
+      )}
+
+      <div className="space-y-6">
+        {/* DADOS PESSOAIS */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+            <div className="flex items-center gap-4 mb-6"><div className="bg-blue-100 p-3 rounded-full text-blue-600"><User size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Meu Perfil</h2><p className="text-slate-500 text-sm">Gerencie suas informações pessoais</p></div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div><label className="block text-sm font-semibold text-slate-700 mb-2">Nome Completo</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+                <div><label className="block text-sm font-semibold text-slate-700 mb-2">E-mail</label><input type="email" value={user.email} disabled className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 cursor-not-allowed" /></div>
+            </div>
+            <div className="text-right">
+                <button onClick={handleSaveProfile} disabled={isSaving || name === user.name} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Salvar Alterações</button>
+            </div>
+        </div>
+
+        {/* SEGURANÇA */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+            <div className="flex items-center gap-4 mb-6"><div className="bg-orange-100 p-3 rounded-full text-orange-600"><Key size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Segurança</h2><p className="text-slate-500 text-sm">Gerencie sua senha de acesso</p></div></div>
+            <div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-gray-100">
+                <div className="mb-4 md:mb-0">
+                    <h4 className="font-semibold text-slate-800">Alterar Senha</h4>
+                    <p className="text-xs text-gray-500">Recomendamos usar uma senha forte e única.</p>
+                </div>
+                <button onClick={() => setIsPasswordModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors">
+                    <Key size={18} /> Alterar Senha
+                </button>
+            </div>
+        </div>
+
+        {/* ZONA DE PERIGO */}
+        <div className="bg-red-50 rounded-2xl border border-red-200 p-6 shadow-sm"><div className="flex items-center gap-4 mb-6"><div className="bg-red-100 p-3 rounded-full text-red-600"><AlertTriangle size={24} /></div><div><h2 className="text-xl font-bold text-red-700">Zona de Perigo</h2><p className="text-red-500 text-sm">Ações irreversíveis de gerenciamento de dados</p></div></div><div className="space-y-4">
+            
+            {/* OPÇÃO 1: RESETAR QUESTÕES (Mantém Streak) */}
+            <div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Questões</h4><p className="text-xs text-gray-500">Apaga o histórico de respostas. As questões voltam a ser novas.</p></div><button onClick={() => openModal('questions')} className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 text-red-600 font-bold rounded-lg hover:bg-red-50 transition-colors"><RotateCcw size={18} /> Resetar Questões</button></div>
+            
+            {/* OPÇÃO 2: RESETAR TUDO (Zera Streak) */}
+            <div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Tudo</h4><p className="text-xs text-gray-500">Apaga tudo, inclusive sua sequência (streak).</p></div><button onClick={() => openModal('history')} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors"><Trash2 size={18} /> Resetar Tudo</button></div>
+            
+        </div></div>
+      </div>
+    </div>
+  );
+}
+
 function AreaHubView({ area, stats, worstTopics, onBack, onStartTraining }) {
   if (!area) return null;
   const percentage = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
@@ -1074,6 +1530,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
         setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
     };
     
+    // Obtém todos os IDs de tópicos possíveis para o botão "Selecionar Tudo"
     const allTopicIds = useMemo(() => {
         const ids = [];
         areasBase.forEach(area => {
@@ -1085,9 +1542,9 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
 
     const toggleSelectAll = () => {
         if (selectedTopics.length === allTopicIds.length) {
-            setSelectedTopics([]); 
+            setSelectedTopics([]); // Desmarcar tudo
         } else {
-            setSelectedTopics(allTopicIds); 
+            setSelectedTopics(allTopicIds); // Marcar tudo
         }
     };
 
@@ -1106,6 +1563,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
         return total;
     }, [selectedTopics, allowRepeats, allQuestions, excludedIds]);
 
+    // MODIFICAÇÃO: Define sempre para o máximo possível ao mudar os tópicos
     useEffect(() => {
         setDesiredQuestions(maxAvailable);
     }, [maxAvailable]);
@@ -1119,7 +1577,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
     }
   
     return (
-      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-40 md:pb-24">
+      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
         <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
         <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
         
@@ -1181,52 +1639,8 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
             );
           })}
         </div>
-        
-        {/* FOOTER FIXO MOBILE-FRIENDLY */}
-        <div className="sticky bottom-0 md:bottom-6 z-30 bg-white/95 backdrop-blur-md border-t md:border border-gray-200 p-4 md:rounded-2xl shadow-2xl md:mx-auto max-w-4xl -mx-6 md:mx-0">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                
-                {/* Controles (Linha no Mobile) */}
-                <div className="flex items-center justify-between w-full md:w-auto gap-6">
-                    {/* Quantidade */}
-                    <div>
-                        <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Qtd.</label>
-                        <div className="flex items-center gap-2">
-                            <input 
-                                type="number" 
-                                min="1" 
-                                max={maxAvailable} 
-                                value={desiredQuestions} 
-                                onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} 
-                                className="w-16 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                            />
-                            <span className="text-xs text-gray-400 font-medium">/ {maxAvailable}</span>
-                        </div>
-                    </div>
-
-                    {/* Repetir */}
-                    <div className="flex items-center gap-3 cursor-pointer group p-2 rounded-lg hover:bg-gray-100 transition-colors" onClick={() => setAllowRepeats(!allowRepeats)}>
-                         <div className={`w-10 h-6 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
-                            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-5' : 'left-1'}`}></div>
-                         </div>
-                         <div className="text-sm">
-                            <span className="block font-bold text-slate-700 leading-tight">Repetir</span>
-                            <span className="text-[10px] text-gray-400">Respondidas</span>
-                         </div>
-                    </div>
-                </div>
-
-                {/* Botão de Ação (Full width no Mobile) */}
-                <button 
-                    disabled={selectedTopics.length === 0 || maxAvailable === 0} 
-                    className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" 
-                    onClick={handleStart}
-                >
-                    Começar Agora <ArrowRight size={20} />
-                </button>
-            </div>
+        <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
         </div>
-      </div>
     );
 }
 
@@ -1250,6 +1664,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
         return sum;
     }, [selectedTopics, themes, allowRepeats]);
 
+    // MODIFICAÇÃO: Define sempre para o máximo possível ao mudar os tópicos
     useEffect(() => {
         setDesiredQuestions(maxAvailable);
     }, [maxAvailable]);
@@ -1260,10 +1675,11 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
     };
 
     return (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-40 md:pb-24">
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
             <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
             
+            {/* BOTÃO SELECIONAR TUDO */}
              <div className="mb-6 flex justify-end">
                 <button 
                     onClick={selectAll} 
@@ -1284,48 +1700,327 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
                </div>
             </div>
             
-            {/* FOOTER FIXO MOBILE-FRIENDLY (REUTILIZADO LÓGICA) */}
-            <div className="sticky bottom-0 md:bottom-6 z-30 bg-white/95 backdrop-blur-md border-t md:border border-gray-200 p-4 md:rounded-2xl shadow-2xl md:mx-auto max-w-4xl -mx-6 md:mx-0">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                    
-                    <div className="flex items-center justify-between w-full md:w-auto gap-6">
-                        <div>
-                            <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Qtd.</label>
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    type="number" 
-                                    min="1" 
-                                    max={maxAvailable} 
-                                    value={desiredQuestions} 
-                                    onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} 
-                                    className="w-16 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                                />
-                                <span className="text-xs text-gray-400 font-medium">/ {maxAvailable}</span>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 cursor-pointer group p-2 rounded-lg hover:bg-gray-100 transition-colors" onClick={() => setAllowRepeats(!allowRepeats)}>
-                             <div className={`w-10 h-6 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
-                                <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-5' : 'left-1'}`}></div>
-                             </div>
-                             <div className="text-sm">
-                                <span className="block font-bold text-slate-700 leading-tight">Repetir</span>
-                                <span className="text-[10px] text-gray-400">Respondidas</span>
-                             </div>
-                        </div>
-                    </div>
-
-                    <button 
-                        disabled={selectedTopics.length === 0 || maxAvailable === 0} 
-                        className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" 
-                        onClick={handleStart}
-                    >
-                        Começar Agora <ArrowRight size={20} />
-                    </button>
-                </div>
-            </div>
+            <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
         </div>
     );
 }
 
-// ... [Outras funções auxiliares permanecem iguais] ...
+function ReviewExamView({ simulation, onBack }) {
+  if (!simulation) return <div>Simulado não encontrado.</div>;
+  const questions = simulation.questionsData || [];
+  const userAnswers = simulation.answersData || {};
+  return (
+    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar para Meus Simulados</button><div className="text-right"><span className="text-sm font-bold text-slate-500 bg-gray-100 px-3 py-1 rounded-full">Revisão: {simulation.title}</span></div></div>
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8 flex justify-between items-center"><div><h2 className="text-2xl font-bold text-slate-900">Resumo do Desempenho</h2><p className="text-slate-500">Data: {simulation.date}</p></div><div className="text-right"><div className="text-3xl font-bold text-blue-600">{simulation.correct}/{simulation.total}</div><div className="text-sm font-medium text-gray-400">Acertos</div></div></div>
+      <div className="space-y-6">{questions.map((q, index) => { const userAnswer = userAnswers[index]; const isCorrect = userAnswer === q.correctOptionId; return (<div key={q.id} className={`bg-white rounded-2xl border overflow-hidden ${isCorrect ? 'border-emerald-200' : 'border-red-200'}`}><div className={`p-4 flex items-center justify-between ${isCorrect ? 'bg-emerald-50' : 'bg-red-50'}`}><h3 className={`font-bold flex items-center gap-2 ${isCorrect ? 'text-emerald-800' : 'text-red-800'}`}>{isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />} Questão {index + 1}</h3><span className="text-sm font-medium opacity-70">{q.topic}</span></div><div className="p-6"><p className="text-slate-800 mb-4">{q.text}</p><div className="space-y-2 mb-4">{q.options.map(opt => { let optClass = "p-3 rounded-lg border border-gray-100 text-gray-600"; if (opt.id === q.correctOptionId) optClass = "p-3 rounded-lg border border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"; else if (opt.id === userAnswer && !isCorrect) optClass = "p-3 rounded-lg border border-red-500 bg-red-50 text-red-800 font-bold"; return (<div key={opt.id} className={optClass}><span className="uppercase mr-2">{opt.id})</span> {opt.text}</div>); })}</div><div className="bg-gray-50 p-4 rounded-xl text-sm text-slate-600"><span className="font-bold block mb-1">Comentário:</span>{q.explanation}</div></div></div>); })}</div>
+    </div>
+  );
+}
+
+function MySimulationsView({ simulations, onCreateNew, onResume, onViewResults, onDelete }) {
+  const [activeTab, setActiveTab] = useState('finished');
+  const [simToDelete, setSimToDelete] = useState(null);
+
+  const openSims = simulations.filter(s => s.status === 'open');
+  const finishedSims = simulations.filter(s => s.status === 'finished');
+
+  const confirmDelete = () => {
+      if(simToDelete && onDelete) {
+          onDelete(simToDelete.id);
+          setSimToDelete(null);
+      }
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
+      {simToDelete && (
+          <NotificationModal 
+            title="Excluir Simulado?" 
+            message="Ao excluir, todo o progresso de desempenho deste simulado será perdido e as questões voltarão a contar como 'não feitas' nas estatísticas globais." 
+            type="error"
+            isDangerous={true}
+            confirmText="Sim, Excluir"
+            cancelText="Cancelar"
+            onClose={() => setSimToDelete(null)}
+            onConfirm={confirmDelete}
+          />
+      )}
+
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4"><div><h1 className="text-3xl font-bold text-slate-900 mb-2">Meus Simulados</h1><p className="text-slate-500">Gerencie seus treinos e acompanhe seu histórico.</p></div><button onClick={onCreateNew} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-200 transition-all"><Plus size={20} /> Novo Simulado</button></div>
+      <div className="flex border-b border-gray-200 mb-6"><button onClick={() => setActiveTab('open')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'open' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Em Andamento ({openSims.length}){activeTab === 'open' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button><button onClick={() => setActiveTab('finished')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'finished' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Concluídos ({finishedSims.length}){activeTab === 'finished' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button></div>
+      
+      <div className="space-y-4">
+        {activeTab === 'open' ? (
+            openSims.length > 0 ? (
+                openSims.map(sim => (
+                    <div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center"><Clock size={24} /></div>
+                            <div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div>
+                        </div>
+                        <div className="flex items-center gap-4 md:gap-6">
+                            <div className="text-right hidden md:block"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Progresso</p><p className="font-bold text-slate-700">{sim.progress} / {sim.total}</p></div>
+                            <button onClick={() => onResume(sim.id)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors">Continuar <ArrowRight size={16} /></button>
+                            <button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir"><Trash2 size={20} /></button>
+                        </div>
+                    </div>
+                ))
+            ) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><FileText size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado em aberto</h3></div>
+        ) : (
+            finishedSims.length > 0 ? (
+                finishedSims.map(sim => (
+                    <div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div className="flex items-center gap-4 w-full md:w-auto">
+                            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><CheckCircle size={24} /></div>
+                            <div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div>
+                        </div>
+                        <div className="flex items-center gap-4 md:gap-6 w-full md:w-auto justify-between md:justify-end">
+                            <div className="text-right md:mr-4"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Nota</p><p className="font-bold text-emerald-600">{sim.correct} / {sim.total} ({Math.round((sim.correct/sim.total)*100)}%)</p></div>
+                            <div className="flex gap-2">
+                                <button onClick={() => onViewResults(sim.id)} className="bg-white border border-gray-200 hover:bg-gray-50 text-slate-600 px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors"><Eye size={18} /> Ver Detalhes</button>
+                                <button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-gray-200" title="Excluir"><Trash2 size={20} /></button>
+                            </div>
+                        </div>
+                    </div>
+                ))
+            ) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><CheckCircle size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado concluído</h3></div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
+  if (!results) return null;
+  
+  const totalQuestions = results.total;
+  const answeredCount = results.answered;
+  const correctCount = results.correct;
+  const wrongCount = answeredCount - correctCount;
+  const unansweredCount = totalQuestions - answeredCount;
+
+  // Percentage based on ANSWERED only
+  const percentage = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+
+  let message = "Bom começo!"; let colorClass = "text-blue-600";
+  if (percentage >= 80) { message = "Excelente Desempenho!"; colorClass = "text-emerald-600"; } 
+  else if (percentage < 50 && answeredCount > 0) { message = "Vamos reforçar os estudos?"; colorClass = "text-orange-600"; }
+  else if (answeredCount === 0) { message = "Nenhuma questão respondida."; colorClass = "text-gray-500"; }
+
+  return (
+    <div className="max-w-3xl mx-auto pt-10 animate-in fade-in slide-in-from-bottom-8 duration-500">
+      <div className="bg-white rounded-3xl shadow-xl p-8 md:p-12 text-center border border-gray-100">
+        <div className="inline-flex p-4 rounded-full bg-gray-50 mb-6"><Activity size={48} className={colorClass} /></div>
+        <h2 className="text-3xl font-bold text-slate-900 mb-2">Simulado Finalizado</h2>
+        <p className="text-slate-500 text-lg mb-8">{message}</p>
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
+            <div className="p-4 bg-gray-50 rounded-2xl">
+                <div className="text-sm text-gray-500 mb-1 font-bold">Total</div>
+                <div className="text-2xl font-bold text-slate-800">{totalQuestions}</div>
+            </div>
+            <div className="p-4 bg-emerald-50 rounded-2xl">
+                <div className="text-sm text-emerald-600 mb-1 font-bold">Acertos</div>
+                <div className="text-2xl font-bold text-emerald-700">{correctCount}</div>
+            </div>
+            <div className="p-4 bg-red-50 rounded-2xl">
+                <div className="text-sm text-red-600 mb-1 font-bold">Erros</div>
+                <div className="text-2xl font-bold text-red-700">{wrongCount}</div>
+            </div>
+            <div className="p-4 bg-yellow-50 rounded-2xl">
+                <div className="text-sm text-yellow-600 mb-1 font-bold">Nulas</div>
+                <div className="text-2xl font-bold text-yellow-700">{unansweredCount}</div>
+            </div>
+        </div>
+
+        <div className="w-full bg-gray-100 rounded-full h-4 mb-2 overflow-hidden">
+            <div className={`h-4 rounded-full transition-all duration-1000 ${percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ width: `${percentage}%` }}></div>
+        </div>
+        <p className="text-sm text-gray-400 font-medium mb-10 text-right">Aproveitamento (Respondidas): {percentage}%</p>
+        
+        <div className="flex flex-col md:flex-row gap-4 justify-center">
+            <button onClick={onHome} className="px-8 py-3.5 rounded-xl font-bold text-slate-600 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"><Home size={20} /> Voltar ao Início</button>
+            <button onClick={onReview} className="px-8 py-3.5 rounded-xl font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"><List size={20} /> Revisar Questões</button>
+            <button onClick={onNewExam} className="px-8 py-3.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Play size={20} fill="currentColor" /> Novo Simulado</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
+  const [questions] = useState(() => initialData ? initialData.questionsData : []); 
+  const [userAnswers, setUserAnswers] = useState(() => initialData ? initialData.answersData : {}); 
+  const [currentIndex, setCurrentIndex] = useState(() => initialData ? initialData.currentIndex : 0);
+  
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [status, setStatus] = useState('unanswered'); 
+
+  useEffect(() => {
+    if (userAnswers[currentIndex]) {
+      setSelectedOption(userAnswers[currentIndex]);
+      const isCorrect = userAnswers[currentIndex] === questions[currentIndex].correctOptionId;
+      setStatus(isCorrect ? 'correct' : 'incorrect');
+    } else {
+      setSelectedOption(null);
+      setStatus('unanswered');
+    }
+  }, [currentIndex, userAnswers, questions]);
+
+  const currentQuestion = questions[currentIndex];
+
+  const handleConfirmAnswer = () => {
+    if (!selectedOption) return;
+    const isCorrect = selectedOption === currentQuestion.correctOptionId;
+    setStatus(isCorrect ? 'correct' : 'incorrect');
+    setUserAnswers(prev => ({ ...prev, [currentIndex]: selectedOption }));
+  };
+
+  const handleNext = () => {
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(prev => prev + 1);
+      window.scrollTo(0,0);
+    } else {
+      let correctCount = 0;
+      questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; });
+      onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(prev => prev - 1);
+      window.scrollTo(0,0);
+    }
+  };
+
+  const handleRedo = () => {
+    setSelectedOption(null);
+    setStatus('unanswered');
+  };
+
+  const handleSaveAndExit = () => {
+    onPause(questions, userAnswers, currentIndex, initialData?.id);
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-6"><div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> Salvar e Sair</button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-4 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> Encerrar</button></div><div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200"><div className="flex gap-2 mb-4"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span></div><p className="text-lg text-slate-800 leading-relaxed mb-6">{currentQuestion.text}</p></div>
+          <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
+          
+          <div className="flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
+                <button 
+                    onClick={handlePrevious} 
+                    disabled={currentIndex === 0}
+                    className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"
+                >
+                    <ArrowLeft size={20} /> Anterior
+                </button>
+
+                {status === 'unanswered' ? (
+                    <button 
+                        onClick={handleConfirmAnswer} 
+                        disabled={!selectedOption} 
+                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4"
+                    >
+                        Responder
+                    </button>
+                ) : (
+                    <button 
+                        onClick={handleRedo} 
+                        className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"
+                    >
+                        <RotateCcw size={18} /> Refazer
+                    </button>
+                )}
+
+                <button 
+                    onClick={handleNext} 
+                    className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
+                >
+                    {currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} />
+                </button>
+          </div>
+
+        </div>
+        <div className="lg:col-span-1 space-y-6">
+           {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TopicItem({ theme, isSelected, onToggle, count }) {
+  return (
+    <div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+      <div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div>
+    </div>
+  );
+}
+
+function AreaCard({ area, onClick }) {
+  return (
+    <div onClick={onClick} className={`group bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden hover:border-blue-300`}>
+      <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110`}><area.icon size={100} className={area.color.split(' ')[1]} /></div>
+      <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 ${area.color}`}><area.icon size={28} /></div>
+      <h4 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-blue-700 transition-colors">{area.title}</h4>
+      <p className="text-sm text-slate-500 mb-4">{area.count}</p>
+      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden"><div className={`h-1.5 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.progress}%` }} ></div></div>
+      <p className="text-xs text-slate-400 mt-2 text-right">{area.progress}% Concluído</p>
+    </div>
+  );
+}
+
+function SidebarItem({ icon: Icon, label, active = false, onClick }) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-3 px-4 py-3 w-full text-left rounded-lg transition-all ${active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Icon size={20} className={active ? 'text-blue-700' : 'text-gray-400'} /><span>{label}</span></button>
+  );
+}
+
+function StatCard({ title, value, target, sub, color, bg, icon, onClick, editable }) {
+  return (
+    <div onClick={onClick} className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-all ${onClick ? 'cursor-pointer hover:border-blue-300 group' : ''}`}>
+      <div><p className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-2">{title}{editable && <Edit2 size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />}</p><div className="flex items-baseline gap-2"><h3 className="text-2xl font-bold text-slate-900">{value}</h3>{target && <span className="text-sm text-gray-400 font-medium">{target}</span>}</div>{sub && <p className={`text-xs font-medium mt-1 ${color}`}>{sub}</p>}</div><div className={`p-3 rounded-xl ${bg} ${color}`}>{icon}</div>
+    </div>
+  );
+}
+
+function PerformanceView({ detailedStats, onBack }) {
+    const { totalQuestions, totalCorrect, byArea } = detailedStats;
+    const globalPercentage = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto">
+             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold text-slate-900">Desempenho Detalhado</h1></div>
+             <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 mb-8 text-center">
+                <h2 className="text-lg font-semibold text-slate-600 mb-2">Aproveitamento Geral</h2>
+                <div className="text-5xl font-bold text-blue-600 mb-2">{globalPercentage}%</div>
+                <p className="text-gray-400">{totalCorrect} acertos de {totalQuestions} questões</p>
+             </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {areasBase.map(area => {
+                    const stats = byArea[area.title];
+                    const percentage = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
+                    return (
+                        <div key={area.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={20} /></div>
+                                <h3 className="font-bold text-slate-800">{area.title}</h3>
+                            </div>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-2xl font-bold text-slate-700">{percentage}%</span>
+                                <span className="text-xs text-gray-400">{stats.correct}/{stats.total}</span>
+                            </div>
+                            <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden"><div className={`h-2 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${percentage}%` }} ></div></div>
+                        </div>
+                    )
+                })}
+             </div>
+        </div>
+    )
+}
