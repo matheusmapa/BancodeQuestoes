@@ -6,7 +6,7 @@ import {
   Square, Edit2, Check, Image as ImageIcon, RotateCcw, Home, List, Plus, 
   ChevronDown, ChevronUp, FileText, PlayCircle, Eye, PauseCircle, Save, 
   Database, User, Bell, Shield, Target, TrendingUp, Award, Info, XCircle, 
-  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map 
+  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map, Brain 
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -1005,6 +1005,11 @@ function Dashboard({ user, onLogout }) {
                 active={currentView === 'add_question'} 
                 onClick={() => setCurrentView('add_question')} 
                 />
+                <SidebarItem 
+                icon={Brain} 
+                label="MedImport AI" 
+                onClick={() => window.location.href = '/medimport.html'} 
+                />
             </>
           )}
         </nav>
@@ -1032,6 +1037,7 @@ function Dashboard({ user, onLogout }) {
                         <div className="mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Administração</div>
                         <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} />
                         <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} />
+                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/medimport.html'} />
                     </>
                 )}
 
