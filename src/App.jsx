@@ -86,17 +86,14 @@ const getThemesForArea = (areaId, excludedIds = new Set(), allQuestions) => {
   }));
 };
 
-const calculateDetailedStats = (simulations, allQuestions) => {
+const calculateDetailedStats = (simulations) => {
   const stats = { totalQuestions: 0, totalCorrect: 0, byArea: {} };
   areasBase.forEach(area => { stats.byArea[area.title] = { total: 0, correct: 0 }; });
   stats.byArea['Geral'] = { total: 0, correct: 0 }; 
 
   simulations.forEach(sim => {
-    if (sim.status === 'finished' && sim.answersData) {
-      // Compatibilidade: Se tiver questionsData usa, senão remonta pelos IDs
-      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
-      
-      questions.forEach((q, idx) => {
+    if (sim.status === 'finished' && sim.questionsData && sim.answersData) {
+      sim.questionsData.forEach((q, idx) => {
         const userAnswer = sim.answersData[idx];
         if (userAnswer) {
           const isCorrect = userAnswer === q.correctOptionId;
@@ -113,13 +110,11 @@ const calculateDetailedStats = (simulations, allQuestions) => {
   return stats;
 };
 
-const getCorrectlyAnsweredIds = (simulations, allQuestions) => {
+const getCorrectlyAnsweredIds = (simulations) => {
   const ids = new Set();
   simulations.forEach(sim => {
-    if (sim.status === 'finished' && sim.answersData) {
-      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
-      
-      questions.forEach((q, idx) => {
+    if (sim.status === 'finished' && sim.questionsData && sim.answersData) {
+      sim.questionsData.forEach((q, idx) => {
         if (sim.answersData[idx] === q.correctOptionId) {
           ids.add(q.id);
         }
@@ -129,13 +124,11 @@ const getCorrectlyAnsweredIds = (simulations, allQuestions) => {
   return ids;
 };
 
-const calculateTopicPerformance = (simulations, areaTitle, allQuestions) => {
+const calculateTopicPerformance = (simulations, areaTitle) => {
   const topicStats = {};
   simulations.forEach(sim => {
-    if (sim.status === 'finished' && sim.answersData) {
-      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
-
-      questions.forEach((q, idx) => {
+    if (sim.status === 'finished' && sim.questionsData && sim.answersData) {
+      sim.questionsData.forEach((q, idx) => {
         if (q.area === areaTitle) {
            const topic = q.topic;
            const userAnswer = sim.answersData[idx];
@@ -193,26 +186,35 @@ export default function App() {
             
             if (docSnap.exists()) {
                 const userData = docSnap.data();
+
+                // === VERIFICAÇÃO DE ASSINATURA (NO CÉREBRO DO APP) ===
+                // Se NÃO for admin, verifica a data
                 if (userData.role !== 'admin') {
                     const subDate = userData.subscriptionUntil ? new Date(userData.subscriptionUntil) : null;
                     const now = new Date();
+                    
                     if (!subDate || subDate < now) {
+                        // VENCEU! Bloqueia o acesso.
                         await signOut(auth);
                         setGlobalLoginError("Sua matrícula venceu, contate um administrador para efetivar novamente.");
                         setCurrentUser(null);
                         setIsLoading(false);
-                        return;
+                        return; // Para a execução aqui
                     }
                 }
-                setGlobalLoginError(''); 
+
+                // Se chegou aqui, está liberado (ou é admin ou está em dia)
+                setGlobalLoginError(''); // Limpa erros antigos
                 setCurrentUser({ ...user, ...userData }); 
             } else {
+                // Usuário sem documento no banco (ex: apagado via painel)
                 await signOut(auth);
                 setGlobalLoginError("Conta não encontrada. Contate o suporte.");
                 setCurrentUser(null);
             }
         } catch (error) {
             console.error("Erro ao buscar perfil:", error);
+            // Em caso de erro de rede, podemos deixar passar ou bloquear. Por segurança, bloqueamos se for crítico.
             setGlobalLoginError("Erro ao verificar conta.");
             setCurrentUser(null);
         }
@@ -221,6 +223,7 @@ export default function App() {
       }
       setIsLoading(false);
     });
+    
     return () => unsubscribe();
   }, []);
 
@@ -236,6 +239,7 @@ function LoginPage({ globalError }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Sincroniza erro global vindo do App
   useEffect(() => {
     if (globalError) setError(globalError);
   }, [globalError]);
@@ -246,6 +250,7 @@ function LoginPage({ globalError }) {
     setError('');
     try {
         await signInWithEmailAndPassword(auth, email, password);
+        // O onAuthStateChanged no App vai cuidar de validar a data e redirecionar
     } catch (err) {
         console.error(err);
         if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
@@ -262,16 +267,7 @@ function LoginPage({ globalError }) {
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4 font-sans text-slate-800">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col md:flex-row min-h-[600px]">
         <div className="hidden md:flex md:w-1/2 bg-gradient-to-br from-blue-700 to-blue-900 p-12 flex-col justify-between text-white relative">
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-10">
-              <div className="bg-white/10 p-2 rounded-lg backdrop-blur-md border border-white/20">
-                <Activity size={32} className="text-white" />
-              </div>
-              <h1 className="text-3xl font-bold tracking-tight">MedQuest</h1>
-            </div>
-            <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
-            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais barata.</p>
-          </div>
+          <div className="relative z-10"><div className="flex items-center gap-3 mb-10"><div className="bg-white/10 p-2 rounded-lg backdrop-blur-md border border-white/20"><Activity size={32} className="text-white" /></div><h1 className="text-3xl font-bold tracking-tight">MedQuest</h1></div><h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2><p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais completa.</p></div>
         </div>
         <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
           <div className="mb-10"><h2 className="text-3xl font-bold text-slate-900 mb-3">Login</h2><p className="text-slate-500 text-lg">Insira suas credenciais de acesso.</p></div>
@@ -458,6 +454,7 @@ function CreateStudentModal({ onClose, onSave, isLoading }) {
     )
 }
 
+// --- NOVO COMPONENTE: ADICIONAR QUESTÕES (SOMENTE ADMIN) ---
 function AddQuestionView({ onBack }) {
     const [area, setArea] = useState(areasBase[0].id);
     const [topic, setTopic] = useState('');
@@ -704,8 +701,8 @@ function Dashboard({ user, onLogout }) {
   }, [user]);
 
   // Derived Stats
-  const realStats = useMemo(() => calculateDetailedStats(mySimulations, allQuestions), [mySimulations, allQuestions]);
-  const excludedIds = useMemo(() => getCorrectlyAnsweredIds(mySimulations, allQuestions), [mySimulations, allQuestions]);
+  const realStats = useMemo(() => calculateDetailedStats(mySimulations), [mySimulations]);
+  const excludedIds = useMemo(() => getCorrectlyAnsweredIds(mySimulations), [mySimulations]);
   const accuracy = realStats.totalQuestions > 0 ? Math.round((realStats.totalCorrect / realStats.totalQuestions) * 100) : 0;
   const streak = userStats.streak || 0;
 
@@ -756,58 +753,22 @@ function Dashboard({ user, onLogout }) {
     setCurrentView('question_mode');
   };
 
-  // --- NOVA FUNÇÃO: SALVAR E SAIR (PAUSAR) ---
-  const handleExamPause = async (questions, answers, currentIndex, originId = null) => {
+  const handleExamFinish = async (results, questions, answers, originId = null) => {
     const answeredCount = Object.keys(answers).length;
+    setLastExamResults({ total: questions.length, correct: results.correct, answered: answeredCount });
+
     if(user) {
         const simId = String(originId || Date.now());
         const simData = { 
             id: Number(simId), 
             date: new Date().toLocaleDateString('pt-BR'), 
-            title: selectedArea ? `Simulado ${selectedArea.title}` : 'Simulado Misto',
-            type: selectedArea ? 'Área Específica' : 'Misto', 
-            status: 'open', // Status 'open' para simulados pausados
-            total: questions.length, 
-            correct: 0, // Calculado ao finalizar
-            progress: answeredCount, 
-            areas: selectedArea ? [selectedArea.title] : ['Misto'], 
-            questionIds: questions.map(q => q.id), // SALVA APENAS IDs
-            answersData: answers,
-            lastIndex: currentIndex // Salva onde parou
-        };
-        
-        await setDoc(doc(db, `users/${user.uid}/simulations`, simId), simData);
-        setNotification({ title: "Salvo!", message: "Seu progresso foi salvo. Você pode continuar depois em 'Meus Simulados'.", type: "success" });
-        setCurrentView('home');
-    }
-  };
-
-  const handleExamFinish = async (results, questions, answers, originId = null) => {
-    const answeredCount = Object.keys(answers).length;
-    
-    // GERA O ID PRIMEIRO PARA USAR NO ESTADO E NO BANCO
-    const simId = String(originId || Date.now());
-
-    // CORREÇÃO: Adicionamos o 'id' aqui para o botão de revisar saber qual abrir
-    setLastExamResults({ 
-        id: Number(simId), 
-        total: questions.length, 
-        correct: results.correct, 
-        answered: answeredCount 
-    });
-
-    if(user) {
-        const simData = { 
-            id: Number(simId), 
-            date: new Date().toLocaleDateString('pt-BR'), 
-            title: selectedArea ? `Simulado ${selectedArea.title}` : 'Simulado Misto',
             type: selectedArea ? 'Área Específica' : 'Misto', 
             status: 'finished', 
             total: questions.length, 
             correct: results.correct, 
             progress: answeredCount, 
             areas: selectedArea ? [selectedArea.title] : ['Misto'], 
-            questionIds: questions.map(q => q.id), // SALVA APENAS IDs
+            questionsData: questions, 
             answersData: answers 
         };
         
@@ -852,43 +813,6 @@ function Dashboard({ user, onLogout }) {
     setCurrentView('simulation_summary');
   };
 
-  const handleDeleteSimulation = async (simId) => {
-    if (!user) return;
-    try {
-        await deleteDoc(doc(db, `users/${user.uid}/simulations`, String(simId)));
-        setNotification({ title: "Excluído", message: "Simulado excluído com sucesso.", type: "success" });
-    } catch (error) {
-        console.error("Erro ao excluir simulado:", error);
-        setNotification({ title: "Erro", message: "Não foi possível excluir o simulado.", type: "error" });
-    }
-  };
-
-  const handleResumeExam = (simId) => {
-    const sim = mySimulations.find(s => s.id === simId);
-    if (!sim) return;
-
-    // REIDRATAÇÃO: Transforma IDs salvos em Objetos de Questão completos
-    let questions = [];
-    if (sim.questionsData) {
-        questions = sim.questionsData; // Suporte legado
-    } else if (sim.questionIds) {
-        questions = sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean);
-    }
-
-    if (questions.length === 0) {
-        setNotification({ title: "Erro", message: "Não foi possível carregar as questões deste simulado. Elas podem ter sido excluídas do banco.", type: "error" });
-        return;
-    }
-
-    setActiveExamData({
-        questionsData: questions,
-        answersData: sim.answersData || {},
-        currentIndex: sim.lastIndex || 0,
-        id: sim.id
-    });
-    setCurrentView('question_mode');
-  };
-
   // NOVA LÓGICA: Resetar apenas o histórico de questões (mantendo streak e meta diária)
   const handleResetQuestions = async () => {
      if(!user) return;
@@ -929,21 +853,6 @@ function Dashboard({ user, onLogout }) {
     });
   };
 
-  // PREPARA DADOS PARA REVISÃO (COM REIDRATAÇÃO)
-  const getSimulationForReview = () => {
-      const sim = mySimulations.find(s => s.id === selectedSimulationId);
-      if(!sim) return null;
-      
-      // Reidrata se necessário
-      if(!sim.questionsData && sim.questionIds) {
-          return {
-              ...sim,
-              questionsData: sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean)
-          };
-      }
-      return sim;
-  };
-
   const renderContent = () => {
     switch (currentView) {
       case 'home':
@@ -954,7 +863,7 @@ function Dashboard({ user, onLogout }) {
             </header>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10 animate-in fade-in slide-in-from-bottom-6 duration-700">
               <StatCard title="Questões Hoje" value={userStats.questionsToday || 0} target={`/ ${dailyGoal}`} color="text-blue-600" bg="bg-blue-50" icon={<CheckCircle size={24} />} onClick={() => setIsGoalModalOpen(true)} editable={true} />
-              <StatCard title="Taxa de Acerto" value={`${accuracy}%`} sub={realStats.totalQuestions > 0 ? `${realStats.totalCorrect}/${realStats.totalQuestions} Acertos` : "Sem dados"} color="text-emerald-600" bg="bg-emerald-50" icon={<BarChart2 size={24} />} />
+              <StatCard title="Taxa de Acerto" value={`${accuracy}%`} sub={(userStats.totalAnswers || 0) > 0 ? `${userStats.correctAnswers}/${userStats.totalAnswers} Acertos` : "Sem dados"} color="text-emerald-600" bg="bg-emerald-50" icon={<BarChart2 size={24} />} />
               <StatCard title="Sequência" value={`${streak} Dia${streak !== 1 ? 's' : ''}`} sub="Continue assim!" color="text-orange-600" bg="bg-orange-50" icon={<Activity size={24} />} />
             </div>
             <section className="animate-in fade-in slide-in-from-bottom-8 duration-700">
@@ -964,12 +873,12 @@ function Dashboard({ user, onLogout }) {
           </>
         );
 
-      case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => setCurrentView('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); setCurrentView('review_mode'); }} onDelete={handleDeleteSimulation} />;
-      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => setCurrentView('my_simulations')} />;
+      case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => setCurrentView('general_exam_setup')} onResume={(id) => { /* Resume logic */ }} onViewResults={(id) => { setSelectedSimulationId(id); setCurrentView('review_mode'); }} />;
+      case 'review_mode': return <ReviewExamView simulation={mySimulations.find(s => s.id === selectedSimulationId)} onBack={() => setCurrentView('my_simulations')} />;
       case 'general_exam_setup': return <GeneralExamSetupView onBack={() => setCurrentView('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
-      case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => setCurrentView('home')} onStartTraining={() => setCurrentView('topic_selection')} />;
+      case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title)} onBack={() => setCurrentView('home')} onStartTraining={() => setCurrentView('topic_selection')} />;
       case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => setCurrentView('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
-      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} onExit={() => setCurrentView('home')} onFinish={handleExamFinish} onPause={handleExamPause} />;
+      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} onExit={() => setCurrentView('home')} onFinish={handleExamFinish} onPause={() => {}} />;
       case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => setCurrentView('home')} onNewExam={() => setCurrentView('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); setCurrentView('review_mode'); }} />;
       case 'settings': return <SettingsView user={user} onBack={() => setCurrentView('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} />;
       case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => setCurrentView('home')} />;
@@ -1011,40 +920,7 @@ function Dashboard({ user, onLogout }) {
         </nav>
         <div className="p-4 border-t border-gray-100"><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => setCurrentView('settings')} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors mt-2"><LogOut size={20} /> <span className="font-medium">Sair</span></button></div>
       </aside>
-      
-      {/* MOBILE HEADER */}
-      <div className="md:hidden fixed top-0 w-full bg-white z-50 border-b border-gray-200 p-4 flex justify-between items-center shadow-sm">
-          <h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Activity className="w-6 h-6" />MedQuest</h1>
-          <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 hover:bg-gray-100 rounded-lg">
-              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-      </div>
-
-      {/* MOBILE MENU DRAWER (ADICIONADO) */}
-      {isMobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-white pt-24 px-6 overflow-y-auto animate-in slide-in-from-top-10 duration-200">
-            <nav className="flex flex-col space-y-2">
-                <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => { setCurrentView('home'); setIsMobileMenuOpen(false); }} />
-                <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => { setCurrentView('my_simulations'); setIsMobileMenuOpen(false); }} />
-                <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { setCurrentView('performance'); setIsMobileMenuOpen(false); }} />
-                
-                {user.role === 'admin' && (
-                    <>
-                        <div className="mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Administração</div>
-                        <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} />
-                        <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} />
-                    </>
-                )}
-
-                <div className="h-px bg-gray-100 my-4"></div>
-                <SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }} />
-                <button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors">
-                    <LogOut size={20} /> <span className="font-medium">Sair</span>
-                </button>
-            </nav>
-        </div>
-      )}
-
+      <div className="md:hidden fixed top-0 w-full bg-white z-50 border-b border-gray-200 p-4 flex justify-between items-center shadow-sm"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Activity className="w-6 h-6" />MedQuest</h1><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 hover:bg-gray-100 rounded-lg">{isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}</button></div>
       <main className="flex-1 md:ml-64 p-6 pt-24 md:pt-6">{renderContent()}</main>
     </div>
   );
@@ -1530,30 +1406,14 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
         setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
     };
     
-    // Obtém todos os IDs de tópicos possíveis para o botão "Selecionar Tudo"
-    const allTopicIds = useMemo(() => {
-        const ids = [];
-        areasBase.forEach(area => {
-            const list = themesMap[area.id] || [];
-            list.forEach(theme => ids.push(`${area.id}-${theme}`));
-        });
-        return ids;
-    }, []);
-
-    const toggleSelectAll = () => {
-        if (selectedTopics.length === allTopicIds.length) {
-            setSelectedTopics([]); // Desmarcar tudo
-        } else {
-            setSelectedTopics(allTopicIds); // Marcar tudo
-        }
-    };
-
     const maxAvailable = useMemo(() => {
         let total = 0;
         selectedTopics.forEach(item => {
+            // CORREÇÃO: Usar o primeiro traço para separar AreaID do Tópico
+            // Isso resolve o bug de tópicos com hífen no nome (ex: "Pré e Pós-Operatório")
             const parts = item.split('-');
             const areaId = parts[0];
-            const topicName = parts.slice(1).join('-'); 
+            const topicName = parts.slice(1).join('-'); // Junta o resto se houver mais hifens
 
             const areaTitle = areaNameMap[areaId];
             const totalInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName).length;
@@ -1563,13 +1423,14 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
         return total;
     }, [selectedTopics, allowRepeats, allQuestions, excludedIds]);
 
-    // MODIFICAÇÃO: Define sempre para o máximo possível ao mudar os tópicos
     useEffect(() => {
-        setDesiredQuestions(maxAvailable);
+        if(desiredQuestions > maxAvailable) setDesiredQuestions(maxAvailable);
+        if(desiredQuestions === 0 && maxAvailable > 0) setDesiredQuestions(1);
     }, [maxAvailable]);
 
     const handleStart = () => {
         const topicsList = selectedTopics.map(t => {
+            // CORREÇÃO TAMBÉM AQUI: Garantir que o nome do tópico vá completo
             const parts = t.split('-');
             return parts.slice(1).join('-'); 
         });
@@ -1580,60 +1441,14 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
       <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
         <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
         <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
-        
-        {/* BOTÃO SELECIONAR TUDO */}
-        <div className="mb-6 flex justify-end">
-            <button 
-                onClick={toggleSelectAll} 
-                className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-            >
-                {selectedTopics.length === allTopicIds.length ? (
-                    <><Square size={18} /> Desmarcar Tudo</>
-                ) : (
-                    <><CheckSquare size={18} /> Selecionar Tudo (Todas as Áreas)</>
-                )}
-            </button>
-        </div>
-
         <div className="space-y-4 mb-10">
           {areasBase.map(area => {
-            const themes = getThemesForArea(area.id, excludedIds, allQuestions); 
+            const themes = getThemesForArea(area.id, excludedIds, allQuestions); // Passa allQuestions
             const isExpanded = expandedArea === area.id;
             const selectedCount = themes.filter(t => selectedTopics.includes(`${area.id}-${t.name}`)).length;
-            
-            const areaTopicIds = themes.map(t => `${area.id}-${t.name}`);
-            const isAreaFullySelected = areaTopicIds.length > 0 && areaTopicIds.every(id => selectedTopics.includes(id));
-
-            const handleAreaToggle = (e) => {
-                e.stopPropagation(); 
-                if (isAreaFullySelected) {
-                    setSelectedTopics(prev => prev.filter(id => !areaTopicIds.includes(id)));
-                } else {
-                    setSelectedTopics(prev => {
-                        const newSet = new Set([...prev, ...areaTopicIds]);
-                        return Array.from(newSet);
-                    });
-                }
-            };
-
             return (
               <div key={area.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-                <div onClick={() => toggleArea(area.id)} className={`p-5 cursor-pointer flex items-center justify-between hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-100' : ''}`}>
-                    <div className="flex items-center gap-4">
-                        <div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={24} /></div>
-                        <div><h3 className="font-bold text-slate-900">{area.title}</h3><p className="text-xs text-gray-500">{selectedCount} temas selecionados</p></div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                        <button 
-                            onClick={handleAreaToggle}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors z-10 ${isAreaFullySelected ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                        >
-                            {isAreaFullySelected ? 'Todos' : 'Selecionar'}
-                        </button>
-                        {isExpanded ? <ChevronUp className="text-gray-400" /> : <ChevronDown className="text-gray-400" />}
-                    </div>
-                </div>
+                <div onClick={() => toggleArea(area.id)} className={`p-5 cursor-pointer flex items-center justify-between hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-100' : ''}`}><div className="flex items-center gap-4"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={24} /></div><div><h3 className="font-bold text-slate-900">{area.title}</h3><p className="text-xs text-gray-500">{selectedCount} temas selecionados</p></div></div>{isExpanded ? <ChevronUp className="text-gray-400" /> : <ChevronDown className="text-gray-400" />}</div>
                 {isExpanded && (<div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-2 bg-white animate-in slide-in-from-top-2">{themes.map((theme, i) => { const uniqueId = `${area.id}-${theme.name}`; const isSelected = selectedTopics.includes(uniqueId); const count = allowRepeats ? theme.total : theme.count; return (<div key={i} onClick={() => toggleTopic(area.id, theme.name)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${isSelected ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'}`}><div className={isSelected ? 'text-blue-600' : 'text-gray-300'}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div><div className="flex flex-col"><span className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-slate-600'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} disponíveis</span></div></div>); })}</div>)}
               </div>
             );
@@ -1664,9 +1479,9 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
         return sum;
     }, [selectedTopics, themes, allowRepeats]);
 
-    // MODIFICAÇÃO: Define sempre para o máximo possível ao mudar os tópicos
     useEffect(() => {
-        setDesiredQuestions(maxAvailable);
+        if(desiredQuestions > maxAvailable) setDesiredQuestions(maxAvailable);
+        if(desiredQuestions === 0 && maxAvailable > 0) setDesiredQuestions(1);
     }, [maxAvailable]);
 
     const handleStart = () => {
@@ -1678,28 +1493,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
             <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
-            
-            {/* BOTÃO SELECIONAR TUDO */}
-             <div className="mb-6 flex justify-end">
-                <button 
-                    onClick={selectAll} 
-                    className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-                >
-                    {selectedTopics.length === themes.length ? (
-                        <><Square size={18} /> Desmarcar Todos</>
-                    ) : (
-                        <><CheckSquare size={18} /> Selecionar Todos</>
-                    )}
-                </button>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8">
-               <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
-                   <div className="divide-y divide-gray-100">{themes.slice(0, Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div>
-                   <div className="divide-y divide-gray-100">{themes.slice(Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div>
-               </div>
-            </div>
-            
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8"><div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center"><button onClick={selectAll} className="text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors">{selectedTopics.length === themes.length ? 'Desmarcar Todos' : 'Selecionar Todos'}</button><span className="text-sm text-gray-500 font-medium">{selectedTopics.length} temas selecionados</span></div><div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100"><div className="divide-y divide-gray-100">{themes.slice(0, Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div><div className="divide-y divide-gray-100">{themes.slice(Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div></div></div>
             <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
         </div>
     );
@@ -1718,132 +1512,34 @@ function ReviewExamView({ simulation, onBack }) {
   );
 }
 
-function MySimulationsView({ simulations, onCreateNew, onResume, onViewResults, onDelete }) {
+function MySimulationsView({ simulations, onCreateNew, onResume, onViewResults }) {
   const [activeTab, setActiveTab] = useState('finished');
-  const [simToDelete, setSimToDelete] = useState(null);
-
   const openSims = simulations.filter(s => s.status === 'open');
   const finishedSims = simulations.filter(s => s.status === 'finished');
-
-  const confirmDelete = () => {
-      if(simToDelete && onDelete) {
-          onDelete(simToDelete.id);
-          setSimToDelete(null);
-      }
-  };
-
   return (
     <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
-      {simToDelete && (
-          <NotificationModal 
-            title="Excluir Simulado?" 
-            message="Ao excluir, todo o progresso de desempenho deste simulado será perdido e as questões voltarão a contar como 'não feitas' nas estatísticas globais." 
-            type="error"
-            isDangerous={true}
-            confirmText="Sim, Excluir"
-            cancelText="Cancelar"
-            onClose={() => setSimToDelete(null)}
-            onConfirm={confirmDelete}
-          />
-      )}
-
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4"><div><h1 className="text-3xl font-bold text-slate-900 mb-2">Meus Simulados</h1><p className="text-slate-500">Gerencie seus treinos e acompanhe seu histórico.</p></div><button onClick={onCreateNew} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-200 transition-all"><Plus size={20} /> Novo Simulado</button></div>
       <div className="flex border-b border-gray-200 mb-6"><button onClick={() => setActiveTab('open')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'open' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Em Andamento ({openSims.length}){activeTab === 'open' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button><button onClick={() => setActiveTab('finished')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'finished' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Concluídos ({finishedSims.length}){activeTab === 'finished' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button></div>
-      
-      <div className="space-y-4">
-        {activeTab === 'open' ? (
-            openSims.length > 0 ? (
-                openSims.map(sim => (
-                    <div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center"><Clock size={24} /></div>
-                            <div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div>
-                        </div>
-                        <div className="flex items-center gap-4 md:gap-6">
-                            <div className="text-right hidden md:block"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Progresso</p><p className="font-bold text-slate-700">{sim.progress} / {sim.total}</p></div>
-                            <button onClick={() => onResume(sim.id)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors">Continuar <ArrowRight size={16} /></button>
-                            <button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir"><Trash2 size={20} /></button>
-                        </div>
-                    </div>
-                ))
-            ) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><FileText size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado em aberto</h3></div>
-        ) : (
-            finishedSims.length > 0 ? (
-                finishedSims.map(sim => (
-                    <div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-                        <div className="flex items-center gap-4 w-full md:w-auto">
-                            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><CheckCircle size={24} /></div>
-                            <div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div>
-                        </div>
-                        <div className="flex items-center gap-4 md:gap-6 w-full md:w-auto justify-between md:justify-end">
-                            <div className="text-right md:mr-4"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Nota</p><p className="font-bold text-emerald-600">{sim.correct} / {sim.total} ({Math.round((sim.correct/sim.total)*100)}%)</p></div>
-                            <div className="flex gap-2">
-                                <button onClick={() => onViewResults(sim.id)} className="bg-white border border-gray-200 hover:bg-gray-50 text-slate-600 px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors"><Eye size={18} /> Ver Detalhes</button>
-                                <button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-gray-200" title="Excluir"><Trash2 size={20} /></button>
-                            </div>
-                        </div>
-                    </div>
-                ))
-            ) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><CheckCircle size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado concluído</h3></div>
-        )}
-      </div>
+      <div className="space-y-4">{activeTab === 'open' ? (openSims.length > 0 ? (openSims.map(sim => (<div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between gap-4"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center"><Clock size={24} /></div><div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div></div><div className="flex items-center gap-6"><div className="text-right"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Progresso</p><p className="font-bold text-slate-700">{sim.progress} / {sim.total}</p></div><button onClick={() => onResume(sim.id)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors">Continuar <ArrowRight size={16} /></button></div></div>))) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><FileText size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado em aberto</h3></div>) : (finishedSims.length > 0 ? (finishedSims.map(sim => (<div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-4 w-full md:w-auto"><div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><CheckCircle size={24} /></div><div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div></div><div className="flex items-center gap-6 w-full md:w-auto justify-between"><div className="text-right"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Nota</p><p className="font-bold text-emerald-600">{sim.correct} / {sim.total} ({Math.round((sim.correct/sim.total)*100)}%)</p></div><button onClick={() => onViewResults(sim.id)} className="bg-white border border-gray-200 hover:bg-gray-50 text-slate-600 px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors"><Eye size={18} /> Ver Detalhes</button></div></div>))) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200"><CheckCircle size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-lg font-bold text-gray-600">Nenhum simulado concluído</h3></div>)}</div>
     </div>
   );
 }
 
 function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
   if (!results) return null;
-  
-  const totalQuestions = results.total;
-  const answeredCount = results.answered;
-  const correctCount = results.correct;
-  const wrongCount = answeredCount - correctCount;
-  const unansweredCount = totalQuestions - answeredCount;
-
-  // Percentage based on ANSWERED only
-  const percentage = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
-
+  const percentage = Math.round((results.correct / results.total) * 100);
   let message = "Bom começo!"; let colorClass = "text-blue-600";
   if (percentage >= 80) { message = "Excelente Desempenho!"; colorClass = "text-emerald-600"; } 
-  else if (percentage < 50 && answeredCount > 0) { message = "Vamos reforçar os estudos?"; colorClass = "text-orange-600"; }
-  else if (answeredCount === 0) { message = "Nenhuma questão respondida."; colorClass = "text-gray-500"; }
-
+  else if (percentage < 50) { message = "Vamos reforçar os estudos?"; colorClass = "text-orange-600"; }
   return (
     <div className="max-w-3xl mx-auto pt-10 animate-in fade-in slide-in-from-bottom-8 duration-500">
       <div className="bg-white rounded-3xl shadow-xl p-8 md:p-12 text-center border border-gray-100">
         <div className="inline-flex p-4 rounded-full bg-gray-50 mb-6"><Activity size={48} className={colorClass} /></div>
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Simulado Finalizado</h2>
         <p className="text-slate-500 text-lg mb-8">{message}</p>
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-            <div className="p-4 bg-gray-50 rounded-2xl">
-                <div className="text-sm text-gray-500 mb-1 font-bold">Total</div>
-                <div className="text-2xl font-bold text-slate-800">{totalQuestions}</div>
-            </div>
-            <div className="p-4 bg-emerald-50 rounded-2xl">
-                <div className="text-sm text-emerald-600 mb-1 font-bold">Acertos</div>
-                <div className="text-2xl font-bold text-emerald-700">{correctCount}</div>
-            </div>
-            <div className="p-4 bg-red-50 rounded-2xl">
-                <div className="text-sm text-red-600 mb-1 font-bold">Erros</div>
-                <div className="text-2xl font-bold text-red-700">{wrongCount}</div>
-            </div>
-            <div className="p-4 bg-yellow-50 rounded-2xl">
-                <div className="text-sm text-yellow-600 mb-1 font-bold">Nulas</div>
-                <div className="text-2xl font-bold text-yellow-700">{unansweredCount}</div>
-            </div>
-        </div>
-
-        <div className="w-full bg-gray-100 rounded-full h-4 mb-2 overflow-hidden">
-            <div className={`h-4 rounded-full transition-all duration-1000 ${percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ width: `${percentage}%` }}></div>
-        </div>
-        <p className="text-sm text-gray-400 font-medium mb-10 text-right">Aproveitamento (Respondidas): {percentage}%</p>
-        
-        <div className="flex flex-col md:flex-row gap-4 justify-center">
-            <button onClick={onHome} className="px-8 py-3.5 rounded-xl font-bold text-slate-600 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"><Home size={20} /> Voltar ao Início</button>
-            <button onClick={onReview} className="px-8 py-3.5 rounded-xl font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"><List size={20} /> Revisar Questões</button>
-            <button onClick={onNewExam} className="px-8 py-3.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Play size={20} fill="currentColor" /> Novo Simulado</button>
-        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-6 mb-12"><div className="p-4 bg-gray-50 rounded-2xl"><div className="text-sm text-gray-500 mb-1">Questões</div><div className="text-2xl font-bold text-slate-800">{results.total}</div></div><div className="p-4 bg-emerald-50 rounded-2xl"><div className="text-sm text-emerald-600 mb-1">Acertos</div><div className="text-2xl font-bold text-emerald-700">{results.correct}</div></div><div className="p-4 bg-red-50 rounded-2xl col-span-2 md:col-span-1"><div className="text-sm text-red-600 mb-1">Erros</div><div className="text-2xl font-bold text-red-700">{results.total - results.correct}</div></div></div>
+        <div className="w-full bg-gray-100 rounded-full h-4 mb-2 overflow-hidden"><div className={`h-4 rounded-full transition-all duration-1000 ${percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ width: `${percentage}%` }}></div></div><p className="text-sm text-gray-400 font-medium mb-10 text-right">Aproveitamento: {percentage}%</p>
+        <div className="flex flex-col md:flex-row gap-4 justify-center"><button onClick={onHome} className="px-8 py-3.5 rounded-xl font-bold text-slate-600 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"><Home size={20} /> Voltar ao Início</button><button onClick={onReview} className="px-8 py-3.5 rounded-xl font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"><List size={20} /> Revisar Questões</button><button onClick={onNewExam} className="px-8 py-3.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Play size={20} fill="currentColor" /> Novo Simulado</button></div>
       </div>
     </div>
   );
@@ -1888,13 +1584,6 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
     }
   };
 
-  const handlePrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(prev => prev - 1);
-      window.scrollTo(0,0);
-    }
-  };
-
   const handleRedo = () => {
     setSelectedOption(null);
     setStatus('unanswered');
@@ -1911,41 +1600,7 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200"><div className="flex gap-2 mb-4"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span></div><p className="text-lg text-slate-800 leading-relaxed mb-6">{currentQuestion.text}</p></div>
           <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
-          
-          <div className="flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
-                <button 
-                    onClick={handlePrevious} 
-                    disabled={currentIndex === 0}
-                    className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"
-                >
-                    <ArrowLeft size={20} /> Anterior
-                </button>
-
-                {status === 'unanswered' ? (
-                    <button 
-                        onClick={handleConfirmAnswer} 
-                        disabled={!selectedOption} 
-                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4"
-                    >
-                        Responder
-                    </button>
-                ) : (
-                    <button 
-                        onClick={handleRedo} 
-                        className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"
-                    >
-                        <RotateCcw size={18} /> Refazer
-                    </button>
-                )}
-
-                <button 
-                    onClick={handleNext} 
-                    className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
-                >
-                    {currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} />
-                </button>
-          </div>
-
+          <div className="flex justify-between items-center pt-4">{status !== 'unanswered' ? (<button onClick={handleRedo} className="text-gray-500 hover:text-blue-600 font-medium flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors"><RotateCcw size={18} /> Refazer Questão</button>) : <div></div>}{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95">Responder</button>) : (<button onClick={handleNext} className="bg-slate-800 hover:bg-slate-900 text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-all flex items-center gap-2">{currentIndex < questions.length - 1 ? 'Próxima Questão' : 'Ver Resultado'} <ArrowRight size={20} /></button>)}</div>
         </div>
         <div className="lg:col-span-1 space-y-6">
            {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
