@@ -177,41 +177,6 @@ const checkIsYesterday = (lastDateStr) => {
            lastDate.getFullYear() === yesterday.getFullYear();
 };
 
-// --- COMPONENTES AUXILIARES UI ---
-function SidebarItem({ icon: Icon, label, active = false, onClick }) {
-  return (
-    <button onClick={onClick} className={`flex items-center gap-3 px-4 py-3 w-full text-left rounded-lg transition-all ${active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Icon size={20} className={active ? 'text-blue-700' : 'text-gray-400'} /><span>{label}</span></button>
-  );
-}
-
-function StatCard({ title, value, target, sub, color, bg, icon, onClick, editable }) {
-  return (
-    <div onClick={onClick} className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-all ${onClick ? 'cursor-pointer hover:border-blue-300 group' : ''}`}>
-      <div><p className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-2">{title}{editable && <Edit2 size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />}</p><div className="flex items-baseline gap-2"><h3 className="text-2xl font-bold text-slate-900">{value}</h3>{target && <span className="text-sm text-gray-400 font-medium">{target}</span>}</div>{sub && <p className={`text-xs font-medium mt-1 ${color}`}>{sub}</p>}</div><div className={`p-3 rounded-xl ${bg} ${color}`}>{icon}</div>
-    </div>
-  );
-}
-
-function AreaCard({ area, onClick }) {
-  return (
-    <div onClick={onClick} className={`group bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden hover:border-blue-300`}>
-      <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110`}><area.icon size={100} className={area.color.split(' ')[1]} /></div>
-      <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 ${area.color}`}><area.icon size={28} /></div>
-      <h4 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-blue-700 transition-colors">{area.title}</h4>
-      <p className="text-sm text-slate-500 mb-4">{area.count}</p>
-      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden"><div className={`h-1.5 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.progress}%` }} ></div></div>
-      <p className="text-xs text-slate-400 mt-2 text-right">{area.progress}% Concluído</p>
-    </div>
-  );
-}
-
-function TopicItem({ theme, isSelected, onToggle, count }) {
-  return (
-    <div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
-      <div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div>
-    </div>
-  );
-}
 
 // --- COMPONENTE PRINCIPAL ---
 export default function App() {
@@ -305,7 +270,7 @@ function LoginPage({ globalError }) {
               <h1 className="text-3xl font-bold tracking-tight">MedMaps</h1>
             </div>
             <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
-            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais barata.</p>
+            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo ao banco de questões mais barato do mercado!.</p>
           </div>
         </div>
         <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
@@ -769,23 +734,6 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  // --- NOVA FUNÇÃO DE NAVEGAÇÃO SEGURA ---
-  const handleNavigate = (view) => {
-    if (currentView === 'question_mode') {
-       // Se estiver em modo de questão, mostra alerta e não navega
-       setNotification({
-           title: "Simulado em Andamento",
-           message: "Você está realizando um simulado. Para sair sem perder o progresso, utilize o botão 'Salvar e Sair' dentro da prova.",
-           type: 'error',
-           confirmText: "Voltar para a prova",
-           onClose: () => setNotification(null)
-       });
-       return;
-    }
-    setCurrentView(view);
-    setIsMobileMenuOpen(false); // Fecha menu mobile se estiver aberto
-  };
-
   // Actions
   const handleLaunchExam = (filters = {}, limit = 5, allowRepeats = false) => {
     const currentExcludedIds = allowRepeats ? new Set() : excludedIds;
@@ -1011,22 +959,22 @@ function Dashboard({ user, onLogout }) {
             </div>
             <section className="animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="flex items-center justify-between mb-6"><h3 className="text-xl font-bold text-slate-800">Grandes Áreas</h3></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{dynamicAreas.map((area) => (<AreaCard key={area.id} area={area} onClick={() => { setSelectedArea(area); handleNavigate('area_hub'); }} />))}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{dynamicAreas.map((area) => (<AreaCard key={area.id} area={area} onClick={() => { setSelectedArea(area); setCurrentView('area_hub'); }} />))}</div>
             </section>
           </>
         );
 
-      case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => handleNavigate('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); handleNavigate('review_mode'); }} onDelete={handleDeleteSimulation} />;
-      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => handleNavigate('my_simulations')} />;
-      case 'general_exam_setup': return <GeneralExamSetupView onBack={() => handleNavigate('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
-      case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => handleNavigate('home')} onStartTraining={() => handleNavigate('topic_selection')} />;
-      case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => handleNavigate('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
-      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} onExit={() => handleNavigate('home')} onFinish={handleExamFinish} onPause={handleExamPause} />;
-      case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => handleNavigate('home')} onNewExam={() => handleNavigate('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); handleNavigate('review_mode'); }} />;
-      case 'settings': return <SettingsView user={user} onBack={() => handleNavigate('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} />;
-      case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => handleNavigate('home')} />;
-      case 'students_list': return <StudentsView onBack={() => handleNavigate('home')} />;
-      case 'add_question': return <AddQuestionView onBack={() => handleNavigate('home')} />;
+      case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => setCurrentView('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); setCurrentView('review_mode'); }} onDelete={handleDeleteSimulation} />;
+      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => setCurrentView('my_simulations')} />;
+      case 'general_exam_setup': return <GeneralExamSetupView onBack={() => setCurrentView('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => setCurrentView('home')} onStartTraining={() => setCurrentView('topic_selection')} />;
+      case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => setCurrentView('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} onExit={() => setCurrentView('home')} onFinish={handleExamFinish} onPause={handleExamPause} />;
+      case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => setCurrentView('home')} onNewExam={() => setCurrentView('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); setCurrentView('review_mode'); }} />;
+      case 'settings': return <SettingsView user={user} onBack={() => setCurrentView('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} />;
+      case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => setCurrentView('home')} />;
+      case 'students_list': return <StudentsView onBack={() => setCurrentView('home')} />;
+      case 'add_question': return <AddQuestionView onBack={() => setCurrentView('home')} />;
       default: return <div>Erro: View não encontrada</div>;
     }
   };
@@ -1034,13 +982,13 @@ function Dashboard({ user, onLogout }) {
   return (
     <div className="min-h-screen bg-gray-50 flex font-sans text-slate-800 relative">
       {isGoalModalOpen && <GoalModal currentGoal={dailyGoal} onSave={handleSaveGoal} onClose={() => setIsGoalModalOpen(false)} />}
-      {notification && <NotificationModal title={notification.title} message={notification.message} type={notification.type} onClose={() => setNotification(null)} confirmText={notification.confirmText} />}
+      {notification && <NotificationModal title={notification.title} message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
       <aside className="hidden md:flex flex-col w-64 bg-white border-r border-gray-200 h-screen fixed z-20">
         <div className="p-6 border-b border-gray-100"><h1 className="text-2xl font-bold text-blue-700 flex items-center gap-2"><Map className="w-8 h-8" />MedMaps</h1></div>
         <nav className="flex-1 p-4 space-y-2">
-          <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => handleNavigate('home')} />
-          <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => handleNavigate('my_simulations')} />
-          <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => handleNavigate('performance')} />
+          <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => setCurrentView('home')} />
+          <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => setCurrentView('my_simulations')} />
+          <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => setCurrentView('performance')} />
           
           {/* ÁREAS SOMENTE ADMIN */}
           {user.role === 'admin' && (
@@ -1050,18 +998,18 @@ function Dashboard({ user, onLogout }) {
                 icon={Users} 
                 label="Gerenciar Alunos" 
                 active={currentView === 'students_list'} 
-                onClick={() => handleNavigate('students_list')} 
+                onClick={() => setCurrentView('students_list')} 
                 />
                 <SidebarItem 
                 icon={PlusCircle} 
                 label="Adicionar Questões" 
                 active={currentView === 'add_question'} 
-                onClick={() => handleNavigate('add_question')} 
+                onClick={() => setCurrentView('add_question')} 
                 />
             </>
           )}
         </nav>
-        <div className="p-4 border-t border-gray-100"><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => handleNavigate('settings')} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors mt-2"><LogOut size={20} /> <span className="font-medium">Sair</span></button></div>
+        <div className="p-4 border-t border-gray-100"><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => setCurrentView('settings')} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors mt-2"><LogOut size={20} /> <span className="font-medium">Sair</span></button></div>
       </aside>
       
       {/* MOBILE HEADER */}
@@ -1076,20 +1024,20 @@ function Dashboard({ user, onLogout }) {
       {isMobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-40 bg-white pt-24 px-6 overflow-y-auto animate-in slide-in-from-top-10 duration-200">
             <nav className="flex flex-col space-y-2">
-                <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => { handleNavigate('home'); }} />
-                <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => { handleNavigate('my_simulations'); }} />
-                <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { handleNavigate('performance'); }} />
+                <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => { setCurrentView('home'); setIsMobileMenuOpen(false); }} />
+                <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => { setCurrentView('my_simulations'); setIsMobileMenuOpen(false); }} />
+                <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { setCurrentView('performance'); setIsMobileMenuOpen(false); }} />
                 
                 {user.role === 'admin' && (
                     <>
                         <div className="mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Administração</div>
-                        <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { handleNavigate('students_list'); }} />
-                        <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { handleNavigate('add_question'); }} />
+                        <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} />
+                        <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} />
                     </>
                 )}
 
                 <div className="h-px bg-gray-100 my-4"></div>
-                <SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { handleNavigate('settings'); }} />
+                <SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }} />
                 <button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors">
                     <LogOut size={20} /> <span className="font-medium">Sair</span>
                 </button>
@@ -1629,7 +1577,7 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
     }
   
     return (
-      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-40 md:pb-24">
+      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
         <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
         <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
         
@@ -1691,52 +1639,8 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
             );
           })}
         </div>
-        
-        {/* FOOTER FIXO MOBILE-FRIENDLY */}
-        <div className="sticky bottom-0 md:bottom-6 z-30 bg-white/95 backdrop-blur-md border-t md:border border-gray-200 p-4 md:rounded-2xl shadow-2xl md:mx-auto max-w-4xl -mx-6 md:mx-0">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                
-                {/* Controles (Linha no Mobile) */}
-                <div className="flex items-center justify-between w-full md:w-auto gap-6">
-                    {/* Quantidade */}
-                    <div>
-                        <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Qtd.</label>
-                        <div className="flex items-center gap-2">
-                            <input 
-                                type="number" 
-                                min="1" 
-                                max={maxAvailable} 
-                                value={desiredQuestions} 
-                                onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} 
-                                className="w-16 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                            />
-                            <span className="text-xs text-gray-400 font-medium">/ {maxAvailable}</span>
-                        </div>
-                    </div>
-
-                    {/* Repetir */}
-                    <div className="flex items-center gap-3 cursor-pointer group p-2 rounded-lg hover:bg-gray-100 transition-colors" onClick={() => setAllowRepeats(!allowRepeats)}>
-                         <div className={`w-10 h-6 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
-                            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-5' : 'left-1'}`}></div>
-                         </div>
-                         <div className="text-sm">
-                            <span className="block font-bold text-slate-700 leading-tight">Repetir</span>
-                            <span className="text-[10px] text-gray-400">Respondidas</span>
-                         </div>
-                    </div>
-                </div>
-
-                {/* Botão de Ação (Full width no Mobile) */}
-                <button 
-                    disabled={selectedTopics.length === 0 || maxAvailable === 0} 
-                    className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" 
-                    onClick={handleStart}
-                >
-                    Começar Agora <ArrowRight size={20} />
-                </button>
-            </div>
+        <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
         </div>
-      </div>
     );
 }
 
@@ -1771,7 +1675,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
     };
 
     return (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-40 md:pb-24">
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-24">
             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
             <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
             
@@ -1796,46 +1700,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
                </div>
             </div>
             
-            {/* FOOTER FIXO MOBILE-FRIENDLY (REUTILIZADO LÓGICA) */}
-            <div className="sticky bottom-0 md:bottom-6 z-30 bg-white/95 backdrop-blur-md border-t md:border border-gray-200 p-4 md:rounded-2xl shadow-2xl md:mx-auto max-w-4xl -mx-6 md:mx-0">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                    
-                    <div className="flex items-center justify-between w-full md:w-auto gap-6">
-                        <div>
-                            <label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Qtd.</label>
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    type="number" 
-                                    min="1" 
-                                    max={maxAvailable} 
-                                    value={desiredQuestions} 
-                                    onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} 
-                                    className="w-16 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                                />
-                                <span className="text-xs text-gray-400 font-medium">/ {maxAvailable}</span>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 cursor-pointer group p-2 rounded-lg hover:bg-gray-100 transition-colors" onClick={() => setAllowRepeats(!allowRepeats)}>
-                             <div className={`w-10 h-6 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}>
-                                <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-5' : 'left-1'}`}></div>
-                             </div>
-                             <div className="text-sm">
-                                <span className="block font-bold text-slate-700 leading-tight">Repetir</span>
-                                <span className="text-[10px] text-gray-400">Respondidas</span>
-                             </div>
-                        </div>
-                    </div>
-
-                    <button 
-                        disabled={selectedTopics.length === 0 || maxAvailable === 0} 
-                        className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" 
-                        onClick={handleStart}
-                    >
-                        Começar Agora <ArrowRight size={20} />
-                    </button>
-                </div>
-            </div>
+            <div className="sticky bottom-6 bg-white/80 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between"><div className="flex items-center gap-6"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={maxAvailable} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(maxAvailable, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div>
         </div>
     );
 }
@@ -2040,103 +1905,44 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
   };
 
   return (
-    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-6">
-      {/* Mobile-optimized Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-        <div className="flex gap-2 w-full md:w-auto">
-            <button onClick={handleSaveAndExit} className="flex-1 md:flex-none flex items-center justify-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-4 py-3 rounded-lg hover:bg-blue-100">
-                <PauseCircle size={18} className="mr-2" /> Salvar e Sair
-            </button>
-            <button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex-1 md:flex-none flex items-center justify-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-4 py-3 rounded-lg">
-                <XCircle size={18} className="mr-2" /> Encerrar
-            </button>
-        </div>
-        
-        <div className="flex items-center gap-4 w-full md:w-auto">
-            <div className="text-sm font-medium text-gray-500 whitespace-nowrap">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div>
-            <div className="w-full md:w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div>
-            </div>
-        </div>
-      </div>
-
+    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-6"><div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> Salvar e Sair</button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-4 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> Encerrar</button></div><div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div></div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white p-5 md:p-8 rounded-2xl shadow-sm border border-gray-200">
-              <div className="flex flex-wrap gap-2 mb-4">
-                  <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span>
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span>
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span>
-              </div>
-              <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6">{currentQuestion.text}</p>
-          </div>
-
-          <div className="space-y-3">
-              {currentQuestion.options.map((option) => { 
-                  let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; 
-                  let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; 
-                  
-                  if (selectedOption === option.id) { 
-                      itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; 
-                      icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; 
-                  } 
-                  
-                  if (status !== 'unanswered') { 
-                      if (option.id === currentQuestion.correctOptionId) { 
-                          itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; 
-                          icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; 
-                      } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { 
-                          itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; 
-                          icon = <XCircle size={20} className="text-red-600 fill-red-100" />; 
-                      } else { 
-                          itemClass = "border-gray-100 opacity-50"; 
-                      } 
-                  } 
-                  
-                  return (
-                      <button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}>
-                          <div className="mt-0.5 flex-shrink-0">{icon}</div>
-                          <span className={`font-medium ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}>
-                              <span className="uppercase font-bold mr-2">{option.id})</span>{option.text}
-                          </span>
-                      </button>
-                  ); 
-              })}
-          </div>
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200"><div className="flex gap-2 mb-4"><span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide">{currentQuestion.institution}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.year}</span><span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{currentQuestion.topic}</span></div><p className="text-lg text-slate-800 leading-relaxed mb-6">{currentQuestion.text}</p></div>
+          <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
           
-          {/* Mobile-optimized Navigation Footer */}
-          <div className="flex justify-between items-center pt-4 mt-4 border-t border-gray-100 gap-2">
+          <div className="flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
                 <button 
                     onClick={handlePrevious} 
                     disabled={currentIndex === 0}
-                    className="flex-1 md:flex-none px-2 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center justify-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"
+                    className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"
                 >
-                    <ArrowLeft size={20} /> <span className="hidden md:inline">Anterior</span>
+                    <ArrowLeft size={20} /> Anterior
                 </button>
 
                 {status === 'unanswered' ? (
                     <button 
                         onClick={handleConfirmAnswer} 
                         disabled={!selectedOption} 
-                        className="flex-[2] bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95"
+                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4"
                     >
                         Responder
                     </button>
                 ) : (
                     <button 
                         onClick={handleRedo} 
-                        className="flex-1 md:flex-none text-gray-500 hover:text-blue-600 font-bold flex items-center justify-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200"
+                        className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"
                     >
-                        <RotateCcw size={18} /> <span className="hidden md:inline">Refazer</span>
+                        <RotateCcw size={18} /> Refazer
                     </button>
                 )}
 
                 <button 
                     onClick={handleNext} 
-                    className="flex-1 md:flex-none px-2 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center justify-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
+                    className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
                 >
-                    <span className="hidden md:inline">{currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'}</span> 
-                    {currentIndex === questions.length - 1 ? <CheckCircle size={20}/> : <ArrowRight size={20} />}
+                    {currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} />
                 </button>
           </div>
 
@@ -2145,6 +1951,41 @@ function QuestionView({ area, initialData, onExit, onFinish, onPause }) {
            {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TopicItem({ theme, isSelected, onToggle, count }) {
+  return (
+    <div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}>
+      <div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div>
+    </div>
+  );
+}
+
+function AreaCard({ area, onClick }) {
+  return (
+    <div onClick={onClick} className={`group bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden hover:border-blue-300`}>
+      <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110`}><area.icon size={100} className={area.color.split(' ')[1]} /></div>
+      <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 ${area.color}`}><area.icon size={28} /></div>
+      <h4 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-blue-700 transition-colors">{area.title}</h4>
+      <p className="text-sm text-slate-500 mb-4">{area.count}</p>
+      <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden"><div className={`h-1.5 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.progress}%` }} ></div></div>
+      <p className="text-xs text-slate-400 mt-2 text-right">{area.progress}% Concluído</p>
+    </div>
+  );
+}
+
+function SidebarItem({ icon: Icon, label, active = false, onClick }) {
+  return (
+    <button onClick={onClick} className={`flex items-center gap-3 px-4 py-3 w-full text-left rounded-lg transition-all ${active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}><Icon size={20} className={active ? 'text-blue-700' : 'text-gray-400'} /><span>{label}</span></button>
+  );
+}
+
+function StatCard({ title, value, target, sub, color, bg, icon, onClick, editable }) {
+  return (
+    <div onClick={onClick} className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-all ${onClick ? 'cursor-pointer hover:border-blue-300 group' : ''}`}>
+      <div><p className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-2">{title}{editable && <Edit2 size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />}</p><div className="flex items-baseline gap-2"><h3 className="text-2xl font-bold text-slate-900">{value}</h3>{target && <span className="text-sm text-gray-400 font-medium">{target}</span>}</div>{sub && <p className={`text-xs font-medium mt-1 ${color}`}>{sub}</p>}</div><div className={`p-3 rounded-xl ${bg} ${color}`}>{icon}</div>
     </div>
   );
 }
