@@ -6,7 +6,7 @@ import {
   Square, Edit2, Check, Image as ImageIcon, RotateCcw, Home, List, Plus, 
   ChevronDown, ChevronUp, FileText, PlayCircle, Eye, PauseCircle, Save, 
   Database, User, Bell, Shield, Target, TrendingUp, Award, Info, XCircle, 
-  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus
+  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map 
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -265,9 +265,9 @@ function LoginPage({ globalError }) {
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-10">
               <div className="bg-white/10 p-2 rounded-lg backdrop-blur-md border border-white/20">
-                <Activity size={32} className="text-white" />
+                <Map size={32} className="text-white" />
               </div>
-              <h1 className="text-3xl font-bold tracking-tight">MedQuest</h1>
+              <h1 className="text-3xl font-bold tracking-tight">MedMaps</h1>
             </div>
             <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
             <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo à plataforma de questões mais barata.</p>
@@ -984,7 +984,7 @@ function Dashboard({ user, onLogout }) {
       {isGoalModalOpen && <GoalModal currentGoal={dailyGoal} onSave={handleSaveGoal} onClose={() => setIsGoalModalOpen(false)} />}
       {notification && <NotificationModal title={notification.title} message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
       <aside className="hidden md:flex flex-col w-64 bg-white border-r border-gray-200 h-screen fixed z-20">
-        <div className="p-6 border-b border-gray-100"><h1 className="text-2xl font-bold text-blue-700 flex items-center gap-2"><Activity className="w-8 h-8" />MedQuest</h1></div>
+        <div className="p-6 border-b border-gray-100"><h1 className="text-2xl font-bold text-blue-700 flex items-center gap-2"><Map className="w-8 h-8" />MedMaps</h1></div>
         <nav className="flex-1 p-4 space-y-2">
           <SidebarItem icon={BookOpen} label="Banco de Questões" active={currentView === 'home' || currentView === 'area_hub'} onClick={() => setCurrentView('home')} />
           <SidebarItem icon={CheckCircle} label="Meus Simulados" active={currentView === 'my_simulations' || currentView === 'general_exam_setup' || currentView === 'review_mode'} onClick={() => setCurrentView('my_simulations')} />
@@ -1014,7 +1014,7 @@ function Dashboard({ user, onLogout }) {
       
       {/* MOBILE HEADER */}
       <div className="md:hidden fixed top-0 w-full bg-white z-50 border-b border-gray-200 p-4 flex justify-between items-center shadow-sm">
-          <h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Activity className="w-6 h-6" />MedQuest</h1>
+          <h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Map className="w-6 h-6" />MedMaps</h1>
           <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 hover:bg-gray-100 rounded-lg">
               {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
