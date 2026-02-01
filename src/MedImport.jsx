@@ -113,6 +113,44 @@ const themesMap = {
     ]
 };
 
+// --- COMPONENTE DE NOTIFICAÇÃO INTELIGENTE ---
+function NotificationToast({ notification, onClose, positionClass }) {
+  const [isHovered, setIsHovered] = useState(false);
+
+  useEffect(() => {
+    if (!notification || isHovered) return;
+
+    // Define o tempo: 6 segundos para ler
+    const timer = setTimeout(() => {
+      onClose();
+    }, 6000);
+
+    return () => clearTimeout(timer);
+  }, [notification, isHovered, onClose]);
+
+  if (!notification) return null;
+
+  return (
+    <div 
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
+    >
+        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : 'bg-emerald-100'}`}>
+            {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
+        </div>
+        <div className="flex-1">
+            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Ocorreu um erro' : 'Sucesso'}</p>
+            <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
+            <X size={18}/>
+        </button>
+        {/* Barra de progresso visual opcional para indicar tempo (opcional, mantive simples) */}
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
@@ -131,7 +169,7 @@ export default function App() {
   const [rawText, setRawText] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isBatchAction, setIsBatchAction] = useState(false); // Estado para loading de ações em massa
+  const [isBatchAction, setIsBatchAction] = useState(false); 
   const [isSavingKey, setIsSavingKey] = useState(false);
   
   const [parsedQuestions, setParsedQuestions] = useState([]);
@@ -144,15 +182,15 @@ export default function App() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
   
-  // --- NOVO: Modal Genérico de Confirmação ---
+  // Modal Genérico de Confirmação
   const [confirmationModal, setConfirmationModal] = useState({
       isOpen: false,
-      type: null, // 'delete_one', 'delete_all', 'approve_all'
-      data: null, // dados do item (para exclusão unitária)
+      type: null,
+      data: null,
       title: '',
       message: '',
       confirmText: '',
-      confirmColor: '' // 'red', 'emerald'
+      confirmColor: ''
   });
   
   // Login Inputs
@@ -239,10 +277,8 @@ export default function App() {
       localStorage.setItem('gemini_model', modelName);
   };
 
-  // --- NOTIFICAÇÃO PERSISTENTE (Não some sozinha) ---
   const showNotification = (type, text) => {
     setNotification({ type, text });
-    // setTimeout removido conforme solicitado
   };
 
   const closeNotification = () => {
@@ -410,8 +446,6 @@ export default function App() {
   };
 
   // --- FUNÇÕES DE MODAL DE CONFIRMAÇÃO ---
-
-  // 1. Abrir Modal para excluir um item
   const handleDiscardOneClick = (q) => {
       setConfirmationModal({
           isOpen: true,
@@ -424,7 +458,6 @@ export default function App() {
       });
   };
 
-  // 2. Abrir Modal para Aprovar Tudo
   const handleApproveAllClick = () => {
       if (parsedQuestions.length === 0) return;
       setConfirmationModal({
@@ -438,7 +471,6 @@ export default function App() {
       });
   };
 
-  // 3. Abrir Modal para Descartar Tudo
   const handleDiscardAllClick = () => {
       if (parsedQuestions.length === 0) return;
       setConfirmationModal({
@@ -452,10 +484,9 @@ export default function App() {
       });
   };
 
-  // --- EXECUÇÃO DAS AÇÕES CONFIRMADAS ---
   const executeConfirmationAction = async () => {
       const { type, data } = confirmationModal;
-      setConfirmationModal({ ...confirmationModal, isOpen: false }); // Fecha o modal primeiro
+      setConfirmationModal({ ...confirmationModal, isOpen: false }); 
 
       if (type === 'delete_one') {
           if (!data || !data.id) return;
@@ -472,12 +503,9 @@ export default function App() {
           const queue = [...parsedQuestions];
           
           try {
-              // Faz em lotes para não travar (embora o ideal fosse batch do firebase, vou fazer loop simples para garantir segurança individual)
               for (let i = 0; i < queue.length; i++) {
                   const q = queue[i];
                   const { id, status, createdAt, createdBy, ...finalData } = q;
-                  
-                  // Validação básica mínima
                   if (q.area && q.topic && q.text) {
                      await addDoc(collection(db, "questions"), {
                          ...finalData,
@@ -516,8 +544,6 @@ export default function App() {
       }
   };
 
-
-  // --- ACTIONS INDIVIDUAIS (Diretas) ---
   const approveQuestion = async (q) => {
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
       return showNotification('error', 'Preencha os campos obrigatórios antes de aprovar.');
@@ -565,13 +591,9 @@ export default function App() {
             <button className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2"><Lock size={18} /> Acessar Sistema</button>
           </form>
         </div>
-        {notification && (
-            <div className={`fixed bottom-4 right-4 z-50 p-4 rounded-xl shadow-xl flex items-center gap-3 ${notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
-                {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
-                <span className="font-medium">{notification.text}</span>
-                <button onClick={closeNotification} className="ml-2 p-1 hover:bg-white/20 rounded-full"><X size={16}/></button>
-            </div>
-        )}
+        
+        {/* Usando o novo componente NotificationToast */}
+        <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed bottom-4 right-4" />
       </div>
   );
 
@@ -604,21 +626,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* NOTIFICATION (Com botão de fechar manual) */}
-      {notification && (
-        <div className={`fixed top-24 right-4 z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : 'bg-white border-emerald-200 text-emerald-700'}`}>
-            <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : 'bg-emerald-100'}`}>
-                {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
-            </div>
-            <div className="flex-1">
-                <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Ocorreu um erro' : 'Sucesso'}</p>
-                <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
-            </div>
-            <button onClick={closeNotification} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
-                <X size={18}/>
-            </button>
-        </div>
-      )}
+      {/* NOTIFICATION (Usando o novo componente) */}
+      <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed top-24 right-4" />
 
       {/* API KEY MODAL */}
       {showApiKeyModal && (
