@@ -169,22 +169,82 @@ const checkIsYesterday = (lastDateStr) => {
     return lastDate.getDate() === yesterday.getDate() && lastDate.getMonth() === yesterday.getMonth() && lastDate.getFullYear() === yesterday.getFullYear();
 };
 
+// --- COMPONENTES UI HELPERS ---
+
+// Botão de Copiar com feedback visual simples
+function CopyButton({ text, className }) {
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopy = (e) => {
+        e.stopPropagation();
+        
+        // Fallback copy logic
+        const fallbackCopy = (txt) => {
+            const textArea = document.createElement("textarea");
+            textArea.value = txt;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                setIsCopied(true);
+                setTimeout(() => setIsCopied(false), 2000);
+            } catch (err) {
+                console.error('Fallback copy failed', err);
+            }
+            document.body.removeChild(textArea);
+        };
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 2000);
+                })
+                .catch(() => fallbackCopy(text));
+        } else {
+            fallbackCopy(text);
+        }
+    };
+
+    return (
+        <button 
+            onClick={handleCopy} 
+            className={`hover:text-blue-600 transition-colors flex items-center gap-1 ${className}`} 
+            title="Copiar ID"
+        >
+            {isCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+        </button>
+    );
+}
+
+
 // --- MODAIS GLOBAIS ---
-function ReportModal({ isOpen, onClose, questionId, type, category: initialCategory, userId }) {
-    // Para sugestão, usamos suggestionType para controlar a aba ativa (institution ou year)
-    const [suggestionType, setSuggestionType] = useState(initialCategory || 'institution');
+function ReportModal({ isOpen, onClose, questionId, type, userId }) {
+    const [suggestedInstitution, setSuggestedInstitution] = useState('');
+    const [suggestedYear, setSuggestedYear] = useState('');
+    
     const [errorCategory, setErrorCategory] = useState('');
-    const [details, setDetails] = useState('');
+    const [details, setDetails] = useState(''); 
+
     const [isSending, setIsSending] = useState(false);
+
+    // Validação de estado
+    const isValid = type === 'error' 
+        ? !!errorCategory // Erro: precisa ter categoria
+        : (!!suggestedInstitution.trim() || !!suggestedYear.trim()); // Sugestão: pelo menos um dos campos
 
     useEffect(() => {
         if(isOpen) {
-            setSuggestionType(initialCategory || 'institution');
+            setSuggestedInstitution('');
+            setSuggestedYear('');
             setErrorCategory('');
             setDetails('');
             setIsSending(false);
         }
-    }, [isOpen, initialCategory]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -201,23 +261,29 @@ function ReportModal({ isOpen, onClose, questionId, type, category: initialCateg
     ];
 
     const handleSubmit = async () => {
-        if (type === 'error' && !errorCategory) return alert("Selecione um motivo.");
-        if (type === 'suggestion' && !details) return alert("Digite sua sugestão.");
+        if (!isValid) return;
 
         setIsSending(true);
         try {
-            // Se for sugestão, o category vem do state suggestionType
-            const finalCategory = type === 'suggestion' ? suggestionType : errorCategory;
-            
-            await addDoc(collection(db, "reports"), {
+            const reportData = {
                 questionId,
                 userId: userId || 'anonymous',
                 type,
-                category: finalCategory,
-                details,
                 status: 'pending',
                 createdAt: new Date().toISOString()
-            });
+            };
+
+            if (type === 'suggestion') {
+                reportData.category = 'suggestion_update';
+                reportData.suggestedInstitution = suggestedInstitution;
+                reportData.suggestedYear = suggestedYear;
+                reportData.details = `Sugestão: Banca [${suggestedInstitution}] | Ano [${suggestedYear}]`;
+            } else {
+                reportData.category = errorCategory;
+                reportData.details = details;
+            }
+            
+            await addDoc(collection(db, "reports"), reportData);
             alert("Obrigado! Sua colaboração foi enviada para análise.");
             onClose();
         } catch (error) {
@@ -238,59 +304,75 @@ function ReportModal({ isOpen, onClose, questionId, type, category: initialCateg
                     <button onClick={onClose}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
                 </div>
 
-                {type === 'suggestion' && (
-                    <div className="flex bg-gray-100 p-1 rounded-xl mb-4">
-                        <button 
-                            onClick={() => setSuggestionType('institution')}
-                            className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-all ${suggestionType === 'institution' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                        >
-                            Prova/Banca
-                        </button>
-                        <button 
-                            onClick={() => setSuggestionType('year')}
-                            className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-all ${suggestionType === 'year' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                        >
-                            Ano
-                        </button>
-                    </div>
-                )}
+                {type === 'suggestion' ? (
+                    <div className="space-y-4 mb-6">
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-sm text-blue-800">
+                                Preencha a Banca <strong>E/OU</strong> o Ano desta questão.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Banca / Prova</label>
+                            <input 
+                                type="text"
+                                value={suggestedInstitution}
+                                onChange={e => setSuggestedInstitution(e.target.value)}
+                                placeholder="Ex: USP, ENARE, SURCE..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
 
-                {type === 'error' ? (
-                    <div className="space-y-3 mb-4">
-                        <p className="text-sm text-gray-500">Qual o problema com esta questão?</p>
-                        <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
-                            {errorOptions.map(opt => (
-                                <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
-                                    <input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" />
-                                    <span className="text-sm font-medium">{opt}</span>
-                                </label>
-                            ))}
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ano</label>
+                            <input 
+                                type="text"
+                                value={suggestedYear}
+                                onChange={e => setSuggestedYear(e.target.value)}
+                                placeholder="Ex: 2023, 2024, 2023/1..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
                         </div>
                     </div>
                 ) : (
-                    <div className="mb-4">
-                        <p className="text-sm text-gray-500 mb-2">
-                            {suggestionType === 'year' ? "Qual o ano correto desta questão?" : "Qual a Banca/Prova desta questão?"}
-                        </p>
-                    </div>
-                )}
+                    // --- MODO ERRO ---
+                    <>
+                        <div className="space-y-3 mb-4">
+                            <p className="text-sm text-gray-500">Qual o problema com esta questão?</p>
+                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                {errorOptions.map(opt => (
+                                    <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+                                        <input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" />
+                                        <span className="text-sm font-medium">{opt}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
 
-                <div className="mb-6">
-                    <label className="block text-sm font-bold text-slate-700 mb-2">
-                        {type === 'error' ? "Detalhes (Opcional)" : "Sua Sugestão"}
-                    </label>
-                    <textarea 
-                        value={details} 
-                        onChange={e => setDetails(e.target.value)}
-                        placeholder={type === 'error' ? "Descreva melhor o erro..." : (suggestionType === 'year' ? "Ex: 2023" : "Ex: SURCE, ENARE...")}
-                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
-                        rows={3}
-                    />
-                </div>
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                Detalhes (Opcional)
+                            </label>
+                            <textarea 
+                                value={details} 
+                                onChange={e => setDetails(e.target.value)}
+                                placeholder="Descreva melhor o erro encontrado..."
+                                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                rows={3}
+                            />
+                        </div>
+                    </>
+                )}
 
                 <div className="flex gap-3">
                     <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
-                    <button onClick={handleSubmit} disabled={isSending} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}>
+                    <button 
+                        onClick={handleSubmit} 
+                        disabled={isSending || !isValid} 
+                        className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 
+                            ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}
+                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}
+                    >
                         {isSending ? 'Enviando...' : 'Enviar'}
                     </button>
                 </div>
@@ -738,7 +820,7 @@ function Dashboard({ user, onLogout }) {
     switch (currentView) {
       case 'home': return <HomeView user={user} userStats={userStats} dailyGoal={dailyGoal} accuracy={accuracy} streak={streak} dynamicAreas={dynamicAreas} setIsGoalModalOpen={setIsGoalModalOpen} setSelectedArea={setSelectedArea} setCurrentView={setCurrentView} realStats={realStats} />;
       case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => setCurrentView('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); setCurrentView('review_mode'); }} onDelete={handleDeleteSimulation} />;
-      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => setCurrentView('my_simulations')} />;
+      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => setCurrentView('my_simulations')} user={user} />;
       case 'general_exam_setup': return <GeneralExamSetupView onBack={() => setCurrentView('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
       case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => setCurrentView('home')} onStartTraining={() => setCurrentView('topic_selection')} />;
       case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => setCurrentView('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
@@ -865,15 +947,89 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
 }
 function TopicItem({ theme, isSelected, onToggle, count }) { return (<div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}><div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div></div>); }
 
-function ReviewExamView({ simulation, onBack, allQuestions }) { 
+function ReviewExamView({ simulation, onBack, allQuestions, user }) { 
     if (!simulation) return <div>Carregando...</div>;
     const questions = simulation.questionsData || (simulation.questionIds ? simulation.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
     const userAnswers = simulation.answersData || {};
+
+    // Estado para modais de reporte/sugestão na revisão
+    const [reportModalConfig, setReportModalConfig] = useState({ isOpen: false, type: 'error', questionId: null });
+
+    const openReportModal = (questionId, type) => {
+        setReportModalConfig({ isOpen: true, type, questionId });
+    };
+
     return (
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
+          {reportModalConfig.isOpen && (
+              <ReportModal 
+                  isOpen={true} 
+                  onClose={() => setReportModalConfig({ ...reportModalConfig, isOpen: false })} 
+                  questionId={reportModalConfig.questionId} 
+                  userId={user?.uid} 
+                  type={reportModalConfig.type} 
+              />
+          )}
+
           <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar para Meus Simulados</button><div className="text-right"><span className="text-sm font-bold text-slate-500 bg-gray-100 px-3 py-1 rounded-full">Revisão: {simulation.title}</span></div></div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8 flex justify-between items-center"><div><h2 className="text-2xl font-bold text-slate-900">Resumo do Desempenho</h2><p className="text-slate-500">Data: {simulation.date}</p></div><div className="text-right"><div className="text-3xl font-bold text-blue-600">{simulation.correct}/{simulation.total}</div><div className="text-sm font-medium text-gray-400">Acertos</div></div></div>
-          <div className="space-y-6">{questions.map((q, index) => { const userAnswer = userAnswers[index]; const isCorrect = userAnswer === q.correctOptionId; return (<div key={q.id} className={`bg-white rounded-2xl border overflow-hidden ${isCorrect ? 'border-emerald-200' : 'border-red-200'}`}><div className={`p-4 flex items-center justify-between ${isCorrect ? 'bg-emerald-50' : 'bg-red-50'}`}><h3 className={`font-bold flex items-center gap-2 ${isCorrect ? 'text-emerald-800' : 'text-red-800'}`}>{isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />} Questão {index + 1}</h3><span className="text-sm font-medium opacity-70">{q.topic}</span></div><div className="p-6"><p className="text-slate-800 mb-4">{q.text}</p><div className="space-y-2 mb-4">{q.options.map(opt => { let optClass = "p-3 rounded-lg border border-gray-100 text-gray-600"; if (opt.id === q.correctOptionId) optClass = "p-3 rounded-lg border border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"; else if (opt.id === userAnswer && !isCorrect) optClass = "p-3 rounded-lg border border-red-500 bg-red-50 text-red-800 font-bold"; return (<div key={opt.id} className={optClass}><span className="uppercase mr-2">{opt.id})</span> {opt.text}</div>); })}</div><div className="bg-gray-50 p-4 rounded-xl text-sm text-slate-600"><span className="font-bold block mb-1">Comentário:</span>{q.explanation}</div></div></div>); })}</div>
+          
+          <div className="space-y-6">{questions.map((q, index) => { 
+              const userAnswer = userAnswers[index]; 
+              const isCorrect = userAnswer === q.correctOptionId; 
+              
+              return (
+                <div key={q.id} className={`bg-white rounded-2xl border overflow-hidden ${isCorrect ? 'border-emerald-200' : 'border-red-200'}`}>
+                    {/* Header da Questão na Revisão - Agora com Botões de Ação */}
+                    <div className={`p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isCorrect ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                        <div className="flex items-center gap-2">
+                            <h3 className={`font-bold flex items-center gap-2 ${isCorrect ? 'text-emerald-800' : 'text-red-800'}`}>
+                                {isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />} 
+                                Questão {index + 1}
+                            </h3>
+                            <span className="text-sm font-medium opacity-70">
+                                {q.topic}
+                            </span>
+                        </div>
+                        
+                        {/* Botões de Ação (Reportar, Sugerir, Copiar ID) */}
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2 text-[10px] md:text-xs text-gray-500 bg-white/50 px-2 py-1 rounded-lg border border-black/5 font-bold uppercase tracking-wider">
+                                <span>ID</span>
+                                <CopyButton text={q.id} className="text-gray-400 hover:text-blue-600" />
+                            </div>
+                             <button 
+                                onClick={() => openReportModal(q.id, 'suggestion')}
+                                className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-100 rounded-lg transition-colors" 
+                                title="Sugerir Edição"
+                            >
+                                <Edit2 size={16} />
+                            </button>
+                            <button 
+                                onClick={() => openReportModal(q.id, 'error')}
+                                className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-100 rounded-lg transition-colors" 
+                                title="Reportar Erro"
+                            >
+                                <AlertTriangle size={16} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="p-6">
+                        <p className="text-slate-800 mb-4">{q.text}</p>
+                        <div className="space-y-2 mb-4">
+                            {q.options.map(opt => { 
+                                let optClass = "p-3 rounded-lg border border-gray-100 text-gray-600"; 
+                                if (opt.id === q.correctOptionId) optClass = "p-3 rounded-lg border border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"; 
+                                else if (opt.id === userAnswer && !isCorrect) optClass = "p-3 rounded-lg border border-red-500 bg-red-50 text-red-800 font-bold"; 
+                                return (<div key={opt.id} className={optClass}><span className="uppercase mr-2">{opt.id})</span> {opt.text}</div>); 
+                            })}
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-xl text-sm text-slate-600"><span className="font-bold block mb-1">Comentário:</span>{q.explanation}</div>
+                    </div>
+                </div>
+              ); 
+          })}</div>
         </div>
     );
 }
@@ -1129,33 +1285,6 @@ function QuestionView({ area, initialData, user, onExit, onFinish, onPause }) {
   const handleRedo = () => { setSelectedOption(null); setStatus('unanswered'); };
   const handleSaveAndExit = () => { onPause(questions, userAnswers, currentIndex, initialData?.id); };
   
-  // Função de cópia com fallback para iFrames
-  const copyToClipboard = (text) => {
-      const fallbackCopy = (txt) => {
-          const textArea = document.createElement("textarea");
-          textArea.value = txt;
-          textArea.style.position = "fixed";
-          textArea.style.left = "-9999px";
-          document.body.appendChild(textArea);
-          textArea.focus();
-          textArea.select();
-          try {
-              document.execCommand('copy');
-              alert("ID copiado!");
-          } catch (err) {
-              console.error('Fallback copy failed', err);
-              alert("Não foi possível copiar automaticamente.");
-          }
-          document.body.removeChild(textArea);
-      };
-
-      if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(text).then(() => alert("ID copiado!")).catch(() => fallbackCopy(text));
-      } else {
-          fallbackCopy(text);
-      }
-  };
-  
   const MobileNavBar = () => (
       <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-3 z-50 flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:hidden">
           <button onClick={handlePrevious} disabled={currentIndex === 0} className="p-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 rounded-xl bg-gray-50 border border-gray-100"><ArrowLeft size={24} /></button>
@@ -1198,11 +1327,11 @@ function QuestionView({ area, initialData, user, onExit, onFinish, onPause }) {
                       <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200">{currentQuestion.topic}</span>
                   </div>
                   
-                  {/* ID e Reportar */}
+                  {/* ID e Reportar - USANDO O NOVO COMPONENTE COPYBUTTON */}
                   <div className="flex items-center gap-3">
                       <div className="flex items-center gap-2 text-[10px] md:text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100 font-bold uppercase tracking-wider">
                           <span>ID</span>
-                          <button onClick={() => copyToClipboard(currentQuestion.id)} className="hover:text-blue-600 transition-colors" title="Copiar ID"><Copy size={12}/></button>
+                          <CopyButton text={currentQuestion.id} />
                       </div>
                       <button onClick={() => setReportModalOpen(true)} className="text-red-500 hover:text-red-700 transition-colors" title="Reportar Erro"><AlertTriangle size={18} /></button>
                   </div>
