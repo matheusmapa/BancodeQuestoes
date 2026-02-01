@@ -8,7 +8,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        importador: resolve(__dirname, 'import.html'), // <--- Adicionamos o import.html aqui
+        importador: resolve(__dirname, 'import.html'),
+        manager: resolve(__dirname, 'manager.html'), // <--- Adicionamos o manager.html aqui
       },
     },
   },
