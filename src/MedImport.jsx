@@ -3,7 +3,7 @@ import {
   Map, Save, Trash2, Settings, CheckCircle, 
   AlertCircle, FileText, Database, 
   Loader2, Wand2, Cpu, RefreshCw, User, X,
-  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft
+  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft, Globe, HardDrive
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -30,17 +30,38 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// --- DADOS DE REFERÊNCIA ---
+// --- DADOS DE REFERÊNCIA ATUALIZADOS ---
 const areasBase = [
-  'Clínica Médica', 'Cirurgia Geral', 'Ginecologia e Obstetrícia', 'Pediatria', 'Geriatria'
+  'Clínica Médica', 'Cirurgia Geral', 'Ginecologia e Obstetrícia', 'Pediatria', 'Preventiva'
 ];
 
 const themesMap = {
-    'Clínica Médica': ['Cardiologia', 'Pneumologia', 'Nefrologia', 'Gastroenterologia', 'Endocrinologia', 'Hematologia', 'Reumatologia', 'Infectologia', 'Dermatologia', 'Neurologia'],
-    'Cirurgia Geral': ['Trauma (ATLS)', 'Abdome Agudo', 'Hérnias', 'Aparelho Digestivo', 'Pré e Pós-Operatório', 'Cirurgia Vascular', 'Urologia', 'Cirurgia Pediátrica', 'Cirurgia Torácica', 'Queimaduras'],
-    'Ginecologia e Obstetrícia': ['Pré-Natal', 'Sangramentos', 'DHEG', 'Parto e Puerpério', 'Anticoncepção', 'Climatério', 'Oncologia Ginecológica', 'Infecções', 'Amenorreias', 'Infertilidade'],
-    'Pediatria': ['Neonatologia', 'Crescimento e Desenvolvimento', 'Aleitamento', 'Imunizações', 'Doenças Exantemáticas', 'Doenças Respiratórias', 'Gastro', 'Nefro', 'Emergências', 'Adolescência'],
-    'Geriatria': ['Grandes Síndromes', 'Demências', 'Delirium', 'Quedas', 'Polifarmácia', 'Cuidados Paliativos']
+    'Clínica Médica': [
+        'Cardiologia', 'Pneumologia', 'Nefrologia', 'Gastroenterologia', 'Hepatologia', 
+        'Endocrinologia', 'Hematologia', 'Reumatologia', 'Infectologia', 'Dermatologia', 
+        'Neurologia', 'Psiquiatria', 'Ortopedia', 'Otorrinolaringologia', 'Oftalmologia'
+    ],
+    'Cirurgia Geral': [
+        'Trauma (ATLS)', 'Queimaduras', 'Pré e Pós-Operatório', 'Cicatrização', 'Hérnias', 
+        'Parede Abdominal', 'Abdome Agudo', 'Cirurgia Pediátrica', 'Urologia', 
+        'Cirurgia Vascular', 'Cirurgia Torácica', 'Cabeça e Pescoço'
+    ],
+    'Ginecologia e Obstetrícia': [
+        'Ciclo Menstrual', 'Anticoncepção', 'Climatério', 'Sangramento Uterino Anormal', 
+        'Doenças da Mama', 'Colo do Útero e Ovário', 'Infecções Ginecológicas', 'Uroginecologia',
+        'Pré-Natal', 'Parto', 'Puerpério', 'Abortamento', 'Doença Hipertensiva', 
+        'Diabetes Gestacional', 'Gemelaridade', 'Sangramentos na Gestação'
+    ],
+    'Pediatria': [
+        'Neonatologia', 'Aleitamento Materno', 'Crescimento e Desenvolvimento', 'Imunização', 
+        'Alimentação', 'Diarreia e Desidratação', 'Doenças Respiratórias', 'Infectopediatria', 
+        'Emergências Pediátricas', 'Nefrologia Pediátrica', 'Adolescência'
+    ],
+    'Preventiva': [
+        'SUS', 'Atenção Primária à Saúde', 'Vigilância em Saúde', 'Epidemiologia', 
+        'Indicadores de Saúde', 'Saúde do Trabalhador', 'Ética Médica', 'Declaração de Óbito', 
+        'Medicina de Família e Comunidade', 'Saúde Suplementar'
+    ]
 };
 
 export default function App() {
@@ -50,6 +71,7 @@ export default function App() {
   // Chave API FIXA (Fallback Inicial)
   const DEFAULT_KEY = 'AIzaSyDzH8eYaJTdlNGM17CUE0eyCEYPo6lTupA';
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || DEFAULT_KEY);
+  const [keySource, setKeySource] = useState('local'); // 'local' ou 'global'
   
   // Lista de modelos
   const [availableModels, setAvailableModels] = useState([
@@ -77,6 +99,9 @@ export default function App() {
   
   // Estado para o Modal de Exclusão
   const [itemToDelete, setItemToDelete] = useState(null);
+
+  // Estado para o Modal de Aprovar Tudo
+  const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   
   // Login Inputs
   const [email, setEmail] = useState('');
@@ -91,7 +116,6 @@ export default function App() {
                 const userDoc = await getDoc(userDocRef);
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
-                    // fetchGlobalApiKey removido daqui para usar o listener em tempo real abaixo
                 } else {
                     await signOut(auth);
                     setUser(null);
@@ -110,20 +134,17 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- LISTENER DE CONFIGURAÇÃO GERAL (SYNC AUTOMÁTICO DA KEY) ---
+  // --- LISTENER DE CONFIGURAÇÃO GERAL ---
   useEffect(() => {
       if (!user) return;
 
-      // Escuta mudanças no documento settings/global
       const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
           if (docSnap.exists() && docSnap.data().geminiApiKey) {
               const globalKey = docSnap.data().geminiApiKey;
-              // Atualiza o estado se a chave do banco for diferente da atual
-              if (globalKey !== apiKey) {
+              if (globalKey !== apiKey || keySource === 'local') {
                   setApiKey(globalKey);
                   localStorage.setItem('gemini_api_key', globalKey);
-                  // Opcional: Avisar que atualizou (comentei para não ser chato)
-                  // showNotification('success', 'Chave API atualizada automaticamente!');
+                  setKeySource('global'); 
               }
           }
       }, (error) => {
@@ -131,7 +152,7 @@ export default function App() {
       });
 
       return () => unsubscribe();
-  }, [user, apiKey]); // Dependência apiKey para comparar mudanças
+  }, [user]); 
 
   // --- LISTENER DE RASCUNHOS ---
   useEffect(() => {
@@ -151,7 +172,6 @@ export default function App() {
           setParsedQuestions(drafts);
       }, (error) => {
           console.error("Erro ao buscar rascunhos:", error);
-          showNotification('error', 'Erro ao sincronizar fila de aprovação.');
       });
 
       return () => unsubscribe();
@@ -169,7 +189,9 @@ export default function App() {
               updatedAt: new Date().toISOString()
           }, { merge: true });
 
-          // O listener useEffect acima vai pegar a mudança e atualizar o estado local automaticamente
+          setApiKey(tempApiKey);
+          setKeySource('global'); 
+          localStorage.setItem('gemini_api_key', tempApiKey);
           setShowApiKeyModal(false);
           showNotification('success', 'Chave API salva no Banco de Dados Geral!');
       } catch (error) {
@@ -235,7 +257,6 @@ export default function App() {
       try {
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
           const data = await response.json();
-          
           if (data.error) throw new Error(data.error.message);
           if (!data.models) throw new Error("Sem acesso a modelos.");
 
@@ -247,12 +268,11 @@ export default function App() {
               setAvailableModels(genModels);
               const flash25 = genModels.find(m => m.name.includes('2.5-flash') && !m.name.includes('lite'));
               if (flash25) setSelectedModel(flash25.name);
-              showNotification('success', `${genModels.length} modelos liberados!`);
+              showNotification('success', `${genModels.length} modelos liberados e sincronizados!`);
           } else {
               showNotification('error', 'Chave válida mas sem modelos Gemini.');
           }
       } catch (error) {
-          // Tratamento de erro específico para chave
           if (error.message.includes('key') || error.message.includes('400') || error.message.includes('403')) {
               showNotification('error', 'Problema com a Chave API. Verifique nas configurações.');
           } else {
@@ -347,7 +367,6 @@ export default function App() {
 
     } catch (error) {
       console.error(error);
-      // Tratamento de erro amigável para JSON e Key
       if (error.message.includes('JSON')) {
           showNotification('error', 'Erro de formatação da IA. Tente novamente.');
       } else if (error.message.includes('key') || error.message.includes('400') || error.message.includes('403')) {
@@ -400,10 +419,15 @@ export default function App() {
       }
   };
 
-  const approveAllDrafts = async () => {
-    if (parsedQuestions.length === 0) return;
-    if (!window.confirm(`Deseja aprovar e publicar TODAS as ${parsedQuestions.length} questões da fila?`)) return;
+  // Abertura do Modal de Aprovar Tudo
+  const handleApproveAllClick = () => {
+      if (parsedQuestions.length === 0) return;
+      setShowApproveAllModal(true);
+  };
 
+  // Execução Real da Aprovação em Massa
+  const confirmApproveAll = async () => {
+    setShowApproveAllModal(false); // Fecha o modal
     setIsSavingAll(true);
     let successCount = 0;
     const queue = [...parsedQuestions];
@@ -483,7 +507,16 @@ export default function App() {
           </div>
           
           <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
-            <button onClick={() => { setTempApiKey(apiKey); setShowApiKeyModal(true); }} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-2 text-sm font-medium"><Settings size={18} /><span className="hidden md:inline">API</span></button>
+            <button 
+                onClick={() => { setTempApiKey(apiKey); setShowApiKeyModal(true); }} 
+                className={`p-2 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium border ${keySource === 'global' ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200'}`}
+                title={keySource === 'global' ? "Chave Global (Banco de Dados)" : "Chave Local"}
+            >
+                <Settings size={18} />
+                <span className="hidden md:inline">API</span>
+                {keySource === 'global' ? <Globe size={14} className="ml-1" /> : <HardDrive size={14} className="ml-1" />}
+            </button>
+
             <div className="relative group flex-1 md:flex-none w-full md:w-auto flex items-center gap-2">
                 <div className="relative">
                     <Cpu size={16} className="absolute left-3 top-3 text-gray-500" />
@@ -556,6 +589,34 @@ export default function App() {
           </div>
       )}
 
+      {/* APPROVE ALL MODAL (NOVO) */}
+      {showApproveAllModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <h2 className="text-xl font-bold mb-2 text-emerald-800 text-center flex items-center justify-center gap-2">
+                      <CheckCircle className="text-emerald-600" /> Aprovar Tudo
+                  </h2>
+                  <p className="text-gray-600 text-center mb-6">
+                      Deseja aprovar e publicar <b>TODAS</b> as {parsedQuestions.length} questões da fila? Isso vai enviar todas para o banco de dados principal.
+                  </p>
+                  <div className="flex gap-3 justify-center">
+                      <button 
+                          onClick={() => setShowApproveAllModal(false)}
+                          className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button 
+                          onClick={confirmApproveAll}
+                          className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 shadow-lg transition-colors flex items-center gap-2"
+                      >
+                          Sim, Aprovar
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       <main className="max-w-7xl mx-auto p-4 md:p-6">
         <div className="flex justify-center mb-8">
             <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex">
@@ -612,7 +673,11 @@ export default function App() {
                             <CloudLightning size={20} />
                             <span className="font-bold">Fila de Aprovação (Banco de Dados)</span>
                         </div>
-                        <button onClick={approveAllDrafts} disabled={isSavingAll} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg shadow-emerald-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed">
+                        <button 
+                            onClick={handleApproveAllClick} 
+                            disabled={isSavingAll} 
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg shadow-emerald-200 flex items-center gap-2 transition-all transform hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
+                        >
                             {isSavingAll ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle size={18} />}
                             {isSavingAll ? 'Aprovando...' : 'Aprovar Tudo'}
                         </button>
