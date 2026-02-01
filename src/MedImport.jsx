@@ -75,7 +75,7 @@ export default function App() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
   
-  // Estado para o Modal de Exclusão (Substitui window.confirm)
+  // Estado para o Modal de Exclusão
   const [itemToDelete, setItemToDelete] = useState(null);
   
   // Login Inputs
@@ -91,7 +91,7 @@ export default function App() {
                 const userDoc = await getDoc(userDocRef);
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
-                    fetchGlobalApiKey();
+                    // fetchGlobalApiKey removido daqui para usar o listener em tempo real abaixo
                 } else {
                     await signOut(auth);
                     setUser(null);
@@ -110,21 +110,28 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- BUSCAR API KEY GERAL ---
-  const fetchGlobalApiKey = async () => {
-      try {
-          const settingsRef = doc(db, "settings", "global");
-          const settingsSnap = await getDoc(settingsRef);
-          
-          if (settingsSnap.exists() && settingsSnap.data().geminiApiKey) {
-              const globalKey = settingsSnap.data().geminiApiKey;
-              setApiKey(globalKey);
-              localStorage.setItem('gemini_api_key', globalKey);
+  // --- LISTENER DE CONFIGURAÇÃO GERAL (SYNC AUTOMÁTICO DA KEY) ---
+  useEffect(() => {
+      if (!user) return;
+
+      // Escuta mudanças no documento settings/global
+      const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+          if (docSnap.exists() && docSnap.data().geminiApiKey) {
+              const globalKey = docSnap.data().geminiApiKey;
+              // Atualiza o estado se a chave do banco for diferente da atual
+              if (globalKey !== apiKey) {
+                  setApiKey(globalKey);
+                  localStorage.setItem('gemini_api_key', globalKey);
+                  // Opcional: Avisar que atualizou (comentei para não ser chato)
+                  // showNotification('success', 'Chave API atualizada automaticamente!');
+              }
           }
-      } catch (error) {
-          console.error("Erro ao buscar chave global:", error);
-      }
-  };
+      }, (error) => {
+          console.error("Erro ao sincronizar chave global:", error);
+      });
+
+      return () => unsubscribe();
+  }, [user, apiKey]); // Dependência apiKey para comparar mudanças
 
   // --- LISTENER DE RASCUNHOS ---
   useEffect(() => {
@@ -162,8 +169,7 @@ export default function App() {
               updatedAt: new Date().toISOString()
           }, { merge: true });
 
-          setApiKey(tempApiKey);
-          localStorage.setItem('gemini_api_key', tempApiKey);
+          // O listener useEffect acima vai pegar a mudança e atualizar o estado local automaticamente
           setShowApiKeyModal(false);
           showNotification('success', 'Chave API salva no Banco de Dados Geral!');
       } catch (error) {
@@ -229,6 +235,7 @@ export default function App() {
       try {
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
           const data = await response.json();
+          
           if (data.error) throw new Error(data.error.message);
           if (!data.models) throw new Error("Sem acesso a modelos.");
 
@@ -240,12 +247,17 @@ export default function App() {
               setAvailableModels(genModels);
               const flash25 = genModels.find(m => m.name.includes('2.5-flash') && !m.name.includes('lite'));
               if (flash25) setSelectedModel(flash25.name);
-              showNotification('success', `${genModels.length} modelos liberados e sincronizados!`);
+              showNotification('success', `${genModels.length} modelos liberados!`);
           } else {
               showNotification('error', 'Chave válida mas sem modelos Gemini.');
           }
       } catch (error) {
-          showNotification('error', `Erro na chave: ${error.message}`);
+          // Tratamento de erro específico para chave
+          if (error.message.includes('key') || error.message.includes('400') || error.message.includes('403')) {
+              showNotification('error', 'Problema com a Chave API. Verifique nas configurações.');
+          } else {
+              showNotification('error', `Erro na chave: ${error.message}`);
+          }
       } finally {
           setIsValidatingKey(false);
       }
@@ -335,8 +347,11 @@ export default function App() {
 
     } catch (error) {
       console.error(error);
+      // Tratamento de erro amigável para JSON e Key
       if (error.message.includes('JSON')) {
           showNotification('error', 'Erro de formatação da IA. Tente novamente.');
+      } else if (error.message.includes('key') || error.message.includes('400') || error.message.includes('403')) {
+          showNotification('error', 'Problema com a Chave API. Verifique nas configurações.');
       } else {
           showNotification('error', 'Erro: ' + error.message);
       }
@@ -369,19 +384,16 @@ export default function App() {
     }
   };
 
-  // Função chamada pelo botão de descartar (Abre o Modal)
   const requestDiscard = (q) => {
       setItemToDelete(q);
   };
 
-  // Função que executa a exclusão de fato
   const confirmDiscard = async () => {
       if (!itemToDelete || !itemToDelete.id) return;
-      
       try {
           await deleteDoc(doc(db, "draft_questions", itemToDelete.id));
           showNotification('info', 'Rascunho excluído.');
-          setItemToDelete(null); // Fecha o modal
+          setItemToDelete(null);
       } catch (error) {
           console.error(error);
           showNotification('error', 'Erro ao excluir.');
