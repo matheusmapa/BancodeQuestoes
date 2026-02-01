@@ -1075,7 +1075,7 @@ function Dashboard({ user, onLogout }) {
                 <SidebarItem 
                 icon={Brain} 
                 label="MedImport AI" 
-                onClick={() => window.location.href = '/medimport.html'} 
+                onClick={() => window.location.href = '/import.html'} 
                 />
             </>
           )}
@@ -1104,7 +1104,7 @@ function Dashboard({ user, onLogout }) {
                         <div className="mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Administração</div>
                         <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} />
                         <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} />
-                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/medimport.html'} />
+                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} />
                     </>
                 )}
 
