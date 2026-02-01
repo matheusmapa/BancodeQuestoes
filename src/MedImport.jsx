@@ -9,7 +9,7 @@ import {
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy 
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc 
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
@@ -47,7 +47,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   
-  // Chave API FIXA (Padrão)
+  // Chave API FIXA (Fallback Inicial)
   const DEFAULT_KEY = 'AIzaSyDzH8eYaJTdlNGM17CUE0eyCEYPo6lTupA';
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || DEFAULT_KEY);
   
@@ -62,8 +62,9 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [isSavingKey, setIsSavingKey] = useState(false); // Loading state para salvar chave
   
-  // parsedQuestions agora reflete os RASCUNHOS do Firebase, não estado local puro
+  // parsedQuestions reflete os RASCUNHOS do Firebase
   const [parsedQuestions, setParsedQuestions] = useState([]);
   
   const [activeTab, setActiveTab] = useState('input');
@@ -87,6 +88,8 @@ export default function App() {
                 const userDoc = await getDoc(userDocRef);
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
+                    // --- PUXAR API KEY GERAL DO BANCO AO LOGAR ---
+                    fetchGlobalApiKey();
                 } else {
                     await signOut(auth);
                     setUser(null);
@@ -105,6 +108,23 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // --- BUSCAR API KEY GERAL ---
+  const fetchGlobalApiKey = async () => {
+      try {
+          const settingsRef = doc(db, "settings", "global");
+          const settingsSnap = await getDoc(settingsRef);
+          
+          if (settingsSnap.exists() && settingsSnap.data().geminiApiKey) {
+              const globalKey = settingsSnap.data().geminiApiKey;
+              setApiKey(globalKey);
+              localStorage.setItem('gemini_api_key', globalKey); // Atualiza cache local
+              // showNotification('success', 'Chave API sincronizada com o banco de dados.');
+          }
+      } catch (error) {
+          console.error("Erro ao buscar chave global:", error);
+      }
+  };
+
   // --- LISTENER DE RASCUNHOS (REAL-TIME) ---
   useEffect(() => {
       if (!user) {
@@ -118,8 +138,8 @@ export default function App() {
       const unsubscribe = onSnapshot(q, (snapshot) => {
           const drafts = snapshot.docs.map(doc => ({
               ...doc.data(),
-              id: doc.id, // Importante: ID do documento para poder deletar/aprovar
-              status: 'draft' // Marcador visual
+              id: doc.id,
+              status: 'draft'
           }));
           setParsedQuestions(drafts);
       }, (error) => {
@@ -131,9 +151,30 @@ export default function App() {
   }, [user]);
 
   // --- HELPER FUNCTIONS ---
-  const handleSaveKey = (key) => {
-    setApiKey(key);
-    localStorage.setItem('gemini_api_key', key);
+  
+  // Salvar API Key (NO BANCO GERAL)
+  const saveApiKeyFromModal = async () => {
+      if (!tempApiKey.trim()) return showNotification('error', 'A chave não pode estar vazia.');
+      
+      setIsSavingKey(true);
+      try {
+          // Salva no documento 'settings/global'
+          await setDoc(doc(db, "settings", "global"), {
+              geminiApiKey: tempApiKey,
+              updatedBy: user.email,
+              updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          setApiKey(tempApiKey);
+          localStorage.setItem('gemini_api_key', tempApiKey);
+          setShowApiKeyModal(false);
+          showNotification('success', 'Chave API salva no Banco de Dados Geral!');
+      } catch (error) {
+          console.error(error);
+          showNotification('error', 'Erro ao salvar chave no banco: ' + error.message);
+      } finally {
+          setIsSavingKey(false);
+      }
   };
 
   const handleModelChange = (modelName) => {
@@ -185,7 +226,7 @@ export default function App() {
       }
   };
 
-  // --- PROCESSAMENTO IA (ENVIA PARA DRAFT_QUESTIONS) ---
+  // --- PROCESSAMENTO IA ---
   const processWithAI = async () => {
     if (!apiKey) return showNotification('error', 'Chave API inválida.');
     if (activeTab === 'input' && !rawText.trim()) return showNotification('error', 'Cole o texto.');
@@ -249,7 +290,6 @@ export default function App() {
         questions = JSON.parse(jsonString);
       }
       
-      // SALVA NO BANCO DE RASCUNHOS (DRAFT)
       let savedCount = 0;
       for (const q of questions) {
           await addDoc(collection(db, "draft_questions"), {
@@ -281,34 +321,23 @@ export default function App() {
   };
 
   // --- ACTIONS DE APROVAÇÃO ---
-  
-  // Aprovar (Mover de Draft -> Questions)
   const approveQuestion = async (index) => {
     const q = parsedQuestions[index];
-    
-    // Validação básica
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
       return showNotification('error', 'Preencha os campos obrigatórios antes de aprovar.');
     }
 
     try {
-      // 1. Prepara dados para coleção final (remove ID do draft e metadata extra)
       const { id, status, createdAt, createdBy, ...finalData } = q;
-      
-      // 2. Adiciona na coleção oficial
       await addDoc(collection(db, "questions"), {
         ...finalData,
-        createdAt: new Date().toISOString(), // Data da aprovação
+        createdAt: new Date().toISOString(),
         approvedBy: user.email,
         hasImage: false
       });
-
-      // 3. Remove da fila de rascunhos
       await deleteDoc(doc(db, "draft_questions", id));
-
       showNotification('success', 'Questão aprovada e publicada!');
       return true;
-
     } catch (error) {
       console.error(error);
       showNotification('error', 'Erro ao aprovar. Verifique permissões.');
@@ -316,11 +345,9 @@ export default function App() {
     }
   };
 
-  // Descartar (Apagar do Draft)
   const discardQuestion = async (index) => {
       const q = parsedQuestions[index];
       if (!window.confirm("Tem certeza que deseja excluir este rascunho permanentemente?")) return;
-      
       try {
           await deleteDoc(doc(db, "draft_questions", q.id));
           showNotification('info', 'Rascunho excluído.');
@@ -330,46 +357,36 @@ export default function App() {
       }
   };
 
-  // Aprovar Todos
   const approveAllDrafts = async () => {
     if (parsedQuestions.length === 0) return;
     if (!window.confirm(`Deseja aprovar e publicar TODAS as ${parsedQuestions.length} questões da fila?`)) return;
 
     setIsSavingAll(true);
     let successCount = 0;
-
-    // Copia array para evitar problemas de índice enquanto deleta
     const queue = [...parsedQuestions];
 
     for (let i = 0; i < queue.length; i++) {
-        // Precisamos encontrar o índice atual no state principal ou passar o objeto direto
-        // Como approveQuestion usa index do state, vamos adaptar a logica aqui para ser direta
         try {
             const q = queue[i];
             const { id, status, createdAt, createdBy, ...finalData } = q;
-            
             await addDoc(collection(db, "questions"), {
                 ...finalData,
                 createdAt: new Date().toISOString(),
                 approvedBy: user.email,
                 hasImage: false
             });
-            
             await deleteDoc(doc(db, "draft_questions", id));
             successCount++;
-            
         } catch (err) {
             console.error("Erro ao aprovar em massa:", err);
         }
-        await new Promise(r => setTimeout(r, 100)); // Rate limit
+        await new Promise(r => setTimeout(r, 100));
     }
 
     setIsSavingAll(false);
     showNotification('success', `${successCount} questões aprovadas!`);
   };
 
-  // Funções de Edição Local (Edita o objeto na memória antes de salvar)
-  // Nota: Isso edita apenas a visualização local. Se der refresh antes de salvar, volta ao que está no banco.
   const updateQuestionField = (idx, field, val) => {
       const newQ = [...parsedQuestions];
       newQ[idx][field] = val;
@@ -381,7 +398,36 @@ export default function App() {
       setParsedQuestions(newQ);
   };
 
-  // --- RENDERIZADORES ---
+  // --- AUTO-DIAGNÓSTICO ---
+  const validateKeyAndFetchModels = async () => {
+      if (!apiKey) return showNotification('error', 'Configure uma chave API primeiro.');
+      setIsValidatingKey(true);
+      try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          if (!data.models) throw new Error("Sem acesso a modelos.");
+
+          const genModels = data.models.filter(m => 
+              m.supportedGenerationMethods?.includes("generateContent") && (m.name.includes("gemini"))
+          );
+          
+          if (genModels.length > 0) {
+              setAvailableModels(genModels);
+              const flash25 = genModels.find(m => m.name.includes('2.5-flash') && !m.name.includes('lite'));
+              if (flash25) setSelectedModel(flash25.name);
+              showNotification('success', `${genModels.length} modelos liberados e sincronizados!`);
+          } else {
+              showNotification('error', 'Chave válida mas sem modelos Gemini.');
+          }
+      } catch (error) {
+          showNotification('error', `Erro na chave: ${error.message}`);
+      } finally {
+          setIsValidatingKey(false);
+      }
+  };
+
+  // --- RENDER LOGIN ---
   const renderLogin = () => (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
         <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-300">
@@ -422,6 +468,9 @@ export default function App() {
                         {availableModels.map(model => (<option key={model.name} value={model.name}>{model.displayName || model.name}</option>))}
                     </select>
                 </div>
+                <button onClick={validateKeyAndFetchModels} disabled={isValidatingKey || !apiKey} className="p-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50" title="Sincronizar Modelos">
+                    {isValidatingKey ? <Loader2 size={18} className="animate-spin"/> : <RefreshCw size={18} />}
+                </button>
             </div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Sair"><LogOut size={20} /></button>
           </div>
@@ -443,12 +492,20 @@ export default function App() {
                   <button onClick={() => setShowApiKeyModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
                   <h2 className="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2"><Settings size={20} className="text-blue-600"/> Configurar API Gemini</h2>
                   <div className="mb-4">
-                      <label className="block text-sm font-bold text-gray-600 mb-2">Chave da API</label>
+                      <label className="block text-sm font-bold text-gray-600 mb-2">Chave da API (Global)</label>
                       <input type="password" value={tempApiKey} onChange={e => setTempApiKey(e.target.value)} className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="AIza..."/>
+                      <p className="text-xs text-gray-500 mt-2">Atenção: Ao salvar, essa chave será usada por TODOS os administradores.</p>
                   </div>
                   <div className="flex justify-end gap-3">
                       <button onClick={() => setShowApiKeyModal(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold">Cancelar</button>
-                      <button onClick={() => { setApiKey(tempApiKey); localStorage.setItem('gemini_api_key', tempApiKey); setShowApiKeyModal(false); showNotification('success', 'Chave salva!'); }} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg">Salvar</button>
+                      <button 
+                        onClick={saveApiKeyFromModal} 
+                        disabled={isSavingKey}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2"
+                      >
+                          {isSavingKey ? <Loader2 size={16} className="animate-spin" /> : null}
+                          Salvar Global
+                      </button>
                   </div>
               </div>
           </div>
@@ -466,7 +523,7 @@ export default function App() {
             </div>
         </div>
 
-        {/* INPUT TABS (TEXTO E IMAGEM) */}
+        {/* INPUT TABS */}
         {(activeTab === 'input' || activeTab === 'image') && (
             <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
@@ -501,7 +558,7 @@ export default function App() {
             </div>
         )}
 
-        {/* REVIEW TAB (AGORA CONECTADA AO FIREBASE) */}
+        {/* REVIEW TAB */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
                 {parsedQuestions.length > 0 && (
