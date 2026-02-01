@@ -218,17 +218,56 @@ function CopyButton({ text, className }) {
     );
 }
 
+// --- TOAST NOTIFICATIONS ---
+// Componente para notificações flutuantes (substitui alerts)
+function ToastContainer({ toasts, removeToast }) {
+    return (
+        <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
+            {toasts.map(toast => (
+                <div 
+                    key={toast.id} 
+                    className={`
+                        pointer-events-auto flex items-center gap-3 p-4 rounded-xl shadow-xl border w-80 animate-in slide-in-from-right-full fade-in duration-300
+                        ${toast.type === 'success' ? 'bg-white border-emerald-100 text-emerald-800' : 
+                          toast.type === 'error' ? 'bg-white border-red-100 text-red-800' : 
+                          'bg-white border-blue-100 text-blue-800'}
+                    `}
+                >
+                    <div className={`
+                        p-2 rounded-full flex-shrink-0
+                        ${toast.type === 'success' ? 'bg-emerald-100 text-emerald-600' : 
+                          toast.type === 'error' ? 'bg-red-100 text-red-600' : 
+                          'bg-blue-100 text-blue-600'}
+                    `}>
+                        {toast.type === 'success' ? <Check size={20} /> : 
+                         toast.type === 'error' ? <AlertTriangle size={20} /> : 
+                         <Info size={20} />}
+                    </div>
+                    <div className="flex-1">
+                        <h4 className="font-bold text-sm">{toast.title}</h4>
+                        <p className="text-xs opacity-90 mt-0.5">{toast.message}</p>
+                    </div>
+                    <button onClick={() => removeToast(toast.id)} className="text-gray-400 hover:text-gray-600">
+                        <X size={16} />
+                    </button>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 // --- MODAIS GLOBAIS ---
-function ReportModal({ isOpen, onClose, questionId, type, userId }) {
+function ReportModal({ isOpen, onClose, questionId, type, userId, addToast }) {
     const [suggestedInstitution, setSuggestedInstitution] = useState('');
     const [suggestedYear, setSuggestedYear] = useState('');
     const [errorCategory, setErrorCategory] = useState('');
     const [details, setDetails] = useState(''); 
     const [isSending, setIsSending] = useState(false);
 
+    // Validação de estado
     const isValid = type === 'error' 
-        ? !!errorCategory 
-        : (!!suggestedInstitution.trim() || !!suggestedYear.trim());
+        ? !!errorCategory // Erro: precisa ter categoria
+        : (!!suggestedInstitution.trim() || !!suggestedYear.trim()); // Sugestão: pelo menos um dos campos
 
     useEffect(() => {
         if(isOpen) {
@@ -242,13 +281,31 @@ function ReportModal({ isOpen, onClose, questionId, type, userId }) {
 
     if (!isOpen) return null;
 
-    const errorOptions = ["Enunciado incorreto/confuso", "Alternativas com erro", "Gabarito errado", "Área errada", "Tema errado", "Instituição errada", "Ano errado", "Questão repetida", "Outro"];
+    const errorOptions = [
+        "Enunciado incorreto/confuso",
+        "Alternativas com erro",
+        "Gabarito errado",
+        "Área errada",
+        "Tema errado",
+        "Instituição errada",
+        "Ano errado",
+        "Questão repetida",
+        "Outro"
+    ];
 
     const handleSubmit = async () => {
         if (!isValid) return;
+
         setIsSending(true);
         try {
-            const reportData = { questionId, userId: userId || 'anonymous', type, status: 'pending', createdAt: new Date().toISOString() };
+            const reportData = {
+                questionId,
+                userId: userId || 'anonymous',
+                type,
+                status: 'pending',
+                createdAt: new Date().toISOString()
+            };
+
             if (type === 'suggestion') {
                 reportData.category = 'suggestion_update';
                 reportData.suggestedInstitution = suggestedInstitution;
@@ -258,10 +315,18 @@ function ReportModal({ isOpen, onClose, questionId, type, userId }) {
                 reportData.category = errorCategory;
                 reportData.details = details;
             }
+            
             await addDoc(collection(db, "reports"), reportData);
-            alert("Obrigado! Sua colaboração foi enviada para análise.");
+            
+            // Substituído alert por addToast
+            addToast('Recebido!', 'Sua colaboração foi enviada para análise.', 'success');
             onClose();
-        } catch (error) { console.error(error); alert("Erro ao enviar reporte."); } finally { setIsSending(false); }
+        } catch (error) {
+            console.error(error);
+            addToast('Erro', 'Não foi possível enviar o reporte.', 'error');
+        } finally {
+            setIsSending(false);
+        }
     };
 
     return (
@@ -273,24 +338,78 @@ function ReportModal({ isOpen, onClose, questionId, type, userId }) {
                     </h3>
                     <button onClick={onClose}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
                 </div>
+
                 {type === 'suggestion' ? (
                     <div className="space-y-4 mb-6">
-                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3"><p className="text-sm text-blue-800">Preencha a Banca <strong>E/OU</strong> o Ano desta questão.</p></div>
-                        <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Banca / Prova</label><input type="text" value={suggestedInstitution} onChange={e => setSuggestedInstitution(e.target.value)} placeholder="Ex: USP, ENARE, SURCE..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div>
-                        <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ano</label><input type="text" value={suggestedYear} onChange={e => setSuggestedYear(e.target.value)} placeholder="Ex: 2023, 2024, 2023/1..." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div>
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-sm text-blue-800">
+                                Preencha a Banca <strong>E/OU</strong> o Ano desta questão.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Banca / Prova</label>
+                            <input 
+                                type="text"
+                                value={suggestedInstitution}
+                                onChange={e => setSuggestedInstitution(e.target.value)}
+                                placeholder="Ex: USP, ENARE, SURCE..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ano</label>
+                            <input 
+                                type="text"
+                                value={suggestedYear}
+                                onChange={e => setSuggestedYear(e.target.value)}
+                                placeholder="Ex: 2023, 2024, 2023/1..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
                     </div>
                 ) : (
+                    // --- MODO ERRO ---
                     <>
                         <div className="space-y-3 mb-4">
                             <p className="text-sm text-gray-500">Qual o problema com esta questão?</p>
-                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">{errorOptions.map(opt => (<label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}><input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" /><span className="text-sm font-medium">{opt}</span></label>))}</div>
+                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                {errorOptions.map(opt => (
+                                    <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+                                        <input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" />
+                                        <span className="text-sm font-medium">{opt}</span>
+                                    </label>
+                                ))}
+                            </div>
                         </div>
-                        <div className="mb-6"><label className="block text-sm font-bold text-slate-700 mb-2">Detalhes (Opcional)</label><textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Descreva melhor o erro encontrado..." className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none" rows={3} /></div>
+
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                Detalhes (Opcional)
+                            </label>
+                            <textarea 
+                                value={details} 
+                                onChange={e => setDetails(e.target.value)}
+                                placeholder="Descreva melhor o erro encontrado..."
+                                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                rows={3}
+                            />
+                        </div>
                     </>
                 )}
+
                 <div className="flex gap-3">
                     <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
-                    <button onClick={handleSubmit} disabled={isSending || !isValid} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}>{isSending ? 'Enviando...' : 'Enviar'}</button>
+                    <button 
+                        onClick={handleSubmit} 
+                        disabled={isSending || !isValid} 
+                        className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 
+                            ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}
+                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}
+                    >
+                        {isSending ? 'Enviando...' : 'Enviar'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -301,11 +420,34 @@ function ExitConfirmationModal({ onClose, onConfirmExit, onSaveAndExit }) {
     return (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
-                <div className="text-center mb-6"><div className="bg-orange-100 p-4 rounded-full text-orange-600 inline-flex mb-4"><AlertCircle size={36} /></div><h3 className="text-xl font-bold text-slate-900 mb-2">Simulado em Andamento!</h3><p className="text-slate-500 text-sm leading-relaxed">Se você sair agora sem salvar, <strong>seu progresso será perdido</strong>. O que deseja fazer?</p></div>
+                <div className="text-center mb-6">
+                    <div className="bg-orange-100 p-4 rounded-full text-orange-600 inline-flex mb-4">
+                        <AlertCircle size={36} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-2">Simulado em Andamento!</h3>
+                    <p className="text-slate-500 text-sm leading-relaxed">
+                        Se você sair agora sem salvar, <strong>seu progresso será perdido</strong>. O que deseja fazer?
+                    </p>
+                </div>
                 <div className="flex flex-col gap-3">
-                    <button onClick={onSaveAndExit} className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors flex items-center justify-center gap-2"><Save size={18} /> Salvar e Sair</button>
-                    <button onClick={onConfirmExit} className="w-full py-3.5 rounded-xl border border-red-200 text-red-600 font-bold hover:bg-red-50 transition-colors">Sair sem Salvar</button>
-                    <button onClick={onClose} className="w-full py-3.5 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Continuar no Simulado</button>
+                    <button 
+                        onClick={onSaveAndExit} 
+                        className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Save size={18} /> Salvar e Sair
+                    </button>
+                    <button 
+                        onClick={onConfirmExit} 
+                        className="w-full py-3.5 rounded-xl border border-red-200 text-red-600 font-bold hover:bg-red-50 transition-colors"
+                    >
+                        Sair sem Salvar
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        className="w-full py-3.5 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors"
+                    >
+                        Continuar no Simulado
+                    </button>
                 </div>
             </div>
         </div>
@@ -317,12 +459,19 @@ function NotificationModal({ title, message, onClose, onConfirm, type = 'info', 
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
         <div className="flex flex-col items-center text-center">
-          <div className={`p-3 rounded-full mb-4 ${type === 'error' || isDangerous ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{type === 'error' || isDangerous ? <AlertTriangle size={32} /> : <Info size={32} />}</div>
+          <div className={`p-3 rounded-full mb-4 ${type === 'error' || isDangerous ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+             {type === 'error' || isDangerous ? <AlertTriangle size={32} /> : <Info size={32} />}
+          </div>
           <h3 className="text-xl font-bold text-slate-900 mb-2">{title}</h3>
           <p className="text-slate-500 mb-6 text-sm leading-relaxed">{message}</p>
           {onConfirm ? (
-             <div className="flex gap-3 w-full"><button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">{cancelText}</button><button onClick={() => { onConfirm(); onClose(); }} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors ${isDangerous ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}>{confirmText}</button></div>
-          ) : (<button onClick={onClose} className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-colors">{confirmText}</button>)}
+             <div className="flex gap-3 w-full">
+                <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">{cancelText}</button>
+                <button onClick={() => { onConfirm(); onClose(); }} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors ${isDangerous ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}>{confirmText}</button>
+             </div>
+          ) : (
+            <button onClick={onClose} className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-colors">{confirmText}</button>
+          )}
         </div>
       </div>
     </div>
@@ -334,9 +483,21 @@ function GoalModal({ currentGoal, onSave, onClose }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
-        <div className="text-center mb-6"><div className="bg-blue-100 p-3 rounded-full text-blue-600 inline-flex mb-4"><Target size={32} /></div><h3 className="text-xl font-bold text-slate-900 mb-2">Meta Diária</h3><p className="text-slate-500 text-sm">Quantas questões você quer resolver hoje?</p></div>
-        <div className="flex justify-center mb-8"><div className="relative"><input type="number" min="1" max="200" value={goal} onChange={(e) => setGoal(Number(e.target.value))} className="w-32 px-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-3xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800" /><span className="absolute -right-8 top-1/2 -translate-y-1/2 text-gray-400 font-medium">/dia</span></div></div>
-        <div className="flex gap-3 w-full"><button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancelar</button><button onClick={() => onSave(goal)} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors">Salvar Meta</button></div>
+        <div className="text-center mb-6">
+          <div className="bg-blue-100 p-3 rounded-full text-blue-600 inline-flex mb-4"><Target size={32} /></div>
+          <h3 className="text-xl font-bold text-slate-900 mb-2">Meta Diária</h3>
+          <p className="text-slate-500 text-sm">Quantas questões você quer resolver hoje?</p>
+        </div>
+        <div className="flex justify-center mb-8">
+            <div className="relative">
+                <input type="number" min="1" max="200" value={goal} onChange={(e) => setGoal(Number(e.target.value))} className="w-32 px-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-3xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800" />
+                <span className="absolute -right-8 top-1/2 -translate-y-1/2 text-gray-400 font-medium">/dia</span>
+            </div>
+        </div>
+        <div className="flex gap-3 w-full">
+            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancelar</button>
+            <button onClick={() => onSave(goal)} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors">Salvar Meta</button>
+        </div>
       </div>
     </div>
   );
@@ -372,37 +533,6 @@ function ChangePasswordModal({ onClose, onSave, isLoading }) {
   );
 }
 
-function CreateStudentModal({ onClose, onSave, isLoading }) {
-    const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [role, setRole] = useState('student');
-    const [error, setError] = useState('');
-
-    const handleSubmit = () => {
-        setError('');
-        if(!name || !email || !password) return setError("Preencha todos os campos");
-        if(password.length < 6) return setError("A senha deve ter no mínimo 6 caracteres");
-        onSave({ name, email, password, role });
-    }
-
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
-                <div className="flex items-center gap-3 mb-6"><div className="bg-blue-100 p-3 rounded-full text-blue-600"><UserPlus size={24} /></div><h3 className="text-xl font-bold text-slate-900">Novo Aluno</h3></div>
-                {error && <p className="text-sm text-red-600 mb-4 bg-red-50 p-3 rounded-lg font-medium">{error}</p>}
-                <div className="space-y-4 mb-8">
-                    <div><label className="block text-sm font-bold text-slate-700 mb-1">Nome</label><input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Nome do aluno" /></div>
-                    <div><label className="block text-sm font-bold text-slate-700 mb-1">E-mail</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="email@exemplo.com" /></div>
-                    <div><label className="block text-sm font-bold text-slate-700 mb-1">Senha</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Senha provisória" /></div>
-                    <div><label className="block text-sm font-bold text-slate-700 mb-1">Função</label><select value={role} onChange={e => setRole(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
-                </div>
-                <div className="flex gap-3"><button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancelar</button><button onClick={handleSubmit} disabled={isLoading} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-lg shadow-blue-200">{isLoading ? 'Criando...' : 'Criar Aluno'}</button></div>
-            </div>
-        </div>
-    )
-}
-
 // --- APP COMPONENT ---
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -410,43 +540,57 @@ export default function App() {
   const [globalLoginError, setGlobalLoginError] = useState('');
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeDoc = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      unsubscribeDoc(); // Limpa listener anterior se houver
+
       if (user) {
-        try {
-            const docRef = doc(db, "users", user.uid);
-            const docSnap = await getDoc(docRef);
-            
+        // setIsLoading(true); // Opcional: mostrar loading enquanto busca dados atualizados
+        const docRef = doc(db, "users", user.uid);
+        
+        unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 const userData = docSnap.data();
+                
+                // Verificação de Assinatura
                 if (userData.role !== 'admin') {
                     const subDate = userData.subscriptionUntil ? new Date(userData.subscriptionUntil) : null;
                     const now = new Date();
                     if (!subDate || subDate < now) {
-                        await signOut(auth);
+                        signOut(auth);
                         setGlobalLoginError("Sua matrícula venceu, contate um administrador para efetivar novamente.");
                         setCurrentUser(null);
                         setIsLoading(false);
                         return;
                     }
                 }
+                
                 setGlobalLoginError(''); 
+                // Atualiza o estado com dados do Auth + Firestore em tempo real
                 setCurrentUser({ ...user, ...userData }); 
             } else {
-                await signOut(auth);
+                signOut(auth);
                 setGlobalLoginError("Conta não encontrada. Contate o suporte.");
                 setCurrentUser(null);
             }
-        } catch (error) {
+            setIsLoading(false);
+        }, (error) => {
             console.error("Erro ao buscar perfil:", error);
             setGlobalLoginError("Erro ao verificar conta.");
             setCurrentUser(null);
-        }
+            setIsLoading(false);
+        });
       } else {
         setCurrentUser(null);
+        setIsLoading(false);
       }
-      setIsLoading(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+        unsubscribeAuth();
+        unsubscribeDoc();
+    };
   }, []);
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
@@ -517,18 +661,32 @@ function Dashboard({ user, onLogout }) {
   const [dailyGoal, setDailyGoal] = useState(user.dailyGoal || 50);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   
-  // States para Sidebar e Navegação Segura
+  // States para Sidebar, Navegação Segura e Toasts
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isExitModalOpen, setIsExitModalOpen] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState(null);
+  const [toasts, setToasts] = useState([]);
   
-  // Ref para guardar o estado atual do simulado em tempo real (para salvar se o user quiser sair)
+  // Ref para guardar o estado atual do simulado
   const examStateRef = useRef(null);
 
   const [allQuestions, setAllQuestions] = useState([]);
   const [mySimulations, setMySimulations] = useState([]);
   const [lastExamResults, setLastExamResults] = useState(null);
   const [userStats, setUserStats] = useState({ questionsToday: 0, correctAnswers: 0, totalAnswers: 0, streak: 0 });
+
+  // --- TOAST FUNCTION ---
+  const addToast = (title, message, type = 'info') => {
+      const id = Date.now();
+      setToasts(prev => [...prev, { id, title, message, type }]);
+      setTimeout(() => {
+          setToasts(prev => prev.filter(t => t.id !== id));
+      }, 3000); // 3 segundos
+  };
+
+  const removeToast = (id) => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   useEffect(() => {
     const q = query(collection(db, "questions"));
@@ -665,7 +823,8 @@ function Dashboard({ user, onLogout }) {
             lastIndex: currentIndex
         };
         await setDoc(doc(db, `users/${user.uid}/simulations`, simId), simData);
-        setNotification({ title: "Salvo!", message: "Seu progresso foi salvo. Você pode continuar depois em 'Meus Simulados'.", type: "success" });
+        // Toast ao invés de Modal de Sucesso
+        addToast('Progresso Salvo', 'Você pode continuar depois em "Meus Simulados".', 'success');
         setCurrentView('home'); 
         examStateRef.current = null;
     }
@@ -722,10 +881,10 @@ function Dashboard({ user, onLogout }) {
     if (!user) return;
     try {
         await deleteDoc(doc(db, `users/${user.uid}/simulations`, String(simId)));
-        setNotification({ title: "Excluído", message: "Simulado excluído com sucesso.", type: "success" });
+        addToast('Excluído', 'Simulado removido com sucesso.', 'success');
     } catch (error) {
         console.error("Erro ao excluir simulado:", error);
-        setNotification({ title: "Erro", message: "Não foi possível excluir o simulado.", type: "error" });
+        addToast('Erro', 'Não foi possível excluir o simulado.', 'error');
     }
   };
 
@@ -739,7 +898,7 @@ function Dashboard({ user, onLogout }) {
         questions = sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean);
     }
     if (questions.length === 0) {
-        setNotification({ title: "Erro", message: "Não foi possível carregar as questões deste simulado. Elas podem ter sido excluídas do banco.", type: "error" });
+        addToast('Erro', 'Não foi possível carregar as questões. Tente novamente.', 'error');
         return;
     }
     setActiveExamData({ questionsData: questions, answersData: sim.answersData || {}, currentIndex: sim.lastIndex || 0, id: sim.id });
@@ -754,6 +913,7 @@ function Dashboard({ user, onLogout }) {
      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
      await batch.commit();
      await setDoc(doc(db, "users", user.uid, "stats", "main"), { totalAnswers: 0, correctAnswers: 0 }, { merge: true });
+     addToast('Resetado', 'Histórico de questões resetado.', 'success');
   };
 
   const handleResetHistory = async () => {
@@ -764,6 +924,7 @@ function Dashboard({ user, onLogout }) {
     snapshot.docs.forEach((doc) => batch.delete(doc.ref));
     await batch.commit();
     await setDoc(doc(db, "users", user.uid, "stats", "main"), { questionsToday: 0, correctAnswers: 0, totalAnswers: 0, streak: 0, lastStudyDate: null });
+    addToast('Apagado', 'Todo o histórico foi apagado.', 'success');
   };
 
   const getSimulationForReview = () => {
@@ -779,22 +940,22 @@ function Dashboard({ user, onLogout }) {
     switch (currentView) {
       case 'home': return <HomeView user={user} userStats={userStats} dailyGoal={dailyGoal} accuracy={accuracy} streak={streak} dynamicAreas={dynamicAreas} setIsGoalModalOpen={setIsGoalModalOpen} setSelectedArea={setSelectedArea} setCurrentView={handleViewSwitch} realStats={realStats} />;
       case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => handleViewSwitch('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); handleViewSwitch('review_mode'); }} onDelete={handleDeleteSimulation} />;
-      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => handleViewSwitch('my_simulations')} user={user} />;
+      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => handleViewSwitch('my_simulations')} user={user} addToast={addToast} />;
       case 'general_exam_setup': return <GeneralExamSetupView onBack={() => handleViewSwitch('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
       case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => handleViewSwitch('home')} onStartTraining={() => handleViewSwitch('topic_selection')} />;
       case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => handleViewSwitch('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
-      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} user={user} onExit={() => handleViewSwitch('home')} onFinish={handleExamFinish} onPause={handleExamPause} onUpdateProgress={handleUpdateProgress} />;
+      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} user={user} onExit={() => handleViewSwitch('home')} onFinish={handleExamFinish} onPause={handleExamPause} onUpdateProgress={handleUpdateProgress} addToast={addToast} />;
       case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => handleViewSwitch('home')} onNewExam={() => handleViewSwitch('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); handleViewSwitch('review_mode'); }} />;
-      case 'settings': return <SettingsView user={user} onBack={() => handleViewSwitch('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} />;
+      case 'settings': return <SettingsView user={user} onBack={() => handleViewSwitch('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} addToast={addToast} />;
       case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => handleViewSwitch('home')} />;
-      case 'students_list': return <StudentsView onBack={() => handleViewSwitch('home')} />;
-      case 'add_question': return <AddQuestionView onBack={() => handleViewSwitch('home')} />;
+      case 'add_question': return <AddQuestionView onBack={() => handleViewSwitch('home')} addToast={addToast} />;
       default: return <div>Erro: View não encontrada</div>;
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 flex font-sans text-slate-800 relative">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       {isGoalModalOpen && <GoalModal currentGoal={dailyGoal} onSave={handleSaveGoal} onClose={() => setIsGoalModalOpen(false)} />}
       {notification && <NotificationModal title={notification.title} message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
       
@@ -847,7 +1008,6 @@ function Sidebar({ currentView, setCurrentView, onLogout, user, collapsed, toggl
                         <div className={`mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider ${collapsed ? 'text-center' : ''}`}>
                             {collapsed ? 'ADM' : 'Administração'}
                         </div>
-                        <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => setCurrentView('students_list')} collapsed={collapsed} />
                         <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => setCurrentView('add_question')} collapsed={collapsed} />
                         <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} collapsed={collapsed} />
                         <SidebarItem icon={Database} label="MedManager" onClick={() => { if(window) window.location.href = '/manager.html'; }} collapsed={collapsed} />
@@ -880,7 +1040,7 @@ function Sidebar({ currentView, setCurrentView, onLogout, user, collapsed, toggl
 }
 
 function MobileHeader({ isMobileMenuOpen, setIsMobileMenuOpen }) { return (<div className="md:hidden fixed top-0 w-full bg-white z-50 border-b border-gray-200 p-4 flex justify-between items-center shadow-sm"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Map className="w-6 h-6" />MedMaps</h1><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 hover:bg-gray-100 rounded-lg">{isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}</button></div>); }
-function MobileMenu({ currentView, setCurrentView, onLogout, user, setIsMobileMenuOpen }) { return (<div className="md:hidden fixed inset-0 z-40 bg-white pt-24 px-6 overflow-y-auto animate-in slide-in-from-top-10 duration-200"><nav className="flex flex-col space-y-2"><SidebarItem icon={BookOpen} label="Banco de Questões" active={['home', 'area_hub', 'topic_selection'].includes(currentView)} onClick={() => { setCurrentView('home'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={CheckCircle} label="Meus Simulados" active={['my_simulations', 'general_exam_setup', 'review_mode'].includes(currentView)} onClick={() => { setCurrentView('my_simulations'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { setCurrentView('performance'); setIsMobileMenuOpen(false); }} />{user.role === 'admin' && (<><SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} /><SidebarItem icon={Database} label="MedManager" onClick={() => { if(window) window.location.href = '/manager.html'; }} /></>)}<div className="h-px bg-gray-100 my-4"></div><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"><LogOut size={20} /> <span className="font-medium">Sair</span></button></nav></div>); }
+function MobileMenu({ currentView, setCurrentView, onLogout, user, setIsMobileMenuOpen }) { return (<div className="md:hidden fixed inset-0 z-40 bg-white pt-24 px-6 overflow-y-auto animate-in slide-in-from-top-10 duration-200"><nav className="flex flex-col space-y-2"><SidebarItem icon={BookOpen} label="Banco de Questões" active={['home', 'area_hub', 'topic_selection'].includes(currentView)} onClick={() => { setCurrentView('home'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={CheckCircle} label="Meus Simulados" active={['my_simulations', 'general_exam_setup', 'review_mode'].includes(currentView)} onClick={() => { setCurrentView('my_simulations'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { setCurrentView('performance'); setIsMobileMenuOpen(false); }} />{user.role === 'admin' && (<><SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} /><SidebarItem icon={Database} label="MedManager" onClick={() => { if(window) window.location.href = '/manager.html'; }} /></>)}<div className="h-px bg-gray-100 my-4"></div><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"><LogOut size={20} /> <span className="font-medium">Sair</span></button></nav></div>); }
 
 function SidebarItem({ icon: Icon, label, active = false, onClick, collapsed = false }) { 
     return (
@@ -972,7 +1132,7 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
 }
 function TopicItem({ theme, isSelected, onToggle, count }) { return (<div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}><div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div></div>); }
 
-function ReviewExamView({ simulation, onBack, allQuestions, user }) { 
+function ReviewExamView({ simulation, onBack, allQuestions, user, addToast }) { 
     if (!simulation) return <div>Carregando...</div>;
     const questions = simulation.questionsData || (simulation.questionIds ? simulation.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
     const userAnswers = simulation.answersData || {};
@@ -986,7 +1146,7 @@ function ReviewExamView({ simulation, onBack, allQuestions, user }) {
     return (
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
           {reportModalConfig.isOpen && (
-              <ReportModal isOpen={true} onClose={() => setReportModalConfig({ ...reportModalConfig, isOpen: false })} questionId={reportModalConfig.questionId} userId={user?.uid} type={reportModalConfig.type} />
+              <ReportModal isOpen={true} onClose={() => setReportModalConfig({ ...reportModalConfig, isOpen: false })} questionId={reportModalConfig.questionId} userId={user?.uid} type={reportModalConfig.type} addToast={addToast} />
           )}
           <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar para Meus Simulados</button><div className="text-right"><span className="text-sm font-bold text-slate-500 bg-gray-100 px-3 py-1 rounded-full">Revisão: {simulation.title}</span></div></div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8 flex justify-between items-center"><div><h2 className="text-2xl font-bold text-slate-900">Resumo do Desempenho</h2><p className="text-slate-500">Data: {simulation.date}</p></div><div className="text-right"><div className="text-3xl font-bold text-blue-600">{simulation.correct}/{simulation.total}</div><div className="text-sm font-medium text-gray-400">Acertos</div></div></div>
@@ -1082,7 +1242,7 @@ function PerformanceView({ detailedStats, onBack }) {
     )
 }
 
-function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
+function SettingsView({ user, onBack, onResetQuestions, onResetHistory, addToast }) {
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null });
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const openModal = (type) => setModalConfig({ isOpen: true, type });
@@ -1090,7 +1250,6 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
   const [name, setName] = useState(user.name || '');
   const [whatsapp, setWhatsapp] = useState(user.whatsapp || ''); 
   const [isSaving, setIsSaving] = useState(false);
-  const [msg, setMsg] = useState(null); 
 
   const subDate = user.subscriptionUntil ? new Date(user.subscriptionUntil) : null;
   const daysLeft = subDate ? Math.ceil((subDate - new Date()) / (1000 * 60 * 60 * 24)) : 0;
@@ -1098,26 +1257,38 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
   const isExpired = subDate && new Date() > subDate;
 
   const handleSaveProfile = async () => {
-    setIsSaving(true); setMsg(null);
+    setIsSaving(true);
     try {
         if(auth.currentUser) {
             await updateProfile(auth.currentUser, { displayName: name });
             await setDoc(doc(db, "users", user.uid), { name: name, whatsapp: whatsapp }, { merge: true });
-            setMsg({ type: 'success', text: 'Perfil atualizado com sucesso!' });
+            // Agora usa o addToast ao invés de state local
+            addToast('Sucesso', 'Perfil atualizado com sucesso!', 'success');
         }
-    } catch (error) { console.error(error); setMsg({ type: 'error', text: 'Erro ao atualizar perfil.' }); } finally { setIsSaving(false); }
+    } catch (error) { 
+        console.error(error); 
+        addToast('Erro', 'Erro ao atualizar perfil.', 'error');
+    } finally { 
+        setIsSaving(false); 
+    }
   };
 
   const handleSavePassword = async (currentPassword, newPassword) => {
-      setIsSaving(true); setMsg(null);
+      setIsSaving(true);
       try {
           if (auth.currentUser) {
               const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
               await reauthenticateWithCredential(auth.currentUser, credential);
               await updatePassword(auth.currentUser, newPassword);
-              setMsg({ type: 'success', text: 'Senha alterada com sucesso!' }); setIsPasswordModalOpen(false); 
+              addToast('Sucesso', 'Senha alterada com sucesso!', 'success');
+              setIsPasswordModalOpen(false); 
           }
-      } catch (error) { console.error(error); setMsg({ type: 'error', text: 'Erro ao alterar senha. Verifique a senha atual.' }); } finally { setIsSaving(false); }
+      } catch (error) { 
+          console.error(error); 
+          addToast('Erro', 'Erro ao alterar senha. Verifique a senha atual.', 'error');
+      } finally { 
+          setIsSaving(false); 
+      }
   };
 
   return (
@@ -1125,7 +1296,7 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
       <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2"/> Voltar</button><h1 className="text-3xl font-bold text-slate-900">Configurações</h1></div>
       {modalConfig.isOpen && (<NotificationModal title={modalConfig.type === 'questions' ? "Resetar Questões?" : "Apagar Tudo?"} message={modalConfig.type === 'questions' ? "Todas as questões voltarão a ser 'novas'. Seu histórico de acertos será apagado, mas sua sequência de dias (streak) será mantida." : "CUIDADO: Isso apagará TODO o seu histórico, incluindo sua sequência de dias (streak)."} isDangerous={true} confirmText={modalConfig.type === 'questions' ? "Sim, Resetar Questões" : "Sim, Apagar Tudo"} type="error" onClose={() => setModalConfig({ ...modalConfig, isOpen: false })} onConfirm={handleConfirm} />)}
       {isPasswordModalOpen && (<ChangePasswordModal onClose={() => setIsPasswordModalOpen(false)} onSave={handleSavePassword} isLoading={isSaving} />)}
-      {msg && (<div className={`mb-6 p-4 rounded-xl border flex items-center gap-3 ${msg.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{msg.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}<span className="font-medium">{msg.text}</span></div>)}
+      
       <div className="space-y-6">
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm relative overflow-hidden">
             <div className={`absolute top-0 right-0 p-4 opacity-10 ${isExpired ? 'text-red-500' : 'text-emerald-500'}`}><CreditCard size={120} /></div>
@@ -1152,81 +1323,7 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory }) {
   );
 }
 
-function StudentsView({ onBack }) {
-  const [students, setStudents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false); 
-  const [studentToDelete, setStudentToDelete] = useState(null);
-  const [editingDateId, setEditingDateId] = useState(null);
-  const [editDate, setEditDate] = useState('');
-  const [editingRoleId, setEditingRoleId] = useState(null);
-
-  const fetchStudents = async () => {
-    try {
-      const querySnapshot = await getDocs(collection(db, "users"));
-      const studentsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStudents(studentsList);
-    } catch (error) { console.error("Erro ao buscar alunos:", error); } finally { setLoading(false); }
-  };
-
-  useEffect(() => { fetchStudents(); }, []);
-
-  const handleCreateStudent = async (studentData) => {
-      if (isCreating) return; setIsCreating(true);
-      const appName = `SecondaryApp-${Date.now()}`;
-      let secondaryApp;
-      try {
-          secondaryApp = initializeApp(firebaseConfig, appName);
-          const secondaryAuth = getAuth(secondaryApp);
-          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, studentData.email, studentData.password);
-          const newUser = userCredential.user;
-          await updateProfile(newUser, { displayName: studentData.name });
-          const createdAt = new Date();
-          const subscriptionUntil = new Date(createdAt);
-          subscriptionUntil.setDate(subscriptionUntil.getDate() + 30);
-          subscriptionUntil.setHours(23, 59, 59, 999);
-          await setDoc(doc(db, "users", newUser.uid), { name: studentData.name, email: studentData.email, role: studentData.role, dailyGoal: 50, createdAt: createdAt.toISOString(), subscriptionUntil: subscriptionUntil.toISOString() });
-          await setDoc(doc(db, "users", newUser.uid, "stats", "main"), { correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null });
-          alert("Aluno criado com sucesso!"); setIsCreateModalOpen(false); fetchStudents(); 
-      } catch (error) { console.error("Erro ao criar aluno:", error); alert("Erro ao criar aluno: " + error.message); } finally { if (secondaryApp) { try { await deleteApp(secondaryApp); } catch (e) { console.error("Erro ao limpar app secundário", e); } } setIsCreating(false); }
-  };
-
-  const confirmDeleteStudent = async () => {
-      if (!studentToDelete) return;
-      try {
-          const userId = studentToDelete.id;
-          await deleteDoc(doc(db, "users", userId));
-          const simsQuery = query(collection(db, `users/${userId}/simulations`));
-          const simsSnapshot = await getDocs(simsQuery);
-          const batch = writeBatch(db);
-          simsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
-          const statsDoc = doc(db, `users/${userId}/stats`, 'main');
-          batch.delete(statsDoc);
-          await batch.commit();
-          alert("Dados do aluno excluídos com sucesso.");
-          setStudents(prev => prev.filter(s => s.id !== userId));
-      } catch (error) { console.error("Erro ao excluir:", error); alert("Erro ao excluir dados do aluno."); } finally { setStudentToDelete(null); }
-  };
-
-  const startEditingDate = (student) => { setEditingDateId(student.id); setEditingRoleId(null); if(student.subscriptionUntil) { const d = new Date(student.subscriptionUntil); const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0]; setEditDate(localIso); } else { const d = new Date(); const localIso = new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0]; setEditDate(localIso); } };
-  const handleAdd30Days = () => { if (!editDate) return; const parts = editDate.split('-'); const baseDate = new Date(parts[0], parts[1]-1, parts[2]); baseDate.setDate(baseDate.getDate() + 30); const year = baseDate.getFullYear(); const month = String(baseDate.getMonth() + 1).padStart(2, '0'); const day = String(baseDate.getDate()).padStart(2, '0'); setEditDate(`${year}-${month}-${day}`); };
-  const handleSaveDate = async (studentId) => { try { if(!editDate) return; const parts = editDate.split('-'); const year = parseInt(parts[0]); const month = parseInt(parts[1]) - 1; const day = parseInt(parts[2]); const newDate = new Date(year, month, day, 23, 59, 59, 999); const newDateIso = newDate.toISOString(); await setDoc(doc(db, "users", studentId), { subscriptionUntil: newDateIso }, { merge: true }); setStudents(prev => prev.map(s => s.id === studentId ? {...s, subscriptionUntil: newDateIso} : s)); setEditingDateId(null); } catch (error) { console.error("Erro ao atualizar data", error); alert("Erro ao atualizar data de vencimento."); } };
-  const handleSaveRole = async (studentId, newRole) => { try { await setDoc(doc(db, "users", studentId), { role: newRole }, { merge: true }); setStudents(prev => prev.map(s => s.id === studentId ? {...s, role: newRole} : s)); setEditingRoleId(null); } catch (error) { console.error("Erro ao atualizar função", error); alert("Erro ao atualizar função."); } };
-  const getStatus = (isoString) => { if(!isoString) return 'Encerrada'; return new Date(isoString) > new Date() ? 'Ativa' : 'Encerrada'; };
-
-  return (
-    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-6xl mx-auto">
-      {isCreateModalOpen && <CreateStudentModal onClose={() => setIsCreateModalOpen(false)} onSave={handleCreateStudent} isLoading={isCreating} />}
-      {studentToDelete && (<NotificationModal title="Excluir Aluno?" message={`Tem certeza que deseja excluir os dados de ${studentToDelete.name}? O login continuará existindo, mas sem acesso.`} isDangerous={true} confirmText="Sim, Excluir Dados" cancelText="Cancelar" type="error" onClose={() => setStudentToDelete(null)} onConfirm={confirmDeleteStudent} />)}
-      <div className="flex items-center justify-between mb-8"><div className="flex items-center gap-4"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold text-slate-900">Gerenciar Alunos</h1></div><button onClick={() => setIsCreateModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 shadow-lg shadow-blue-200 transition-all"><Plus size={20} /> Adicionar Aluno</button></div>
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-        {loading ? (<div className="p-8 text-center text-gray-500">Carregando alunos...</div>) : (<div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-gray-50 border-b border-gray-100"><tr><th className="p-4 font-semibold text-gray-600">Nome</th><th className="p-4 font-semibold text-gray-600">Email</th><th className="p-4 font-semibold text-gray-600">Função</th><th className="p-4 font-semibold text-gray-600">Matrícula</th><th className="p-4 font-semibold text-gray-600">Vencimento</th><th className="p-4 font-semibold text-gray-600 text-right">Ações</th></tr></thead><tbody className="divide-y divide-gray-100">{students.map((student) => { const status = getStatus(student.subscriptionUntil); const isEditingDate = editingDateId === student.id; const isEditingRole = editingRoleId === student.id; return (<tr key={student.id} className="hover:bg-gray-50 transition-colors"><td className="p-4 font-medium text-slate-900">{student.name || 'Sem nome'}</td><td className="p-4 text-gray-600">{student.email}</td><td className="p-4">{isEditingRole ? (<select value={student.role} onChange={(e) => handleSaveRole(student.id, e.target.value)} onBlur={() => setEditingRoleId(null)} autoFocus className="bg-white border border-gray-300 rounded px-2 py-1 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"><option value="student">ALUNO</option><option value="admin">ADMIN</option></select>) : (<span onClick={() => { setEditingRoleId(student.id); setEditingDateId(null); }} className={`px-2 py-1 rounded-full text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity ${student.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`} title="Clique para alterar">{student.role === 'admin' ? 'ADMIN' : 'ALUNO'}</span>)}</td><td className="p-4">{student.role === 'admin' ? (<span className="text-gray-400 font-bold ml-4">-</span>) : (<span className={`px-2 py-1 rounded-full text-xs font-bold ${status === 'Ativa' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{status.toUpperCase()}</span>)}</td><td className="p-4 text-sm text-gray-600">{isEditingDate ? (<div className="flex items-center gap-2"><input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-500 outline-none" /><button onClick={handleAdd30Days} className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 text-xs font-bold whitespace-nowrap" title="Adicionar 30 dias">+30</button><button onClick={() => handleSaveDate(student.id)} className="p-1 bg-emerald-100 text-emerald-600 rounded hover:bg-emerald-200"><Check size={16}/></button><button onClick={() => setEditingDateId(null)} className="p-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200"><X size={16}/></button></div>) : (<div className="flex items-center gap-2 cursor-pointer group" onClick={() => startEditingDate(student)}><span className={!student.subscriptionUntil ? 'text-gray-400 italic' : ''}>{student.subscriptionUntil ? new Date(student.subscriptionUntil).toLocaleDateString('pt-BR') : 'Sem data'}</span><Edit2 size={14} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" /></div>)}</td><td className="p-4 text-right">{student.role !== 'admin' && (<button onClick={() => setStudentToDelete(student)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Excluir Aluno"><Trash2 size={18} /></button>)}</td></tr>)})}</tbody></table>{students.length === 0 && (<div className="p-8 text-center text-gray-500">Nenhum aluno encontrado.</div>)}</div>)}</div>
-    </div>
-  );
-}
-
-function AddQuestionView({ onBack }) {
+function AddQuestionView({ onBack, addToast }) {
     const [area, setArea] = useState(areasBase[0].id);
     const [topic, setTopic] = useState('');
     const [institution, setInstitution] = useState('');
@@ -1236,32 +1333,39 @@ function AddQuestionView({ onBack }) {
     const [correctOptionId, setCorrectOptionId] = useState('a');
     const [explanation, setExplanation] = useState('');
     const [isSaving, setIsSaving] = useState(false);
-    const [message, setMessage] = useState(null);
     const availableThemes = useMemo(() => themesMap[area] || [], [area]);
 
     useEffect(() => { setTopic(''); }, [area]);
     const handleOptionChange = (id, newText) => { setOptions(prev => prev.map(opt => opt.id === id ? { ...opt, text: newText } : opt)); };
     const handleSave = async (e) => {
-        e.preventDefault(); setIsSaving(true); setMessage(null);
+        e.preventDefault(); setIsSaving(true);
         const optionA = options.find(o => o.id === 'a').text.trim();
         const optionB = options.find(o => o.id === 'b').text.trim();
-        if (!text || !topic || !optionA || !optionB) { setMessage({ type: 'error', text: 'Preencha a Área, Tópico, Enunciado e as Alternativas A e B.' }); setIsSaving(false); return; }
+        if (!text || !topic || !optionA || !optionB) { 
+            addToast('Atenção', 'Preencha a Área, Tópico, Enunciado e as Alternativas A e B.', 'error');
+            setIsSaving(false); return; 
+        }
         const validOptions = options.filter(opt => opt.text.trim() !== '');
-        if (!validOptions.find(o => o.id === correctOptionId)) { setMessage({ type: 'error', text: 'A alternativa correta selecionada está vazia.' }); setIsSaving(false); return; }
+        if (!validOptions.find(o => o.id === correctOptionId)) { 
+            addToast('Erro', 'A alternativa correta selecionada está vazia.', 'error');
+            setIsSaving(false); return; 
+        }
         try {
             const questionData = { area: areaNameMap[area], topic: topic, institution: institution || "", year: year ? parseInt(year) : "", text: text, options: validOptions, correctOptionId: correctOptionId, explanation: explanation || "", createdAt: new Date().toISOString(), hasImage: false, id: null };
             await addDoc(collection(db, "questions"), questionData);
-            setMessage({ type: 'success', text: 'Questão adicionada com sucesso!' });
+            addToast('Sucesso', 'Questão adicionada com sucesso!', 'success');
             setText(''); setOptions([{ id: 'a', text: '' }, { id: 'b', text: '' }, { id: 'c', text: '' }, { id: 'd', text: '' }, { id: 'e', text: '' }]); setExplanation('');
-        } catch (error) { setMessage({ type: 'error', text: 'Erro ao salvar no banco de dados.' }); } finally { setIsSaving(false); }
+        } catch (error) { 
+            addToast('Erro', 'Erro ao salvar no banco de dados.', 'error'); 
+        } finally { setIsSaving(false); }
     };
     return (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10"><div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold">Nova Questão</h1></div><form onSubmit={handleSave} className="space-y-6"><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-700 mb-2">Área</label><select value={area} onChange={e => setArea(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">{areasBase.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Tema</label><select value={topic} onChange={e => setTopic(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl"><option value="">Selecione...</option>{availableThemes.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Instituição (Opcional)</label><input type="text" value={institution} onChange={e => setInstitution(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ex: USP, UNIFESP..." /></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Ano (Opcional)</label><input type="number" value={year} onChange={e => setYear(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ano (opcional)" /></div></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Enunciado</label><textarea value={text} onChange={e => setText(e.target.value)} rows={5} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl resize-y" /></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4"><h3 className="font-bold text-slate-900 border-b border-gray-100 pb-2 mb-4">Alternativas</h3>{options.map((opt) => (<div key={opt.id} className="flex items-start gap-3"><div className="mt-3"><input type="radio" name="correctOption" checked={correctOptionId === opt.id} onChange={() => setCorrectOptionId(opt.id)} className="w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer"/></div><div className="flex-1"><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Opção {opt.id}</label><textarea value={opt.text} onChange={e => handleOptionChange(opt.id, e.target.value)} rows={2} className={`w-full px-4 py-3 border rounded-xl resize-none ${correctOptionId === opt.id ? 'bg-emerald-50 border-emerald-200 focus:ring-emerald-500' : 'bg-gray-50 border-gray-200 focus:ring-blue-500'}`} placeholder={`Texto da alternativa ${opt.id.toUpperCase()}`} /></div></div>))}</div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Comentário</label><textarea value={explanation} onChange={e => setExplanation(e.target.value)} rows={4} className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl resize-y" /></div>{message && (<div className={`p-4 rounded-xl border flex items-center gap-3 ${message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{message.text}</div>)}<div className="flex justify-end gap-4"><button type="button" onClick={onBack} className="px-6 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button><button type="submit" disabled={isSaving} className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50">{isSaving ? 'Salvando...' : 'Salvar Questão'}</button></div></form></div>
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10"><div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold">Nova Questão</h1></div><form onSubmit={handleSave} className="space-y-6"><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-700 mb-2">Área</label><select value={area} onChange={e => setArea(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">{areasBase.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Tema</label><select value={topic} onChange={e => setTopic(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl"><option value="">Selecione...</option>{availableThemes.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Instituição (Opcional)</label><input type="text" value={institution} onChange={e => setInstitution(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ex: USP, UNIFESP..." /></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Ano (Opcional)</label><input type="number" value={year} onChange={e => setYear(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ano (opcional)" /></div></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Enunciado</label><textarea value={text} onChange={e => setText(e.target.value)} rows={5} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl resize-y" /></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4"><h3 className="font-bold text-slate-900 border-b border-gray-100 pb-2 mb-4">Alternativas</h3>{options.map((opt) => (<div key={opt.id} className="flex items-start gap-3"><div className="mt-3"><input type="radio" name="correctOption" checked={correctOptionId === opt.id} onChange={() => setCorrectOptionId(opt.id)} className="w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer"/></div><div className="flex-1"><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Opção {opt.id}</label><textarea value={opt.text} onChange={e => handleOptionChange(opt.id, e.target.value)} rows={2} className={`w-full px-4 py-3 border rounded-xl resize-none ${correctOptionId === opt.id ? 'bg-emerald-50 border-emerald-200 focus:ring-emerald-500' : 'bg-gray-50 border-gray-200 focus:ring-blue-500'}`} placeholder={`Texto da alternativa ${opt.id.toUpperCase()}`} /></div></div>))}</div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Comentário</label><textarea value={explanation} onChange={e => setExplanation(e.target.value)} rows={4} className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl resize-y" /></div><div className="flex justify-end gap-4"><button type="button" onClick={onBack} className="px-6 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button><button type="submit" disabled={isSaving} className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50">{isSaving ? 'Salvando...' : 'Salvar Questão'}</button></div></form></div>
     );
 }
 
 // --- QUESTION VIEW ATUALIZADA (COM REPORT E SUGGESTION) ---
-function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress }) {
+function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress, addToast }) {
   const [questions] = useState(() => initialData ? initialData.questionsData : []); 
   const [userAnswers, setUserAnswers] = useState(() => initialData ? initialData.answersData : {}); 
   const [currentIndex, setCurrentIndex] = useState(() => initialData ? initialData.currentIndex : 0);
@@ -1305,8 +1409,8 @@ function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUp
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-32 md:pb-0 relative">
-      <ReportModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="error" />
-      <ReportModal isOpen={suggestionModalOpen} onClose={() => setSuggestionModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="suggestion" category={suggestionType} />
+      <ReportModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="error" addToast={addToast} />
+      <ReportModal isOpen={suggestionModalOpen} onClose={() => setSuggestionModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="suggestion" category={suggestionType} addToast={addToast} />
       <div className="flex items-center justify-between mb-6 sticky top-14 md:top-0 bg-gray-50 z-30 py-4 border-b md:border-none border-gray-200">
           <div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> <span className="hidden md:inline">Salvar e Sair</span><span className="md:hidden">Sair</span></button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-3 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> <span className="hidden md:inline">Encerrar</span></button></div>
           <div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-20 md:w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div>
