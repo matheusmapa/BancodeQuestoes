@@ -38,20 +38,87 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 
 // --- DADOS ESTÁTICOS DAS ÁREAS ---
+// ATUALIZADO: Nova ordem e substituição de Geriatria por Preventiva
 const areasBase = [
-  { id: 'clinica', title: 'Clínica Médica', icon: Stethoscope, color: 'bg-blue-50 text-blue-600', borderColor: 'hover:border-blue-200' },
   { id: 'cirurgia', title: 'Cirurgia Geral', icon: Scissors, color: 'bg-emerald-50 text-emerald-600', borderColor: 'hover:border-emerald-200' },
+  { id: 'clinica', title: 'Clínica Médica', icon: Stethoscope, color: 'bg-blue-50 text-blue-600', borderColor: 'hover:border-blue-200' },
   { id: 'go', title: 'Ginecologia e Obstetrícia', icon: HeartPulse, color: 'bg-rose-50 text-rose-600', borderColor: 'hover:border-rose-200' },
   { id: 'pediatria', title: 'Pediatria', icon: Baby, color: 'bg-amber-50 text-amber-600', borderColor: 'hover:border-amber-200' },
-  { id: 'geriatria', title: 'Geriatria', icon: Activity, color: 'bg-violet-50 text-violet-600', borderColor: 'hover:border-violet-200' },
+  { id: 'preventiva', title: 'Preventiva', icon: Shield, color: 'bg-violet-50 text-violet-600', borderColor: 'hover:border-violet-200' },
 ];
 
+// ATUALIZADO: Temas em Ordem Alfabética e Renomeados
 const themesMap = {
-    'clinica': ['Cardiologia', 'Pneumologia', 'Nefrologia', 'Gastroenterologia', 'Hepatologia', 'Endocrinologia', 'Hematologia', 'Reumatologia', 'Infectologia', 'Dermatologia', 'Neurologia'],
-    'cirurgia': ['Trauma (ATLS)', 'Abdome Agudo', 'Hérnias da Parede Abdominal', 'Aparelho Digestivo', 'Pré e Pós-Operatório', 'Cirurgia Vascular', 'Urologia', 'Cirurgia Pediátrica', 'Cirurgia Torácica', 'Queimaduras'],
-    'go': ['Pré-Natal', 'Sangramentos na Gestação', 'Doença Hipertensiva Específica', 'Parto e Puerpério', 'Anticoncepção', 'Climatério', 'Oncologia Ginecológica', 'Infecções Ginecológicas', 'Amenorreias', 'Infertilidade'],
-    'pediatria': ['Neonatologia', 'Crescimento e Desenvolvimento', 'Aleitamento Materno', 'Imunizações', 'Doenças Exantemáticas', 'Doenças Respiratórias', 'Gastroenterologia Pediátrica', 'Nefrologia Pediátrica', 'Emergências Pediátricas', 'Adolescência'],
-    'geriatria': ['Grandes Síndromes Geriátricas', 'Demências e Cognição', 'Delirium', 'Quedas e Instabilidade', 'Polifarmácia', 'Cuidados Paliativos', 'Imobilidade', 'Incontinência Urinária', 'Psiquiatria Geriátrica', 'Cardiologia no Idoso']
+    'clinica': [
+        'Cardiologia',
+        'Dermatologia',
+        'Endocrinologia e Metabologia',
+        'Gastroenterologia',
+        'Hematologia',
+        'Hepatologia',
+        'Infectologia',
+        'Nefrologia',
+        'Neurologia',
+        'Pneumologia',
+        'Psiquiatria',
+        'Reumatologia'
+    ],
+    'cirurgia': [
+        'Abdome Agudo',
+        'Cirurgia Hepatobiliopancreática',
+        'Cirurgia Torácica e de Cabeça e Pescoço',
+        'Cirurgia Vascular',
+        'Cirurgia do Esôfago e Estômago',
+        'Coloproctologia',
+        'Hérnias e Parede Abdominal',
+        'Pré e Pós-Operatório',
+        'Queimaduras',
+        'Resposta Metabólica e Cicatrização',
+        'Trauma',
+        'Urologia'
+    ],
+    'go': [
+        'Ciclo Menstrual e Anticoncepção',
+        'Climatério e Menopausa',
+        'Doenças Intercorrentes na Gestação',
+        'Infecções Congênitas e Gestacionais',
+        'Infecções Ginecológicas e ISTs',
+        'Mastologia',
+        'Obstetrícia Fisiológica e Pré-Natal',
+        'Oncologia Pélvica',
+        'Parto e Puerpério',
+        'Sangramentos da Gestação',
+        'Uroginecologia e Distopias',
+        'Vitalidade Fetal e Amniograma'
+    ],
+    'pediatria': [
+        'Adolescência e Puberdade',
+        'Afecções Respiratórias',
+        'Aleitamento Materno e Nutrição',
+        'Cardiologia e Reumatologia Pediátrica',
+        'Crescimento e Desenvolvimento',
+        'Emergências e Acidentes',
+        'Gastroenterologia Pediátrica',
+        'Imunizações',
+        'Infectopediatria e Exantemáticas',
+        'Nefrologia Pediátrica',
+        'Neonatologia: Patologias',
+        'Neonatologia: Sala de Parto'
+    ],
+    'preventiva': [
+        'Atenção Primária e Saúde da Família',
+        'Estudos Epidemiológicos',
+        'Financiamento e Gestão',
+        'História e Princípios do SUS',
+        'Indicadores de Saúde e Demografia',
+        'Medicina Baseada em Evidências',
+        'Medicina Legal',
+        'Medidas de Associação e Testes Diagnósticos',
+        'Políticas Nacionais de Saúde',
+        'Saúde do Trabalhador',
+        'Vigilância em Saúde',
+        'Ética Médica e Bioética'
+    ]
 };
 
 const areaNameMap = {
@@ -59,7 +126,7 @@ const areaNameMap = {
     'cirurgia': 'Cirurgia Geral',
     'go': 'Ginecologia e Obstetrícia',
     'pediatria': 'Pediatria',
-    'geriatria': 'Geriatria'
+    'preventiva': 'Preventiva'
 };
 
 // --- HELPERS GLOBAIS ---
@@ -1008,7 +1075,7 @@ function Dashboard({ user, onLogout }) {
                 <SidebarItem 
                 icon={Brain} 
                 label="MedImport AI" 
-                onClick={() => window.location.href = '/import.html'} 
+                onClick={() => window.location.href = '/medimport.html'} 
                 />
             </>
           )}
@@ -1037,7 +1104,7 @@ function Dashboard({ user, onLogout }) {
                         <div className="mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">Administração</div>
                         <SidebarItem icon={Users} label="Gerenciar Alunos" active={currentView === 'students_list'} onClick={() => { setCurrentView('students_list'); setIsMobileMenuOpen(false); }} />
                         <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} />
-                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} />
+                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/medimport.html'} />
                     </>
                 )}
 
