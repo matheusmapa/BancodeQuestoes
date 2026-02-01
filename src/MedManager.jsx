@@ -3,13 +3,15 @@ import {
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
   AlertCircle, Database, LayoutGrid, List, ChevronDown, 
   ChevronRight, ArrowLeft, LogOut, Loader2, FileText, 
-  CheckSquare, BookOpen, AlertTriangle, Copy, Hash
+  CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
+  MessageSquare, ThumbsUp, ThumbsDown, Flag, User, Calendar, Building, Phone,
+  Users, TrendingUp, Target, Zap, Clock, Percent, Award, MoreHorizontal, UserPlus, Shield, PlusCircle, Lock
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy
+  getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, onSnapshot, query, orderBy, where, writeBatch, setDoc
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
@@ -48,7 +50,8 @@ function NotificationToast({ notification, onClose }) {
   const [isHovered, setIsHovered] = useState(false);
   useEffect(() => {
     if (!notification || isHovered) return;
-    const timer = setTimeout(() => onClose(), 6000);
+    // Tempo reduzido para 3 segundos (3000ms)
+    const timer = setTimeout(() => onClose(), 3000);
     return () => clearTimeout(timer);
   }, [notification, isHovered, onClose]);
 
@@ -78,20 +81,40 @@ export default function MedManager() {
   
   // Data State
   const [questions, setQuestions] = useState([]);
+  const [reports, setReports] = useState([]); 
+  const [userProfiles, setUserProfiles] = useState({}); 
+  const [students, setStudents] = useState([]); 
   const [loadingData, setLoadingData] = useState(true);
+  const [loadingStudents, setLoadingStudents] = useState(false); 
   
-  // Filter State
+  // View State
+  const [activeView, setActiveView] = useState('questions'); 
+  
+  // Filter State (Questions)
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedArea, setSelectedArea] = useState('Todas');
   const [selectedTopic, setSelectedTopic] = useState('Todos');
+  const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
+  const [selectedYear, setSelectedYear] = useState('Todos'); 
+  const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
+
+  // Filter State (Students)
+  const [studentStatusFilter, setStudentStatusFilter] = useState('all'); // 'all', 'active', 'expired'
+  const [studentRoleFilter, setStudentRoleFilter] = useState('all'); // 'all', 'admin', 'student'
   
-  // Edit State
+  // Edit State (Questions)
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [associatedReport, setAssociatedReport] = useState(null);
+  
+  // Edit State (Users)
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [viewingUserStats, setViewingUserStats] = useState(null); 
   
   // UI State
   const [notification, setNotification] = useState(null);
-  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleteModal, setDeleteModal] = useState(null); 
+  const [rejectReportModal, setRejectReportModal] = useState(null);
   
   // Login Inputs
   const [email, setEmail] = useState('');
@@ -106,128 +129,333 @@ export default function MedManager() {
                 setUser(u);
             } else {
                 await signOut(auth);
-                showNotification('error', 'Acesso negado.');
+                showNotification('error', 'Acesso negado: Apenas administradores.');
+                setUser(null);
             }
+        } else {
+            setUser(null);
         }
         setIsLoadingAuth(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // --- LOAD QUESTIONS ---
+  // --- LOGOUT FUNCTION ---
+  const handleLogout = async () => {
+      try {
+          await signOut(auth);
+          setUser(null);
+          // Limpa estados locais ao sair
+          setQuestions([]);
+          setReports([]);
+          setStudents([]);
+          setActiveView('questions');
+      } catch (error) {
+          console.error("Erro ao sair:", error);
+      }
+  };
+
+  // --- LOAD DATA ---
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "questions"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snap) => {
+    
+    // Questions
+    const qQuest = query(collection(db, "questions"), orderBy("createdAt", "desc"));
+    const unsubQuest = onSnapshot(qQuest, (snap) => {
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setQuestions(list);
         setLoadingData(false);
     });
-    return () => unsubscribe();
+
+    // Pending Reports
+    const qReports = query(collection(db, "reports"), where("status", "==", "pending"));
+    const unsubReports = onSnapshot(qReports, (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setReports(list);
+    });
+
+    return () => {
+        unsubQuest();
+        unsubReports();
+    };
   }, [user]);
 
+  // --- LOAD STUDENTS ---
+  useEffect(() => {
+      if (!user || activeView !== 'students') return;
+      setLoadingStudents(true);
+
+      const q = query(collection(db, "users"), orderBy("name")); 
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+          const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setStudents(list);
+          setLoadingStudents(false);
+      }, (error) => {
+          console.error("Erro ao buscar alunos:", error);
+          setLoadingStudents(false);
+      });
+
+      return () => unsubscribe();
+  }, [user, activeView]);
+
+  // --- FETCH USER PROFILES ---
+  useEffect(() => {
+      const fetchReporters = async () => {
+        if (reports.length === 0) return;
+        const uids = new Set(reports.map(r => r.userId).filter(uid => uid));
+        const newProfiles = { ...userProfiles };
+        const toFetch = [];
+        uids.forEach(uid => { if (!newProfiles[uid]) toFetch.push(uid); });
+
+        if (toFetch.length === 0) return;
+
+        await Promise.all(toFetch.map(async (uid) => {
+            try {
+                const snap = await getDoc(doc(db, "users", uid));
+                if (snap.exists()) { newProfiles[uid] = snap.data(); } 
+                else { newProfiles[uid] = { name: 'Desconhecido', whatsapp: '' }; }
+            } catch (e) { console.error("Erro ao buscar user", uid, e); }
+        }));
+        setUserProfiles(newProfiles);
+      };
+      fetchReporters();
+  }, [reports]);
+
   // --- FILTER LOGIC ---
+  const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
+  const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
+  const reportsCountByQuestion = useMemo(() => {
+      const counts = {}; reports.forEach(r => { counts[r.questionId] = (counts[r.questionId] || 0) + 1; }); return counts;
+  }, [reports]);
+  const pendingReportsCount = reports.length;
+
   const filteredQuestions = useMemo(() => {
-      return questions.filter(q => {
-          const matchesSearch = 
-              q.text.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              q.year?.toString().includes(searchTerm) ||
-              q.id.toLowerCase().includes(searchTerm.toLowerCase()); // Incluindo ID na busca
-          
+      let result = questions.filter(q => {
+          const matchesSearch = q.text.toLowerCase().includes(searchTerm.toLowerCase()) || q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) || q.year?.toString().includes(searchTerm) || q.id.toLowerCase().includes(searchTerm.toLowerCase());
           const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
           const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-
-          return matchesSearch && matchesArea && matchesTopic;
+          const matchesInstitution = selectedInstitution === 'Todas' || q.institution === selectedInstitution;
+          const matchesYear = selectedYear === 'Todos' || String(q.year) === selectedYear;
+          return matchesSearch && matchesArea && matchesTopic && matchesInstitution && matchesYear;
       });
-  }, [questions, searchTerm, selectedArea, selectedTopic]);
+      result.sort((a, b) => {
+          const countA = reportsCountByQuestion[a.id] || 0;
+          const countB = reportsCountByQuestion[b.id] || 0;
+          if (countB !== countA) return countB - countA;
+          return 0; 
+      });
+      return result;
+  }, [questions, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear, reportsCountByQuestion]);
+
+  const filteredReports = useMemo(() => {
+      let result = reports;
+      if (reportFilterQuestionId) result = result.filter(r => r.questionId === reportFilterQuestionId);
+      if (activeView === 'reports' && searchTerm) {
+          const lower = searchTerm.toLowerCase();
+          result = result.filter(r => r.userId?.toLowerCase().includes(lower) || r.questionId?.toLowerCase().includes(lower) || r.text?.toLowerCase().includes(lower) || r.details?.toLowerCase().includes(lower) || (userProfiles[r.userId]?.name || '').toLowerCase().includes(lower));
+      }
+      return result;
+  }, [reports, reportFilterQuestionId, searchTerm, activeView, userProfiles]);
+
+  const filteredStudents = useMemo(() => {
+      if (activeView !== 'students') return [];
+      const lower = searchTerm.toLowerCase();
+      
+      return students.filter(s => {
+          // Busca textual
+          const matchesSearch = 
+              s.name?.toLowerCase().includes(lower) || 
+              s.email?.toLowerCase().includes(lower) || 
+              s.id?.toLowerCase().includes(lower);
+          
+          // Filtro de Role
+          const matchesRole = studentRoleFilter === 'all' || s.role === studentRoleFilter;
+
+          // Filtro de Status (Assinatura)
+          // Se for Admin, ignora o status
+          if (s.role === 'admin') return matchesSearch && matchesRole;
+
+          const isPremium = s.subscriptionUntil && new Date(s.subscriptionUntil) > new Date();
+          let matchesStatus = true;
+          if (studentStatusFilter === 'active') matchesStatus = isPremium;
+          if (studentStatusFilter === 'expired') matchesStatus = !isPremium;
+
+          return matchesSearch && matchesRole && matchesStatus;
+      });
+  }, [students, searchTerm, activeView, studentRoleFilter, studentStatusFilter]);
 
   const showNotification = (type, text) => setNotification({ type, text });
 
-  // --- ACTIONS ---
-  const handleSave = async (e) => {
+  // --- HELPERS ---
+  const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
+  
+  const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
+  
+  const checkSubscriptionStatus = (d, role) => { 
+      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
+      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+  };
+  
+  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+
+  // --- ACTIONS (USER MANAGEMENT) ---
+  const handleCreateUser = async (e) => {
       e.preventDefault();
       setIsSaving(true);
+      const formData = new FormData(e.target);
+      const userData = Object.fromEntries(formData);
       try {
-          const { id, ...data } = editingQuestion;
-          await updateDoc(doc(db, "questions", id), data);
-          showNotification('success', 'Questão atualizada com sucesso!');
-          setEditingQuestion(null);
+          const newUserId = crypto.randomUUID(); 
+          await setDoc(doc(db, "users", newUserId), {
+              ...userData,
+              createdAt: new Date().toISOString(),
+              role: userData.role || 'student',
+              subscriptionUntil: userData.subscriptionUntil || null,
+              whatsapp: userData.whatsapp || '',
+              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
+          });
+          showNotification('success', 'Aluno criado!');
+          setIsCreatingUser(false);
       } catch (error) {
-          console.error(error);
-          showNotification('error', 'Erro ao salvar: ' + error.message);
+          showNotification('error', 'Erro ao criar: ' + error.message);
       } finally {
           setIsSaving(false);
       }
   };
 
-  const handleDelete = async () => {
-      if (!deleteModal) return;
+  const handleInlineUserUpdate = async (id, field, value) => {
       try {
-          await deleteDoc(doc(db, "questions", deleteModal.id));
-          showNotification('success', 'Questão excluída.');
+          await updateDoc(doc(db, "users", id), { [field]: value });
+          showNotification('success', 'Atualizado com sucesso!');
+      } catch (error) {
+          showNotification('error', 'Erro ao atualizar: ' + error.message);
+      }
+  };
+
+  const handleAdd30Days = async (student) => {
+      const now = new Date();
+      let newDate = new Date();
+      
+      if (student.subscriptionUntil) {
+          const currentExpiry = new Date(student.subscriptionUntil);
+          // Se ainda não venceu, soma 30 dias na data de vencimento
+          if (currentExpiry > now) {
+              newDate = new Date(currentExpiry);
+          }
+      }
+      
+      // Adiciona 30 dias
+      newDate.setDate(newDate.getDate() + 30);
+      
+      try {
+          await updateDoc(doc(db, "users", student.id), { subscriptionUntil: newDate.toISOString() });
+          showNotification('success', '+30 dias adicionados com sucesso!');
+      } catch (error) {
+          showNotification('error', 'Erro ao adicionar dias: ' + error.message);
+      }
+  };
+
+  const handleDeleteUser = async () => {
+      if (!deleteModal || !deleteModal.email) return; 
+      try {
+          await deleteDoc(doc(db, "users", deleteModal.id));
+          showNotification('success', 'Aluno excluído.');
           setDeleteModal(null);
       } catch (error) {
           showNotification('error', 'Erro ao excluir.');
       }
   };
 
-  // --- COPY FUNCTION BLINDADA ---
-  const copyToClipboard = async (text) => {
-      // Tenta API moderna primeiro
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-          try {
-              await navigator.clipboard.writeText(text);
-              showNotification('success', 'ID copiado!');
-              return;
-          } catch (err) {
-              console.warn("Clipboard API falhou, tentando fallback...", err);
-          }
-      }
-
-      // Fallback para iframes/ambientes restritos (execCommand)
+  const fetchUserStats = async (student) => {
+      setViewingUserStats({ ...student, loading: true });
       try {
-          const textArea = document.createElement("textarea");
-          textArea.value = text;
-          
-          // Estiliza para ficar invisível mas interativo
-          textArea.style.position = "fixed";
-          textArea.style.left = "-9999px";
-          textArea.style.top = "0";
-          
-          document.body.appendChild(textArea);
-          textArea.focus();
-          textArea.select();
-          
-          const successful = document.execCommand('copy');
-          document.body.removeChild(textArea);
-          
-          if (successful) {
-              showNotification('success', 'ID copiado!');
+          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
+          if (statsSnap.exists()) {
+              setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false });
           } else {
-              throw new Error("Comando de cópia falhou");
+              setViewingUserStats({ ...student, stats: null, loading: false });
           }
-      } catch (err) {
-          console.error("Fallback também falhou", err);
-          showNotification('error', 'Não foi possível copiar automaticamente. Copie manualmente.');
+      } catch (e) {
+          console.error(e);
+          setViewingUserStats({ ...student, stats: null, loading: false });
       }
   };
 
-  // --- RENDER HELPERS ---
-  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+  // --- ACTIONS (QUESTIONS & REPORTS) ---
+  const handleSave = async (shouldResolveReport = false) => {
+      setIsSaving(true);
+      try {
+          const batch = writeBatch(db);
+          const { id, ...data } = editingQuestion;
+          batch.update(doc(db, "questions", id), data);
+          if (shouldResolveReport && associatedReport) {
+              batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() });
+          }
+          await batch.commit();
+          showNotification('success', shouldResolveReport ? 'Questão salva e reporte resolvido!' : 'Questão atualizada!');
+          setEditingQuestion(null);
+          setAssociatedReport(null);
+      } catch (error) { console.error(error); showNotification('error', error.message); } finally { setIsSaving(false); }
+  };
+
+  const handleRejectReport = async () => {
+      if (!rejectReportModal) return;
+      try {
+          await deleteDoc(doc(db, "reports", rejectReportModal.id));
+          showNotification('success', 'Reporte excluído.');
+          if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); }
+          setRejectReportModal(null);
+      } catch (error) { showNotification('error', error.message); }
+  };
+
+  const handleOpenFromReport = (report) => {
+      const question = questions.find(q => q.id === report.questionId);
+      if (question) {
+          let qToEdit = { ...question };
+          if (report.category === "metadata_suggestion" || report.category === "suggestion_update") {
+              if (report.suggestedInstitution) qToEdit.institution = report.suggestedInstitution;
+              if (report.suggestedYear) qToEdit.year = report.suggestedYear;
+          }
+          setEditingQuestion(qToEdit);
+          setAssociatedReport(report);
+      } else { showNotification('error', 'Questão não encontrada.'); }
+  };
+
+  const handleDeleteQuestion = async () => {
+      if (!deleteModal || deleteModal.email) return; 
+      try {
+          await deleteDoc(doc(db, "questions", deleteModal.id));
+          showNotification('success', 'Questão excluída.');
+          if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); }
+          setDeleteModal(null);
+      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
+  };
+
+  const copyToClipboard = async (text) => {
+      try {
+          const textArea = document.createElement("textarea"); textArea.value = text;
+          textArea.style.position = "fixed"; textArea.style.left = "-9999px";
+          document.body.appendChild(textArea); textArea.focus(); textArea.select();
+          document.execCommand('copy'); document.body.removeChild(textArea);
+          showNotification('success', 'Copiado!');
+      } catch (err) { showNotification('error', 'Erro ao copiar.'); }
+  };
 
   if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
   if (!user) return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-        <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
-          <h1 className="text-2xl font-bold text-slate-800 text-center mb-2">MedManager</h1>
-          <p className="text-gray-500 text-center mb-6">Gestão de Acervo</p>
-          <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password); }} className="space-y-4">
-            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl"/>
-            <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl"/>
-            <button className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl hover:bg-slate-900">Entrar</button>
-          </form>
-        </div>
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center">
+              <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div>
+              <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1>
+              <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p>
+              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro de login: " + err.message)); }} className="space-y-4">
+                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button>
+              </form>
+          </div>
+          <NotificationToast notification={notification} onClose={() => setNotification(null)} />
       </div>
   );
 
@@ -235,255 +463,377 @@ export default function MedManager() {
     <div className="min-h-screen bg-gray-50 font-sans text-slate-800 flex">
       <NotificationToast notification={notification} onClose={() => setNotification(null)} />
       
-      {/* SIDEBAR FILTER */}
-      <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col">
+      {/* SIDEBAR */}
+      <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1">
                   <Database /> MedManager
               </div>
-              <p className="text-xs text-gray-400">Gestão de Acervo v1.0</p>
+              <p className="text-xs text-gray-400">Gestão de Acervo v3.4</p>
           </div>
           
-          <div className="p-4 flex-1 overflow-y-auto space-y-6">
-              <div>
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 block">Filtros</label>
-                  <div className="space-y-2">
-                      <div className="relative">
-                          <Filter size={16} className="absolute left-3 top-3 text-gray-400" />
-                          <select 
-                            value={selectedArea} 
-                            onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} 
-                            className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
-                          >
-                              <option value="Todas">Todas as Áreas</option>
-                              {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
-                          </select>
-                      </div>
+          <div className="p-4 flex-1 overflow-y-auto space-y-2">
+              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
+              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
+              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
+              
+              {/* FILTERS FOR QUESTIONS */}
+              {activeView === 'questions' && (
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                    <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                    <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                    <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
+                    <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
+                </div>
+              )}
 
-                      <div className="relative">
-                          <BookOpen size={16} className="absolute left-3 top-3 text-gray-400" />
-                          <select 
-                            value={selectedTopic} 
-                            onChange={e => setSelectedTopic(e.target.value)} 
-                            disabled={selectedArea === 'Todas'}
-                            className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none appearance-none disabled:opacity-50"
-                          >
-                              <option value="Todos">Todos os Tópicos</option>
-                              {availableTopics.map(t => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                      </div>
-                  </div>
-              </div>
-
-              <div>
-                  <div className="flex items-center justify-between mb-2">
-                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Estatísticas</label>
-                  </div>
-                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                      <div className="text-3xl font-bold text-blue-700">{filteredQuestions.length}</div>
-                      <div className="text-xs text-blue-600 font-medium">Questões Listadas</div>
-                  </div>
-              </div>
+              {/* FILTERS FOR STUDENTS */}
+              {activeView === 'students' && (
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                    <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
+                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos (Premium)</option><option value="expired">Expirados</option></select></div>
+                </div>
+              )}
           </div>
-
-          <div className="p-4 border-t border-gray-100">
-              <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors mb-2">
-                  <ArrowLeft size={16} /> Voltar ao App
-              </button>
-              <button onClick={() => signOut(auth)} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors">
-                  <LogOut size={16} /> Sair
-              </button>
+          
+          <div className="p-4 border-t border-gray-100 space-y-1">
+              <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors"><ArrowLeft size={16} /> Voltar ao App</button>
+              <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors"><LogOut size={16} /> Sair</button>
           </div>
       </aside>
 
       {/* MAIN CONTENT */}
-      <main className="ml-64 flex-1 p-8">
-          {/* HEADER SEARCH */}
+      <main className="ml-64 flex-1 p-8 overflow-y-auto">
+          
+          {/* SEARCH HEADER */}
           <div className="flex items-center justify-between mb-8 gap-4">
-              <div className="relative flex-1 max-w-2xl">
+              <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                  {activeView === 'questions' && <><List className="text-blue-600"/> Questões</>}
+                  {activeView === 'reports' && <><MessageSquare className="text-red-600"/> Reportes <span className="text-sm font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{pendingReportsCount} Pendentes</span></>}
+                  {activeView === 'students' && <><Users className="text-purple-600"/> Gestão de Alunos</>}
+              </h2>
+              <div className="relative flex-1 max-w-md">
                   <Search className="absolute left-4 top-3.5 text-gray-400" size={20} />
-                  <input 
-                    type="text" 
-                    placeholder="Pesquisar por enunciado, instituição, ano ou ID..." 
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800"
-                  />
+                  <input type="text" placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
               </div>
+              {activeView === 'students' && (
+                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
+                      <UserPlus size={20} /> Novo Aluno
+                  </button>
+              )}
           </div>
 
-          {/* LIST */}
-          {loadingData ? (
-              <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-600" size={48} /></div>
-          ) : (
+          {/* VIEW: QUESTIONS */}
+          {activeView === 'questions' && (
               <div className="space-y-4">
-                  {filteredQuestions.length === 0 ? (
-                      <div className="text-center py-20 opacity-50">
-                          <Database size={64} className="mx-auto mb-4 text-gray-300" />
-                          <p className="text-xl font-medium text-gray-500">Nenhuma questão encontrada com estes filtros.</p>
-                      </div>
-                  ) : (
-                      filteredQuestions.map(q => (
-                          <div key={q.id} className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start">
+                  {filteredQuestions.map(q => {
+                      const reportCount = reportsCountByQuestion[q.id] || 0;
+                      return (
+                          <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100' : 'border-gray-200'}`}>
                               <div className="flex-1 min-w-0">
-                                  {/* CORREÇÃO DO LAYOUT DAS TAGS */}
-                                  <div className="flex flex-wrap items-center gap-y-2 gap-x-2 mb-2">
-                                      <span 
-                                        onClick={() => copyToClipboard(q.id)}
-                                        className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200 transition-colors"
-                                        title="Clique para copiar ID"
-                                      >
-                                          <Hash size={10}/> {q.id.slice(0, 8)}...
-                                      </span>
-                                      
-                                      <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase whitespace-nowrap">{q.institution || 'N/A'}</span>
-                                      <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">{q.year || '----'}</span>
-                                      
-                                      <span className="text-xs font-medium text-gray-400 hidden sm:inline">•</span>
-                                      
-                                      {/* Grupo Área + Tópico para evitar quebra feia */}
-                                      <div className="flex items-center flex-wrap gap-1">
-                                          <span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span>
-                                          <span className="text-xs font-medium text-gray-400">/</span>
-                                          <span className="text-xs font-medium text-slate-500">{q.topic}</span>
+                                  <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
+                                      <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
+                                      {reportCount > 0 && (
+                                          <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
+                                      )}
+                                      <div className="flex items-center gap-2">
+                                          <span className="flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded border border-blue-100"><Building size={10}/> {q.institution || 'N/A'}</span>
+                                          <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200"><Calendar size={10}/> {q.year || '----'}</span>
                                       </div>
+                                      <div className="flex items-center flex-wrap gap-1"><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></div>
                                   </div>
-
                                   <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
-                                  <div className="flex items-center gap-4 text-xs text-gray-400 font-medium">
-                                      <span className="flex items-center gap-1"><CheckSquare size={14}/> Gab: {q.correctOptionId?.toUpperCase()}</span>
-                                      <span className="flex items-center gap-1"><FileText size={14}/> {q.options?.length} Alternativas</span>
-                                  </div>
                               </div>
                               <div className="flex items-center gap-2 self-start md:self-center">
-                                  <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Editar Completo">
-                                      <Edit3 size={18} />
-                                  </button>
-                                  <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Excluir">
-                                      <Trash2 size={18} />
-                                  </button>
+                                  <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg hover:border-blue-100 border border-transparent"><Edit3 size={18}/></button>
+                                  <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg hover:border-red-100 border border-transparent"><Trash2 size={18}/></button>
                               </div>
                           </div>
-                      ))
+                      );
+                  })}
+              </div>
+          )}
+
+          {/* VIEW: REPORTS */}
+          {activeView === 'reports' && (
+              <div className="max-w-4xl mx-auto space-y-6">
+                  {reportFilterQuestionId && (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div>
+                          <button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button>
+                      </div>
                   )}
+                  {filteredReports.map(report => {
+                      const reporter = getUserDetails(report.userId);
+                      return (
+                          <div key={report.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                              <div className="flex justify-between items-start mb-4">
+                                  <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
+                                      <div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div>
+                                  </div>
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span>
+                              </div>
+                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
+                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar e Excluir</button>
+                                  <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
+                              </div>
+                          </div>
+                      );
+                  })}
+              </div>
+          )}
+
+          {/* VIEW: STUDENTS TABLE */}
+          {activeView === 'students' && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm text-slate-600">
+                          <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b border-gray-200">
+                              <tr>
+                                  <th className="px-6 py-4">Aluno / Email</th>
+                                  <th className="px-6 py-4">Função</th>
+                                  <th className="px-6 py-4">ID</th>
+                                  <th className="px-6 py-4">Status / Vencimento</th>
+                                  <th className="px-6 py-4 text-right">Ações</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {loadingStudents ? (
+                                  <tr><td colSpan="5" className="px-6 py-10 text-center"><Loader2 className="animate-spin mx-auto text-purple-600" /></td></tr>
+                              ) : filteredStudents.map(student => {
+                                  const subStatus = checkSubscriptionStatus(student.subscriptionUntil, student.role);
+                                  const isAdmin = student.role === 'admin';
+                                  
+                                  return (
+                                      <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                                          <td className="px-6 py-4">
+                                              <div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div>
+                                              <div className="text-xs text-gray-500 mb-1">{student.email}</div>
+                                              {student.whatsapp && (
+                                                  <div className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
+                                                      <Phone size={12}/> {student.whatsapp}
+                                                  </div>
+                                              )}
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              {/* INLINE ROLE EDIT */}
+                                              <select 
+                                                  value={student.role} 
+                                                  onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)}
+                                                  className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}
+                                              >
+                                                  <option value="student">Aluno</option>
+                                                  <option value="admin">Admin</option>
+                                              </select>
+                                          </td>
+                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>
+                                              {student.id.slice(0, 8)}... <Copy size={12}/>
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              {!isAdmin ? (
+                                                  <>
+                                                      <div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div>
+                                                      <div className="flex items-center gap-2">
+                                                          <input 
+                                                              type="date" 
+                                                              value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''}
+                                                              onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)}
+                                                              className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"
+                                                          />
+                                                          <button 
+                                                              onClick={() => handleAdd30Days(student)}
+                                                              className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
+                                                              title="Adicionar 30 dias"
+                                                          >
+                                                              <PlusCircle size={10}/> +30
+                                                          </button>
+                                                      </div>
+                                                  </>
+                                              ) : (
+                                                  <span className="text-gray-400 text-sm font-medium">–</span>
+                                              )}
+                                          </td>
+                                          <td className="px-6 py-4 text-right">
+                                              <div className="flex justify-end gap-2">
+                                                  <button onClick={() => fetchUserStats(student)} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors" title="Ver Desempenho"><TrendingUp size={18}/></button>
+                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Excluir"><Trash2 size={18}/></button>
+                                              </div>
+                                          </td>
+                                      </tr>
+                                  );
+                              })}
+                          </tbody>
+                      </table>
+                  </div>
               </div>
           )}
       </main>
 
-      {/* EDIT MODAL - FULL SCREEN OVERLAY */}
+      {/* --- MODALS --- */}
+
+      {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
           <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200">
               <div className="max-w-4xl mx-auto p-6 pb-20">
+                  {associatedReport && (
+                      <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between shadow-sm">
+                          <div className="flex items-start gap-3 w-full">
+                              <div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div>
+                              <div className="w-full">
+                                  <h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3>
+                                  <div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div>
+                              </div>
+                          </div>
+                      </div>
+                  )}
                   <div className="flex items-center justify-between mb-8 sticky top-0 bg-white py-4 border-b border-gray-100 z-10">
-                      <div>
-                          <div className="flex items-center gap-3">
-                              <button onClick={() => setEditingQuestion(null)} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
-                              <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
-                          </div>
-                          <div 
-                              onClick={() => copyToClipboard(editingQuestion.id)}
-                              className="ml-12 mt-1 text-xs font-mono text-gray-400 flex items-center gap-1 cursor-pointer hover:text-blue-600 transition-colors w-fit"
-                              title="Copiar ID Completo"
-                          >
-                              ID: {editingQuestion.id} <Copy size={12}/>
-                          </div>
+                      <div className="flex items-center gap-3">
+                          <button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
+                          <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
                       </div>
                       <div className="flex gap-3">
-                          <button onClick={() => setEditingQuestion(null)} className="px-4 py-2 text-gray-500 font-bold hover:bg-gray-100 rounded-lg">Cancelar</button>
-                          <button onClick={handleSave} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">
-                              {isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-                              Salvar Alterações
-                          </button>
+                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar Reporte</span></button>}
+                          {associatedReport ? (
+                              <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
+                          ) : (
+                              <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
+                          )}
+                          <button onClick={() => setDeleteModal(editingQuestion)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 ml-2" title="Excluir Questão"><Trash2 size={20} /></button>
                       </div>
                   </div>
-
+                  {/* FORM FIELDS ... (Mantido igual) */}
                   <form className="space-y-8">
-                      {/* Metadata */}
                       <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div>
-                              <label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label>
-                              <input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/>
-                          </div>
-                          <div>
-                              <label className="block text-sm font-bold text-gray-600 mb-2">Ano</label>
-                              <input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/>
-                          </div>
-                          <div>
-                              <label className="block text-sm font-bold text-gray-600 mb-2">Área</label>
-                              <select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">
-                                  {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
-                              </select>
-                          </div>
-                          <div>
-                              <label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label>
-                              <select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">
-                                  {(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}
-                              </select>
-                          </div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label><input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                       </div>
+                      <div><label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label><textarea value={editingQuestion.text} onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})} rows={6} className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"/></div>
+                      <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
+                      <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100"><label className="block text-sm font-bold text-amber-800 uppercase tracking-wider mb-3">Comentário / Explicação</label><textarea value={editingQuestion.explanation} onChange={e => setEditingQuestion({...editingQuestion, explanation: e.target.value})} rows={5} className="w-full p-4 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-slate-700"/></div>
+                  </form>
+              </div>
+          </div>
+      )}
 
-                      {/* Enunciado */}
-                      <div>
-                          <label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label>
-                          <textarea 
-                              value={editingQuestion.text} 
-                              onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})}
-                              rows={6}
-                              className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"
-                          />
+      {/* CREATE USER MODAL */}
+      {isCreatingUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+                  <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4">
+                      <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><UserPlus size={24}/></div>
+                      <h2 className="text-xl font-bold text-slate-800">Novo Aluno</h2>
+                  </div>
+                  <form onSubmit={handleCreateUser} className="space-y-4">
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input name="name" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="Ex: Ana Silva" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">E-mail</label><input name="email" type="email" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="email@exemplo.com" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha (Provisória)</label><input name="password" type="text" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="123456" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WhatsApp (Opcional)</label><input name="whatsapp" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="31999999999" /></div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div>
                       </div>
-
-                      {/* Options */}
-                      <div className="space-y-4">
-                          <label className="block text-lg font-bold text-slate-900">Alternativas</label>
-                          {editingQuestion.options.map((opt, idx) => (
-                              <div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}>
-                                  <div 
-                                    onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})}
-                                    className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
-                                  >
-                                      {opt.id.toUpperCase()}
-                                  </div>
-                                  <textarea 
-                                      value={opt.text}
-                                      onChange={e => {
-                                          const newOpts = [...editingQuestion.options];
-                                          newOpts[idx].text = e.target.value;
-                                          setEditingQuestion({...editingQuestion, options: newOpts});
-                                      }}
-                                      rows={2}
-                                      className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"
-                                  />
-                              </div>
-                          ))}
-                      </div>
-
-                      {/* Explanation */}
-                      <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100">
-                          <label className="block text-sm font-bold text-amber-800 uppercase tracking-wider mb-3">Comentário / Explicação</label>
-                          <textarea 
-                              value={editingQuestion.explanation} 
-                              onChange={e => setEditingQuestion({...editingQuestion, explanation: e.target.value})}
-                              rows={5}
-                              className="w-full p-4 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-slate-700"
-                          />
+                      <div className="flex gap-3 pt-4">
+                          <button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                          <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button>
                       </div>
                   </form>
               </div>
           </div>
       )}
 
-      {/* DELETE MODAL */}
+      {/* USER STATS MODAL */}
+      {viewingUserStats && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
+                  <button onClick={() => setViewingUserStats(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                  
+                  <div className="flex items-center gap-4 mb-6">
+                      <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-2xl">
+                          {viewingUserStats.name ? viewingUserStats.name.charAt(0) : 'U'}
+                      </div>
+                      <div>
+                          <h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2>
+                          <p className="text-sm text-gray-500">{viewingUserStats.email}</p>
+                          <div className="flex gap-2 mt-1">
+                              {checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' 
+                                  ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> 
+                                  : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>
+                              }
+                              <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span>
+                          </div>
+                      </div>
+                  </div>
+
+                  {viewingUserStats.loading ? (
+                      <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-purple-600" size={32} /></div>
+                  ) : (
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-orange-50 p-4 rounded-xl text-center border border-orange-100">
+                              <div className="flex justify-center text-orange-600 mb-1"><Zap size={24}/></div>
+                              <div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.streak || 0}</div>
+                              <div className="text-xs uppercase font-bold text-orange-600">Dias em Sequência</div>
+                          </div>
+                          <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100">
+                              <div className="flex justify-center text-blue-600 mb-1"><CheckSquare size={24}/></div>
+                              <div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.totalAnswers || 0}</div>
+                              <div className="text-xs uppercase font-bold text-blue-600">Questões Totais</div>
+                          </div>
+                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2">
+                              <div className="flex justify-between items-center mb-2">
+                                  <span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span>
+                                  <span className="text-2xl font-bold text-emerald-600">
+                                      {viewingUserStats.stats?.totalAnswers > 0 
+                                          ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) 
+                                          : 0}%
+                                  </span>
+                              </div>
+                              <div className="w-full bg-emerald-200 rounded-full h-2.5">
+                                  <div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div>
+                              </div>
+                              <p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+
+      {/* DELETE MODAL (Generic for Questions and Users) */}
       {deleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
                   <div className="flex flex-col items-center text-center">
                     <div className="bg-red-100 p-3 rounded-full text-red-600 mb-4"><AlertTriangle size={32}/></div>
                     <h2 className="text-xl font-bold mb-2 text-slate-800">Excluir Definitivamente?</h2>
-                    <p className="text-gray-600 mb-6 text-sm">Essa questão será removida do banco de dados oficial. Isso pode afetar simulados passados de alunos.</p>
+                    <p className="text-gray-600 mb-6 text-sm">
+                        {deleteModal.email ? `O aluno ${deleteModal.name} será removido.` : 'Essa questão será removida do banco de dados oficial.'}
+                    </p>
                     <div className="flex gap-3 w-full">
                         <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                        <button onClick={handleDelete} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
+                        <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* REJECT REPORT MODAL */}
+      {rejectReportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="bg-orange-100 p-3 rounded-full text-orange-600 mb-4"><ThumbsDown size={32}/></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">Recusar Sugestão?</h2>
+                    <p className="text-gray-600 mb-6 text-sm">Esta ação vai <strong>APAGAR</strong> o reporte do banco de dados.</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                        <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button>
                     </div>
                   </div>
               </div>
