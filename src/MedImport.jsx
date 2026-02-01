@@ -3,7 +3,7 @@ import {
   Map, Save, Trash2, Settings, CheckCircle, 
   AlertCircle, FileText, Database, 
   Loader2, Wand2, Cpu, RefreshCw, User, X,
-  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning
+  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -454,9 +454,19 @@ export default function App() {
       {/* HEADER */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Map className="text-blue-600" size={28} />
-            <h1 className="text-xl font-bold text-slate-800">MedMaps Importer</h1>
+          <div className="flex items-center gap-4">
+            {/* BOTÃO VOLTAR */}
+            <button 
+                onClick={() => window.location.href = '/'}
+                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                title="Voltar para o App Principal"
+            >
+                <ArrowLeft size={24} />
+            </button>
+            <div className="flex items-center gap-2">
+                <Map className="text-blue-600" size={28} />
+                <h1 className="text-xl font-bold text-slate-800">MedMaps Importer</h1>
+            </div>
           </div>
           
           <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
