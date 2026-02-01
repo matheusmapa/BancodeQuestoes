@@ -62,7 +62,7 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
-  const [isSavingKey, setIsSavingKey] = useState(false); // Loading state para salvar chave
+  const [isSavingKey, setIsSavingKey] = useState(false);
   
   // parsedQuestions reflete os RASCUNHOS do Firebase
   const [parsedQuestions, setParsedQuestions] = useState([]);
@@ -74,6 +74,9 @@ export default function App() {
   // Estados dos Modais
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
+  
+  // Estado para o Modal de Exclusão (Substitui window.confirm)
+  const [itemToDelete, setItemToDelete] = useState(null);
   
   // Login Inputs
   const [email, setEmail] = useState('');
@@ -88,7 +91,6 @@ export default function App() {
                 const userDoc = await getDoc(userDocRef);
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
-                    // --- PUXAR API KEY GERAL DO BANCO AO LOGAR ---
                     fetchGlobalApiKey();
                 } else {
                     await signOut(auth);
@@ -117,22 +119,20 @@ export default function App() {
           if (settingsSnap.exists() && settingsSnap.data().geminiApiKey) {
               const globalKey = settingsSnap.data().geminiApiKey;
               setApiKey(globalKey);
-              localStorage.setItem('gemini_api_key', globalKey); // Atualiza cache local
-              // showNotification('success', 'Chave API sincronizada com o banco de dados.');
+              localStorage.setItem('gemini_api_key', globalKey);
           }
       } catch (error) {
           console.error("Erro ao buscar chave global:", error);
       }
   };
 
-  // --- LISTENER DE RASCUNHOS (REAL-TIME) ---
+  // --- LISTENER DE RASCUNHOS ---
   useEffect(() => {
       if (!user) {
           setParsedQuestions([]);
           return;
       }
 
-      // Escuta a coleção 'draft_questions'
       const q = query(collection(db, "draft_questions"), orderBy("createdAt", "desc"));
       
       const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -151,14 +151,11 @@ export default function App() {
   }, [user]);
 
   // --- HELPER FUNCTIONS ---
-  
-  // Salvar API Key (NO BANCO GERAL)
   const saveApiKeyFromModal = async () => {
       if (!tempApiKey.trim()) return showNotification('error', 'A chave não pode estar vazia.');
       
       setIsSavingKey(true);
       try {
-          // Salva no documento 'settings/global'
           await setDoc(doc(db, "settings", "global"), {
               geminiApiKey: tempApiKey,
               updatedBy: user.email,
@@ -171,7 +168,7 @@ export default function App() {
           showNotification('success', 'Chave API salva no Banco de Dados Geral!');
       } catch (error) {
           console.error(error);
-          showNotification('error', 'Erro ao salvar chave no banco: ' + error.message);
+          showNotification('error', 'Erro ao salvar chave: ' + error.message);
       } finally {
           setIsSavingKey(false);
       }
@@ -223,6 +220,34 @@ export default function App() {
               };
               reader.readAsDataURL(blob);
           }
+      }
+  };
+
+  const validateKeyAndFetchModels = async () => {
+      if (!apiKey) return showNotification('error', 'Configure uma chave API primeiro.');
+      setIsValidatingKey(true);
+      try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          if (!data.models) throw new Error("Sem acesso a modelos.");
+
+          const genModels = data.models.filter(m => 
+              m.supportedGenerationMethods?.includes("generateContent") && (m.name.includes("gemini"))
+          );
+          
+          if (genModels.length > 0) {
+              setAvailableModels(genModels);
+              const flash25 = genModels.find(m => m.name.includes('2.5-flash') && !m.name.includes('lite'));
+              if (flash25) setSelectedModel(flash25.name);
+              showNotification('success', `${genModels.length} modelos liberados e sincronizados!`);
+          } else {
+              showNotification('error', 'Chave válida mas sem modelos Gemini.');
+          }
+      } catch (error) {
+          showNotification('error', `Erro na chave: ${error.message}`);
+      } finally {
+          setIsValidatingKey(false);
       }
   };
 
@@ -321,8 +346,7 @@ export default function App() {
   };
 
   // --- ACTIONS DE APROVAÇÃO ---
-  const approveQuestion = async (index) => {
-    const q = parsedQuestions[index];
+  const approveQuestion = async (q) => {
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
       return showNotification('error', 'Preencha os campos obrigatórios antes de aprovar.');
     }
@@ -345,12 +369,19 @@ export default function App() {
     }
   };
 
-  const discardQuestion = async (index) => {
-      const q = parsedQuestions[index];
-      if (!window.confirm("Tem certeza que deseja excluir este rascunho permanentemente?")) return;
+  // Função chamada pelo botão de descartar (Abre o Modal)
+  const requestDiscard = (q) => {
+      setItemToDelete(q);
+  };
+
+  // Função que executa a exclusão de fato
+  const confirmDiscard = async () => {
+      if (!itemToDelete || !itemToDelete.id) return;
+      
       try {
-          await deleteDoc(doc(db, "draft_questions", q.id));
+          await deleteDoc(doc(db, "draft_questions", itemToDelete.id));
           showNotification('info', 'Rascunho excluído.');
+          setItemToDelete(null); // Fecha o modal
       } catch (error) {
           console.error(error);
           showNotification('error', 'Erro ao excluir.');
@@ -398,35 +429,6 @@ export default function App() {
       setParsedQuestions(newQ);
   };
 
-  // --- AUTO-DIAGNÓSTICO ---
-  const validateKeyAndFetchModels = async () => {
-      if (!apiKey) return showNotification('error', 'Configure uma chave API primeiro.');
-      setIsValidatingKey(true);
-      try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          if (!data.models) throw new Error("Sem acesso a modelos.");
-
-          const genModels = data.models.filter(m => 
-              m.supportedGenerationMethods?.includes("generateContent") && (m.name.includes("gemini"))
-          );
-          
-          if (genModels.length > 0) {
-              setAvailableModels(genModels);
-              const flash25 = genModels.find(m => m.name.includes('2.5-flash') && !m.name.includes('lite'));
-              if (flash25) setSelectedModel(flash25.name);
-              showNotification('success', `${genModels.length} modelos liberados e sincronizados!`);
-          } else {
-              showNotification('error', 'Chave válida mas sem modelos Gemini.');
-          }
-      } catch (error) {
-          showNotification('error', `Erro na chave: ${error.message}`);
-      } finally {
-          setIsValidatingKey(false);
-      }
-  };
-
   // --- RENDER LOGIN ---
   const renderLogin = () => (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
@@ -455,7 +457,6 @@ export default function App() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            {/* BOTÃO VOLTAR */}
             <button 
                 onClick={() => window.location.href = '/'}
                 className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -508,13 +509,35 @@ export default function App() {
                   </div>
                   <div className="flex justify-end gap-3">
                       <button onClick={() => setShowApiKeyModal(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold">Cancelar</button>
-                      <button 
-                        onClick={saveApiKeyFromModal} 
-                        disabled={isSavingKey}
-                        className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2"
-                      >
+                      <button onClick={saveApiKeyFromModal} disabled={isSavingKey} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2">
                           {isSavingKey ? <Loader2 size={16} className="animate-spin" /> : null}
                           Salvar Global
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {itemToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <h2 className="text-xl font-bold mb-2 text-slate-800 text-center">Confirmar Exclusão</h2>
+                  <p className="text-gray-600 text-center mb-6">
+                      Tem certeza que deseja excluir este rascunho permanentemente? Essa ação não pode ser desfeita.
+                  </p>
+                  <div className="flex gap-3 justify-center">
+                      <button 
+                          onClick={() => setItemToDelete(null)}
+                          className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button 
+                          onClick={confirmDiscard}
+                          className="px-6 py-2 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 shadow-lg transition-colors"
+                      >
+                          Sim, Excluir
                       </button>
                   </div>
               </div>
@@ -622,8 +645,8 @@ export default function App() {
                             </div>
                             
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
-                                <button onClick={()=>discardQuestion(idx)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
-                                <button onClick={()=>approveQuestion(idx)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
+                                <button onClick={()=>requestDiscard(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
+                                <button onClick={()=>approveQuestion(q)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
                             </div>
                         </div>
                     ))
