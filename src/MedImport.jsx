@@ -4,8 +4,7 @@ import {
   AlertCircle, FileText, Database, 
   Loader2, Wand2, Cpu, RefreshCw, User, X,
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
-  AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
-  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw
+  AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, ToggleLeft, ToggleRight, Layers
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -119,6 +118,8 @@ export default function App() {
   
   // Gestão de Chaves API (Múltiplas)
   const [apiKeys, setApiKeys] = useState(() => JSON.parse(localStorage.getItem('gemini_api_keys') || '[]'));
+  // Estado legado só para o seletor de modelos, usamos a primeira chave como "principal"
+  const mainKey = apiKeys.length > 0 ? apiKeys[0] : '';
   
   // Modelos
   const [availableModels, setAvailableModels] = useState([
@@ -138,12 +139,6 @@ export default function App() {
   const [isValidatingKey, setIsValidatingKey] = useState(false);
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(false); 
   
-  // Override States (Pré-definições)
-  const [overrideInst, setOverrideInst] = useState('');
-  const [overrideYear, setOverrideYear] = useState('');
-  const [overrideArea, setOverrideArea] = useState('');
-  const [overrideTopic, setOverrideTopic] = useState('');
-
   // Modais
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [tempApiKeysText, setTempApiKeysText] = useState('');
@@ -169,10 +164,9 @@ export default function App() {
   // --- REFS ---
   const pdfStatusRef = useRef(pdfStatus);
   const pdfChunksRef = useRef(pdfChunks);
-  const apiKeysRef = useRef(apiKeys);
-  const keyRotationIndex = useRef(0);
+  const apiKeysRef = useRef(apiKeys); // AGORA GUARDA O ARRAY DE CHAVES
+  const keyRotationIndex = useRef(0); // Para rodízio de chaves
   const doubleCheckRef = useRef(isDoubleCheckEnabled); 
-  const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
 
   const CHUNK_SIZE = 10; 
 
@@ -208,7 +202,6 @@ export default function App() {
   useEffect(() => { pdfChunksRef.current = pdfChunks; }, [pdfChunks]);
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
-  useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
 
   // --- SYNC CHAVES API (GLOBAL SETTINGS) ---
   useEffect(() => {
@@ -216,6 +209,7 @@ export default function App() {
       const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
           if (docSnap.exists()) {
               const data = docSnap.data();
+              // Suporte legado para 'geminiApiKey' (string) e novo 'geminiApiKeys' (array)
               let newKeys = [];
               if (data.geminiApiKeys && Array.isArray(data.geminiApiKeys)) {
                   newKeys = data.geminiApiKeys;
@@ -223,12 +217,9 @@ export default function App() {
                   newKeys = [data.geminiApiKey];
               }
 
-              // Normaliza chaves e remove duplicatas no carregamento também
-              const uniqueKeys = [...new Set(newKeys.filter(k => k && k.trim().length > 0))];
-
-              if (JSON.stringify(uniqueKeys) !== JSON.stringify(apiKeysRef.current)) {
-                  setApiKeys(uniqueKeys);
-                  localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
+              if (JSON.stringify(newKeys) !== JSON.stringify(apiKeysRef.current)) {
+                  setApiKeys(newKeys);
+                  localStorage.setItem('gemini_api_keys', JSON.stringify(newKeys));
               }
           }
       }, (error) => console.error("Erro ao sincronizar chaves:", error));
@@ -247,34 +238,43 @@ export default function App() {
   }, [user]);
 
   // --- ROTATION HELPER ---
+  // Tenta executar uma request com rotação de chaves em caso de erro 429
   const executeWithKeyRotation = async (operationName, requestFn) => {
       const keys = apiKeysRef.current;
       if (!keys || keys.length === 0) throw new Error("Nenhuma chave API configurada.");
 
       let lastError = null;
+      // Tenta uma vez para cada chave disponível antes de desistir
+      // Começa do índice atual para manter o Round-Robin
       const startIndex = keyRotationIndex.current;
 
       for (let i = 0; i < keys.length; i++) {
           const currentIndex = (startIndex + i) % keys.length;
           const currentKey = keys[currentIndex];
           
+          // Atualiza o ponteiro global para a próxima
           keyRotationIndex.current = (currentIndex + 1) % keys.length;
 
           try {
+              // addLog('info', `[${operationName}] Usando Chave ${currentIndex + 1}/${keys.length} (${currentKey.slice(-4)})...`);
               return await requestFn(currentKey);
           } catch (error) {
               const msg = error.message || "";
               const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429");
               
               if (isQuotaError) {
-                  addLog('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
+                  addLog('warning', `[${operationName}] Chave ${currentKey.slice(-4)} estourou limite. Tentando próxima...`);
                   lastError = error;
+                  // Continua o loop para a próxima chave imediatamente
                   continue; 
               } else {
+                  // Se não for erro de cota, falha imediatamente (ex: erro de parse, chave inválida 400)
                   throw error; 
               }
           }
       }
+      
+      // Se saiu do loop, todas as chaves falharam com Quota Exceeded
       throw lastError || new Error("Todas as chaves falharam.");
   };
 
@@ -380,46 +380,10 @@ export default function App() {
       }
   };
 
-  const handleResetPdf = () => {
-      if (pdfStatus === 'processing') return; 
-      setPdfFile(null);
-      setPdfChunks([]);
-      setPdfStatus('idle');
-      setCurrentChunkIndex(0);
-      setProcessingLogs([]);
-      setConsecutiveErrors(0);
-  };
-
-  const handleRestartPdf = () => {
-      if (!pdfFile || pdfStatus === 'processing') return;
-      const resetChunks = pdfChunks.map(c => ({ ...c, status: 'pending', errorCount: 0 }));
-      setPdfChunks(resetChunks);
-      setCurrentChunkIndex(0);
-      setPdfStatus('ready');
-      setProcessingLogs([]);
-      setConsecutiveErrors(0);
-      addLog('info', 'Processamento reiniciado.');
-  };
-
-  const handleJumpToChunk = (index) => {
-      if (pdfStatus === 'processing' || pdfStatus === 'idle') return;
-      
-      addLog('warning', `Rebobinando para a fatia ${index + 1}...`);
-      
-      // Reseta o status desta fatia e das próximas para pending
-      setPdfChunks(prev => prev.map((chunk, i) => {
-          if (i >= index) return { ...chunk, status: 'pending', errorCount: 0 };
-          return chunk;
-      }));
-      
-      setCurrentChunkIndex(index);
-  };
-
   const processNextChunk = async () => {
       const currentStatus = pdfStatusRef.current;
       const currentChunks = pdfChunksRef.current;
       const doDoubleCheck = doubleCheckRef.current;
-      const ovr = overridesRef.current; 
 
       if (processorRef.current) return; 
       if (currentStatus === 'paused' || currentStatus === 'error' || currentStatus === 'completed') return;
@@ -439,41 +403,25 @@ export default function App() {
       if (currentStatus !== 'processing') setPdfStatus('processing');
       
       processorRef.current = true; 
-      addLog('info', `Processando fatia ${chunk.pages}...`);
+      addLog('info', `Processando fatia ${chunk.pages}... (Double-Check: ${doDoubleCheck ? 'ON' : 'OFF'})`);
 
       try {
-          // --- CONSTRUÇÃO INTELIGENTE DO MAPA DE TEMAS E PROMPT ---
-          // Se o usuário filtrou a Área, restringimos o mapa de tópicos APENAS para aquela área.
-          // Se não filtrou, mandamos tudo.
-          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
-
           // USANDO ROTAÇÃO DE CHAVES PARA A GERAÇÃO PRINCIPAL
           const questions = await executeWithKeyRotation("Geração", async (key) => {
               const systemPrompt = `
                 Você é um especialista em provas de Residência Médica (MedMaps).
                 Analise o texto extraído de um PDF.
                 
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
                 SUA MISSÃO:
                 1. Identificar questões (Enunciado + Alternativas).
-                
                 2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
-                   - É CRUCIAL que a classificação esteja correta.
-                   - LISTA DE CLASSIFICAÇÃO VÁLIDA:
-                   ${JSON.stringify(activeThemesMap)}
-
+                   - Você DEVE classificar cada questão em uma das Áreas e Tópicos abaixo.
+                   - LISTA: ${JSON.stringify(themesMap)}
                 3. GABARITO E COMENTÁRIO:
                    - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
                    - Gere sempre um campo "explanation".
-                
                 4. DADOS DE CABEÇALHO:
-                   - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
-                   - Procure pelo nome do HOSPITAL ou BANCA.
-                   - Se não encontrar, deixe "".
+                   - Extraia Instituição e Ano. Se não achar, deixe "".
                 
                 Retorne JSON ESTRITO:
                 [{ 
@@ -510,23 +458,16 @@ export default function App() {
               return extracted;
           });
 
-          // --- PÓS-PROCESSAMENTO (O "ROLO COMPRESSOR") ---
-          // Aplica os overrides na marra via JS
-          const finalQuestions = questions.map(q => ({
-              ...q,
-              institution: ovr.overrideInst || q.institution, // Se overrideInst tem valor, usa ele. Se não, usa o da IA.
-              year: ovr.overrideYear || q.year,
-              area: ovr.overrideArea || q.area,
-              topic: ovr.overrideTopic || q.topic // Se overrideTopic tem valor, usa ele.
-          }));
-
           // --- LOGICA DOUBLE CHECK SEQUENCIAL ---
-          if (finalQuestions.length > 0) {
+          let finalQuestions = questions;
+          if (questions.length > 0) {
               if (doDoubleCheck) {
-                  addLog('info', `Iniciando Auditoria IA sequencial para ${finalQuestions.length} questões...`);
+                  addLog('info', `Iniciando Auditoria IA sequencial para ${questions.length} questões...`);
                   
+                  // Verifica uma por uma, também com rotação de chaves
                   for (let i = 0; i < finalQuestions.length; i++) {
-                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 6000));
+                      // Pequeno delay entre verificações para não floodar mesmo com várias chaves
+                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 1500));
                       
                       try {
                           const verification = await verifyQuestionWithAI(finalQuestions[i]);
@@ -536,23 +477,17 @@ export default function App() {
                               verificationReason: verification.reason 
                           };
                       } catch (err) {
-                          const msg = err.message || "";
-                          if (msg.includes("Quota exceeded") || msg.includes("429")) {
-                              throw err; 
-                          }
+                          // Se a verificação falhar (mesmo com rotação), marca como não verificada mas não para o processo
                           console.error("Falha na auditoria individual:", err);
                           finalQuestions[i] = { 
                               ...finalQuestions[i], 
                               verificationStatus: 'unchecked', 
-                              verificationReason: 'Falha na auditoria (Erro genérico)' 
+                              verificationReason: 'Falha na auditoria' 
                           };
                       }
                   }
               } else {
-                  // Mapeia sem verificação
-                  finalQuestions.forEach((q, idx) => {
-                      finalQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
-                  });
+                  finalQuestions = finalQuestions.map(q => ({ ...q, verificationStatus: 'unchecked', verificationReason: '' }));
               }
 
               const batch = writeBatch(db);
@@ -593,6 +528,7 @@ export default function App() {
           let delay = 3000;
 
           if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
+              // Se chegou aqui, TODAS as chaves falharam
               if (retrySeconds) {
                   delay = (retrySeconds * 1000) + 2000; 
                   addLog('warning', `Todas as chaves esgotadas. Aguardando ${Math.ceil(retrySeconds)}s...`);
@@ -607,6 +543,7 @@ export default function App() {
               processorRef.current = false;
               return; 
           } else {
+              // Erro de lógica/parse
               const newErrorCount = chunk.errorCount + 1;
               delay = 3000 * Math.pow(2, newErrorCount);
               
@@ -629,7 +566,7 @@ export default function App() {
 
           if (newConsecutiveErrors >= 10) { 
               setPdfStatus('paused'); 
-              addLog('error', 'PAUSADO: Muitos erros consecutivos.');
+              addLog('error', 'PAUSADO: Muitos erros consecutivos mesmo com rotação.');
               processorRef.current = false;
               return; 
           }
@@ -662,28 +599,27 @@ export default function App() {
 
   // --- HELPER FUNCTIONS ---
   const saveApiKeyFromModal = async () => {
-      const rawKeys = tempApiKeysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
-      const uniqueKeys = [...new Set(rawKeys)];
-
-      if (uniqueKeys.length === 0) return showNotification('error', 'Adicione pelo menos uma chave.');
+      const keys = tempApiKeysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+      
+      if (keys.length === 0) return showNotification('error', 'Adicione pelo menos uma chave.');
       
       setIsSavingKey(true);
       try {
-          setApiKeys(uniqueKeys);
-          localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
-          apiKeysRef.current = uniqueKeys;
-          keyRotationIndex.current = 0; 
+          setApiKeys(keys);
+          localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
+          apiKeysRef.current = keys;
+          keyRotationIndex.current = 0; // Reset rotation
 
           await setDoc(doc(db, "settings", "global"), {
-              geminiApiKeys: uniqueKeys, 
-              geminiApiKey: uniqueKeys[0], 
+              geminiApiKeys: keys, // Save as array
+              geminiApiKey: keys[0], // Fallback for legacy
               updatedBy: user.email,
               updatedAt: new Date().toISOString()
           }, { merge: true });
           
           setShowApiKeyModal(false);
           setShowTutorial(false);
-          showNotification('success', `${uniqueKeys.length} Chaves API Salvas!`);
+          showNotification('success', `${keys.length} Chaves API Salvas!`);
           
           if (pdfStatus === 'paused') addLog('success', 'Novas chaves detectadas! Clique em "Continuar".');
 
@@ -694,17 +630,42 @@ export default function App() {
       }
   };
 
-  const handleGetKey = () => { window.open('https://aistudio.google.com/app/api-keys', '_blank'); setShowTutorial(true); };
-  const handleModelChange = (modelName) => { setSelectedModel(modelName); localStorage.setItem('gemini_model', modelName); };
-  const showNotification = (type, text) => { setNotification({ type, text }); };
-  const closeNotification = () => { setNotification(null); };
-  const handleLogout = () => { signOut(auth); setParsedQuestions([]); setActiveTab('input'); };
+  const handleGetKey = () => {
+      window.open('https://aistudio.google.com/app/api-keys', '_blank');
+      setShowTutorial(true);
+  };
+
+  const handleModelChange = (modelName) => {
+      setSelectedModel(modelName);
+      localStorage.setItem('gemini_model', modelName);
+  };
+
+  const showNotification = (type, text) => {
+    setNotification({ type, text });
+  };
+
+  const closeNotification = () => {
+      setNotification(null);
+  };
+
+  const handleLogout = () => {
+      signOut(auth);
+      setParsedQuestions([]);
+      setActiveTab('input');
+  };
 
   const handleImageUpload = (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onloadend = () => { setSelectedImage({ data: reader.result.split(',')[1], mime: file.type, preview: reader.result }); };
+      reader.onloadend = () => {
+          const result = reader.result;
+          setSelectedImage({
+              data: result.split(',')[1],
+              mime: file.type,
+              preview: result
+          });
+      };
       reader.readAsDataURL(file);
   };
 
@@ -714,14 +675,20 @@ export default function App() {
           if (items[i].type.indexOf("image") !== -1) {
               const blob = items[i].getAsFile();
               const reader = new FileReader();
-              reader.onloadend = () => { setSelectedImage({ data: reader.result.split(',')[1], mime: blob.type, preview: reader.result }); };
+              reader.onloadend = () => {
+                  setSelectedImage({
+                      data: reader.result.split(',')[1],
+                      mime: blob.type,
+                      preview: reader.result
+                  });
+              };
               reader.readAsDataURL(blob);
           }
       }
   };
 
   const validateKeyAndFetchModels = async () => {
-      const currentKey = apiKeysRef.current[0]; 
+      const currentKey = apiKeysRef.current[0]; // Validate first key
       if (!currentKey) return showNotification('error', 'Configure as chaves API primeiro.');
       setIsValidatingKey(true);
       try {
@@ -750,31 +717,20 @@ export default function App() {
 
     setIsProcessing(true);
 
-    const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
-
     try {
-        // Mapa dinâmico também para processamento único
-        const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
-
         const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
             const systemPrompt = `
               Você é um especialista em banco de dados médicos (MedMaps).
               Extraia questões no formato JSON ESTRITO.
               
-              CONTEXTO (Informacional):
-              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
               REGRAS:
               1. Retorne APENAS o JSON (sem markdown).
-              2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                 - Classifique CADA questão usando a lista abaixo.
-                 - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
-              3. GABARITO E COMENTÁRIO: 
+              2. Tópico: Escolha baseado estritamente na lista abaixo:
+                 ${JSON.stringify(themesMap)}
+              3. Instituição e Ano: Se não encontrar, deixe vazio "".
+              4. GABARITO E COMENTÁRIO: 
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
                  - Gere sempre um campo "explanation".
-              4. DADOS DE CABEÇALHO:
-                 - IGNORE nomes de cursos preparatórios no campo "institution".
               
               Formato Saída:
               [
@@ -819,15 +775,8 @@ export default function App() {
             }
         });
 
-        // Pós-processamento e Auditoria
-        let finalQuestions = questions.map(q => ({
-            ...q,
-            institution: ovr.overrideInst || q.institution,
-            year: ovr.overrideYear || q.year,
-            area: ovr.overrideArea || q.area,
-            topic: ovr.overrideTopic || q.topic
-        }));
-
+        // Double Check
+        let finalQuestions = questions;
         if (isDoubleCheckEnabled) {
             showNotification('success', 'Iniciando Auditoria IA...');
             for (let i = 0; i < finalQuestions.length; i++) {
@@ -917,23 +866,34 @@ export default function App() {
       });
   };
 
+  // NOVAS AÇÕES EM MASSA
   const handleApproveVerifiedClick = () => {
       const verifiedCount = parsedQuestions.filter(q => q.verificationStatus === 'verified').length;
       if (verifiedCount === 0) return showNotification('error', 'Nenhuma questão verificada (Double-Checked) na fila.');
+      
       setConfirmationModal({
-          isOpen: true, type: 'approve_verified', data: null,
-          title: 'Aprovar Verificadas?', message: `Publicar apenas as ${verifiedCount} questões validadas pela Auditoria IA?`,
-          confirmText: `Aprovar ${verifiedCount}`, confirmColor: 'emerald'
+          isOpen: true,
+          type: 'approve_verified',
+          data: null,
+          title: 'Aprovar Verificadas?',
+          message: `Publicar apenas as ${verifiedCount} questões validadas pela Auditoria IA?`,
+          confirmText: `Aprovar ${verifiedCount}`,
+          confirmColor: 'emerald'
       });
   };
 
   const handleDiscardSuspiciousClick = () => {
       const suspiciousCount = parsedQuestions.filter(q => q.verificationStatus === 'suspicious').length;
       if (suspiciousCount === 0) return showNotification('error', 'Nenhuma questão suspeita (Alucinada) na fila.');
+
       setConfirmationModal({
-          isOpen: true, type: 'discard_suspicious', data: null,
-          title: 'Descartar Suspeitas?', message: `Excluir as ${suspiciousCount} questões marcadas como suspeitas/alucinadas pela IA?`,
-          confirmText: `Excluir ${suspiciousCount}`, confirmColor: 'red'
+          isOpen: true,
+          type: 'discard_suspicious',
+          data: null,
+          title: 'Descartar Suspeitas?',
+          message: `Excluir as ${suspiciousCount} questões marcadas como suspeitas/alucinadas pela IA?`,
+          confirmText: `Excluir ${suspiciousCount}`,
+          confirmColor: 'red'
       });
   };
 
@@ -1074,6 +1034,7 @@ export default function App() {
             </div>
 
             <button onClick={() => { 
+                // Preenche o textarea com as chaves atuais separadas por quebra de linha
                 setTempApiKeysText(apiKeys.join('\n')); 
                 setShowApiKeyModal(true); 
                 setShowTutorial(false); 
@@ -1098,7 +1059,7 @@ export default function App() {
       {/* NOTIFICATION */}
       <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed top-24 right-4" />
 
-      {/* API KEY MODAL (Omitted for brevity) */}
+      {/* API KEY MODAL - AGORA SUPORTA MÚLTIPLAS CHAVES */}
       {showApiKeyModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-y-auto">
@@ -1137,7 +1098,7 @@ export default function App() {
           </div>
       )}
 
-      {/* CONFIRMATION MODAL (Omitted for brevity) */}
+      {/* CONFIRMATION MODAL (Omitted for brevity, logic updated in handler) */}
       {confirmationModal.isOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative animate-in zoom-in-95 duration-200">
@@ -1167,50 +1128,7 @@ export default function App() {
             </div>
         </div>
 
-        {/* OVERRIDES SECTION (PRÉ-DEFINIÇÕES) */}
-        {(activeTab === 'input' || activeTab === 'image' || activeTab === 'pdf') && (
-            <div className="max-w-4xl mx-auto mb-6 animate-in slide-in-from-top-4">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
-                        <Filter size={16} className="text-gray-500"/>
-                        <span className="text-sm font-bold text-slate-700">Filtros de Pré-definição (Forçar Dados)</span>
-                        <span className="text-xs text-gray-400 font-normal ml-auto">Opcional • Se preenchido, a IA será obrigada a usar</span>
-                    </div>
-                    <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instituição</label>
-                            <input value={overrideInst} onChange={e=>setOverrideInst(e.target.value)} placeholder="Ex: ENARE" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ano</label>
-                            <input type="number" value={overrideYear} onChange={e=>setOverrideYear(e.target.value)} placeholder="Ex: 2026" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Área Forçada</label>
-                            <select value={overrideArea} onChange={e=>{setOverrideArea(e.target.value); setOverrideTopic('');}} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                                <option value="">Automático (IA)</option>
-                                {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tópico Forçado</label>
-                            <select value={overrideTopic} onChange={e=>setOverrideTopic(e.target.value)} disabled={!overrideArea} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white disabled:bg-gray-50 disabled:text-gray-400">
-                                <option value="">Automático (IA)</option>
-                                {(themesMap[overrideArea] || []).map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                        </div>
-                    </div>
-                    {(overrideInst || overrideYear || overrideArea) && (
-                        <div className="bg-blue-50 px-4 py-2 border-t border-blue-100 flex justify-between items-center">
-                            <span className="text-xs text-blue-700 font-medium">As próximas questões serão geradas com esses dados fixos.</span>
-                            <button onClick={()=>{setOverrideInst('');setOverrideYear('');setOverrideArea('');setOverrideTopic('');}} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center gap-1"><Eraser size={12}/> Limpar Filtros</button>
-                        </div>
-                    )}
-                </div>
-            </div>
-        )}
-
-        {/* INPUT TABS */}
+        {/* INPUT TABS (INPUT/IMAGE) */}
         {(activeTab === 'input' || activeTab === 'image') && (
             <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
@@ -1258,9 +1176,6 @@ export default function App() {
                         </div>
                         {pdfStatus !== 'idle' && (
                             <div className="flex items-center gap-2">
-                                <button onClick={handleResetPdf} title="Cancelar e Novo PDF" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><XCircle size={20}/></button>
-                                <button onClick={handleRestartPdf} title="Reiniciar Processamento" className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors mr-2"><RotateCcw size={20}/></button>
-                                
                                 {pdfStatus === 'processing' ? (
                                     <button onClick={togglePdfProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
                                 ) : (
@@ -1306,28 +1221,22 @@ export default function App() {
                                 </div>
                             </div>
 
-                            {/* GRID DE CHUNKS - INTERATIVO SE PAUSADO */}
+                            {/* GRID DE CHUNKS */}
                             <div className="border border-gray-200 rounded-xl p-4 max-h-60 overflow-y-auto">
-                                <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
-                                    <span>Mapa de Processamento (Fatias de {CHUNK_SIZE} pgs)</span>
-                                    {pdfStatus === 'paused' && <span className="text-blue-500 text-[10px]">Clique para rebobinar</span>}
-                                </p>
+                                <p className="text-xs font-bold text-gray-400 uppercase mb-2">Mapa de Processamento (Fatias de {CHUNK_SIZE} pgs)</p>
                                 <div className="grid grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2">
                                     {pdfChunks.map((chunk, idx) => (
-                                        <button key={chunk.id} 
-                                            onClick={() => handleJumpToChunk(idx)}
-                                            disabled={pdfStatus === 'processing' || pdfStatus === 'reading'}
+                                        <div key={chunk.id} 
                                             className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
                                             ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
                                             ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
                                             ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
                                             ${idx === currentChunkIndex && pdfStatus === 'processing' ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
-                                            ${pdfStatus === 'paused' && idx <= currentChunkIndex ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer' : ''}
                                             `}
                                             title={`Páginas ${chunk.pages} | Erros: ${chunk.errorCount}`}
                                         >
                                             {idx + 1}
-                                        </button>
+                                        </div>
                                     ))}
                                 </div>
                             </div>
