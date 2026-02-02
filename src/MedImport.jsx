@@ -112,6 +112,73 @@ const extractRetryTime = (message) => {
     return match ? parseFloat(match[1]) : null;
 };
 
+// --- HELPER: PARSER JSON BLINDADO (RECUPERAÇÃO ITERATIVA) ---
+// Tenta salvar o que for possível de um JSON cortado
+const safeJsonParse = (jsonString) => {
+    // 1. Limpeza básica
+    let clean = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+    clean = clean.replace(/[\u0000-\u0019]+/g, ""); 
+
+    // 2. Encontrar inicio do array
+    const startIndex = clean.indexOf('[');
+    if (startIndex === -1) {
+        // Tenta parsing direto caso não seja array
+        try { return JSON.parse(clean); } catch(e) { 
+            // Se falhar e não tiver array, tenta forçar como array vazio ou joga erro
+            throw new Error("Formato inválido: JSON não encontrado."); 
+        }
+    }
+    clean = clean.substring(startIndex);
+
+    // 3. Tenta parse direto (Caminho Feliz)
+    try {
+        const parsed = JSON.parse(clean);
+        if (!Array.isArray(parsed) && typeof parsed === 'object') return [parsed];
+        return parsed;
+    } catch (e) {
+        console.warn("JSON quebrado detectado. Iniciando recuperação iterativa...", e.message);
+        
+        // 4. Estratégia de Recuperação Iterativa (Backtracking)
+        // Se a string foi cortada no meio (ex: limite de tokens), o JSON é inválido.
+        // Vamos tentar cortar a string no último fechamento de objeto '}' válido e adicionar ']'
+        
+        let currentString = clean;
+        let attempts = 0;
+        const maxAttempts = 50; // Evita loop infinito
+
+        while (currentString.length > 2 && attempts < maxAttempts) {
+            attempts++;
+            
+            // Acha o último '}'
+            const lastClose = currentString.lastIndexOf('}');
+            
+            if (lastClose === -1) {
+                // Não tem mais objetos fechados, recuperação falhou total
+                console.error("Recuperação falhou: nenhum objeto válido encontrado.");
+                return []; // Retorna vazio para não travar o processo
+            }
+            
+            // Tenta fechar o array ali
+            // Ex: [... {"a":1}, {"b": "inc... -> [... {"a":1}]
+            const candidate = currentString.substring(0, lastClose + 1) + ']';
+            
+            try {
+                const result = JSON.parse(candidate);
+                console.log(`Recuperação com sucesso na tentativa ${attempts}! ${result.length} itens salvos de um JSON quebrado.`);
+                return result;
+            } catch (e2) {
+                // Se falhar, significa que o '}' que achamos estava quebrado ou dentro de uma string
+                // Corta a string logo ANTES desse '}' para tentar o próximo (anterior)
+                currentString = currentString.substring(0, lastClose);
+            }
+        }
+        
+        // Se saiu do loop, falhou. Retorna array vazio para continuar o fluxo.
+        console.error("Falha total na recuperação do JSON após múltiplas tentativas.");
+        return [];
+    }
+};
+
 // --- COMPONENTE DE NOTIFICAÇÃO INTELIGENTE ---
 function NotificationToast({ notification, onClose, positionClass }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -205,12 +272,8 @@ export default function App() {
   const [pdfStartPage, setPdfStartPage] = useState('');
   const [pdfEndPage, setPdfEndPage] = useState('');
 
-  // --- SESSION STATE (ÚLTIMO PDF) ---
-  const [lastSessionData, setLastSessionData] = useState(() => {
-      try {
-          return JSON.parse(localStorage.getItem('medmaps_last_session') || 'null');
-      } catch { return null; }
-  });
+  // --- SESSION STATE (ÚLTIMO PDF) - AGORA VEM DO DB ---
+  const [lastSessionData, setLastSessionData] = useState(null);
 
   const processorRef = useRef(null); 
   const batchProcessorRef = useRef(null);
@@ -299,6 +362,23 @@ export default function App() {
       return () => unsubscribe();
   }, [user]);
 
+  // --- SYNC PROGRESSO DO PDF (POR USUÁRIO) ---
+  useEffect(() => {
+      if (!user) {
+          setLastSessionData(null);
+          return;
+      }
+      // Escuta mudanças em tempo real no documento de progresso do usuário
+      const unsubscribe = onSnapshot(doc(db, "users", user.uid, "progress", "pdf_session"), (docSnap) => {
+          if (docSnap.exists()) {
+              setLastSessionData(docSnap.data());
+          } else {
+              setLastSessionData(null);
+          }
+      });
+      return () => unsubscribe();
+  }, [user]);
+
   // --- ROTATION HELPER ---
   const executeWithKeyRotation = async (operationName, requestFn) => {
       const keys = apiKeysRef.current;
@@ -365,9 +445,8 @@ export default function App() {
           if (data.error) throw new Error(data.error.message);
 
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          const result = JSON.parse(jsonString);
-          
+          return safeJsonParse(jsonString); // Usa o parser blindado
+      }).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
               reason: result.reason || (result.isValid ? "Verificado por IA" : "Inconsistência detectada")
@@ -546,14 +625,7 @@ export default function App() {
               if (data.error) throw new Error(data.error.message);
 
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-
-              try {
-                  return JSON.parse(jsonString);
-              } catch (e) {
-                  jsonString = jsonString.replace(/[\u0000-\u0019]+/g,""); 
-                  return JSON.parse(jsonString);
-              }
+              return safeJsonParse(jsonString); // Usa o parser seguro
           });
 
           // 3. Pós-Processamento, Verificação de Duplicatas e Auditoria
@@ -760,34 +832,48 @@ export default function App() {
           setPdfStatus('ready');
           addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
 
-          // --- LOGICA DE RESTAURAÇÃO DE PROGRESSO (ATUALIZADA) ---
-          const savedSession = JSON.parse(localStorage.getItem('medmaps_last_session') || 'null');
-
-          if (savedSession && savedSession.fileName === file.name) {
-              const lastIdx = savedSession.lastChunkIndex;
+          // --- LOGICA DE RESTAURAÇÃO DE PROGRESSO (VIA DB) ---
+          // Verifica se o lastSessionData (vindo do DB) bate com o arquivo atual
+          if (lastSessionData && lastSessionData.fileName === file.name) {
+              const lastIdx = lastSessionData.lastChunkIndex;
               const nextIndex = lastIdx + 1; // PULA PARA A PRÓXIMA FATIA APÓS A SUCESSO
 
               if (nextIndex < chunks.length) {
                   setCurrentChunkIndex(nextIndex);
-                  addLog('info', `Sessão encontrada! Agulha movida para a fatia ${chunks[nextIndex].pages} (Continuando de onde parou).`);
+                  
+                  // --- VISUAL FEEDBACK: MARCA AS FATIAS ANTERIORES COMO RESTAURADAS ---
+                  for(let i = 0; i < nextIndex; i++) {
+                      chunks[i].status = 'restored';
+                  }
+
+                  addLog('info', `Sessão encontrada no DB! Agulha movida para a fatia ${chunks[nextIndex].pages}.`);
                   showNotification('info', `Retomando ${file.name} a partir da fatia ${chunks[nextIndex].pages}.`);
               } else {
                   // Se já acabou
                   setCurrentChunkIndex(chunks.length - 1);
+                  // Marca TUDO como restaurado
+                  chunks.forEach(c => c.status = 'restored');
+                  
                   addLog('success', `Este arquivo já foi finalizado na última sessão.`);
                   showNotification('success', 'Arquivo já finalizado anteriormente.');
               }
           } else {
-              // ARQUIVO NOVO -> RESETA O ARMAZENAMENTO PARA O NOVO ARQUIVO
+              // ARQUIVO NOVO -> RESETA O DB PARA O NOVO ARQUIVO
               const newSession = {
                   fileName: file.name,
                   lastChunkIndex: -1, // Nada processado ainda
                   lastChunkPages: 'Início',
                   timestamp: new Date().toISOString()
               };
-              localStorage.setItem('medmaps_last_session', JSON.stringify(newSession));
-              setLastSessionData(newSession); // Atualiza UI
-              addLog('info', 'Novo arquivo detectado. Progresso resetado.');
+              
+              if (user) {
+                  try {
+                      await setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), newSession);
+                      addLog('info', 'Novo arquivo detectado. Progresso resetado no banco.');
+                  } catch (e) {
+                      console.error("Erro ao salvar inicio de sessão:", e);
+                  }
+              }
           }
 
       } catch (error) {
@@ -819,15 +905,18 @@ export default function App() {
       setProcessingLogs([]);
       setConsecutiveErrors(0);
       
-      // Reseta progresso no storage para este arquivo
+      // Reseta progresso no DB para este arquivo
       const resetSession = {
           fileName: pdfFile.name,
           lastChunkIndex: -1,
           lastChunkPages: 'Início',
           timestamp: new Date().toISOString()
       };
-      localStorage.setItem('medmaps_last_session', JSON.stringify(resetSession));
-      setLastSessionData(resetSession);
+      
+      if (user) {
+          setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), resetSession)
+            .catch(e => console.error("Erro ao resetar sessão:", e));
+      }
       
       addLog('info', 'Processamento reiniciado do zero.');
   };
@@ -947,19 +1036,7 @@ export default function App() {
               if (data.error) throw new Error(data.error.message);
 
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-              jsonString = jsonString.replace(/[\u0000-\u0019]+/g,"");
-              
-              let extracted = [];
-              if (jsonString.startsWith('[') && jsonString.endsWith(']')) {
-                 extracted = JSON.parse(jsonString);
-              } else if (jsonString === '' || jsonString === '[]') {
-                 extracted = [];
-              } else {
-                 const match = jsonString.match(/\[.*\]/s);
-                 if (match) extracted = JSON.parse(match[0]);
-              }
-              return extracted;
+              return safeJsonParse(jsonString); // Usa o parser blindado
           });
 
           // --- PÓS-PROCESSAMENTO (O "ROLO COMPRESSOR") ---
@@ -1056,16 +1133,16 @@ export default function App() {
           });
           setConsecutiveErrors(0); 
 
-          // --- SALVA O ÚLTIMO PROGRESSO (SOBRESCREVENDO SEMPRE) ---
-          if (currentFile && currentFile.name) {
+          // --- SALVA O ÚLTIMO PROGRESSO NO DB (SOBRESCREVENDO SEMPRE) ---
+          if (currentFile && currentFile.name && user) {
               const sessionData = {
                   fileName: currentFile.name,
                   lastChunkIndex: chunkIndex, // Salva o índice que acabou de ser sucesso
                   lastChunkPages: chunk.pages,
                   timestamp: new Date().toISOString()
               };
-              localStorage.setItem('medmaps_last_session', JSON.stringify(sessionData));
-              setLastSessionData(sessionData); // Atualiza UI em tempo real
+              setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), sessionData)
+                .catch(err => console.error("Erro ao salvar progresso no DB:", err));
           }
 
           // --- VERIFICAÇÃO DE PAUSA NO FINAL DO CICLO ---
@@ -1122,7 +1199,7 @@ export default function App() {
                   });
                   setConsecutiveErrors(0);
                   processorRef.current = false;
-                  setTimeout(() => processNextChunk(), 1000);
+                  setTimeout(() => processNextChunk(), 1000); // Tenta a próxima fatia
                   return;
               }
           }
@@ -1293,14 +1370,7 @@ export default function App() {
             if (data.error) throw new Error(data.error.message);
 
             let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-
-            try {
-                return JSON.parse(jsonString);
-            } catch (e) {
-                jsonString = jsonString.replace(/[\u0000-\u0019]+/g,""); 
-                return JSON.parse(jsonString);
-            }
+            return safeJsonParse(jsonString); // Uses safe parser
         });
 
         // Pós-processamento e Auditoria
@@ -1604,8 +1674,8 @@ export default function App() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
         <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-300">
           <div className="flex items-center gap-3 mb-6 justify-center">
-             <div className="bg-blue-600 p-3 rounded-xl shadow-lg shadow-blue-900/20"><Map className="text-white" size={32} /></div>
-             <h1 className="text-2xl font-bold text-slate-800">MedMaps Admin</h1>
+             <div className="bg-blue-600 p-3 rounded-xl shadow-lg shadow-blue-900/20"><Brain className="text-white" size={32} /></div>
+             <h1 className="text-2xl font-bold text-slate-800">MedImporter Admin</h1>
           </div>
           <p className="text-slate-500 text-center mb-6">Acesso restrito a administradores.</p>
           <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', err.message)); }} className="space-y-4">
@@ -1626,7 +1696,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <button onClick={() => window.location.href = '/'} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Voltar para o App Principal"><ArrowLeft size={24} /></button>
-            <div className="flex items-center gap-2"><Map className="text-blue-600" size={28} /><h1 className="text-xl font-bold text-slate-800">MedMaps Importer</h1></div>
+            <div className="flex items-center gap-2"><Brain className="text-blue-600" size={28} /><h1 className="text-xl font-bold text-slate-800">MedImporter</h1></div>
           </div>
           
           <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
@@ -2013,6 +2083,7 @@ export default function App() {
                                             className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
                                             ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
                                             ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
+                                            ${chunk.status === 'restored' ? 'bg-indigo-100 text-indigo-600 border-indigo-200' : ''} 
                                             ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
                                             ${idx === currentChunkIndex && (pdfStatus === 'processing' || pdfStatus === 'pausing') ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
                                             ${(pdfStatus === 'paused' || pdfStatus === 'ready' || pdfStatus === 'completed') ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer hover:border-blue-300' : ''}
