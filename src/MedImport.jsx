@@ -6,7 +6,7 @@ import {
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock, Images
+  SkipForward, BookOpen, Clock, Files
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
