@@ -160,7 +160,6 @@ export default function App() {
   
   // Estados UI Básicos
   const [rawText, setRawText] = useState('');
-  // const [selectedImage, setSelectedImage] = useState(null); // REMOVIDO: Unificado no batch
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBatchAction, setIsBatchAction] = useState(false); 
   const [isSavingKey, setIsSavingKey] = useState(false);
@@ -664,7 +663,7 @@ export default function App() {
       }
   };
 
-  // --- LOGIC: PDF HANDLING (Mantido igual) ---
+  // --- LOGIC: PDF HANDLING (ATUALIZADO COM OVERLAP) ---
   const handlePdfUpload = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -701,13 +700,18 @@ export default function App() {
           let chunks = [];
           let currentChunkText = "";
           let chunkStartPage = startP;
+          let lastPageContent = ""; // Variável para segurar a sobreposição
 
           for (let i = startP; i <= endP; i++) {
               const page = await pdf.getPage(i);
               const content = await page.getTextContent();
               const text = content.items.map(item => item.str).join(' ');
               
-              currentChunkText += `\n--- PÁGINA ${i} ---\n${text}`;
+              // Guarda o texto "puro" da página atual para usar na próxima iteração
+              lastPageContent = text;
+
+              const pageTextFormatted = `\n--- PÁGINA ${i} ---\n${text}`;
+              currentChunkText += pageTextFormatted;
 
               // Fatia a cada CHUNK_SIZE páginas OU se for a última página do range
               if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
@@ -718,7 +722,15 @@ export default function App() {
                       status: 'pending',
                       errorCount: 0
                   });
-                  currentChunkText = "";
+                  
+                  // LÓGICA DE SOBREPOSIÇÃO (OVERLAP)
+                  // Se não for a última página de todas, prepara o próximo chunk com o final deste
+                  if (i < endP) {
+                      currentChunkText = `\n--- CONTEXTO DA PÁGINA ANTERIOR (${i}) ---\n${lastPageContent}`;
+                  } else {
+                      currentChunkText = "";
+                  }
+                  
                   chunkStartPage = i + 1;
               }
           }
@@ -846,6 +858,11 @@ export default function App() {
                    - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
                    - Procure pelo nome do HOSPITAL ou BANCA.
                    - Se não encontrar, deixe "".
+
+                OBSERVAÇÃO SOBRE CONTEXTO:
+                - O texto pode começar com uma seção de "CONTEXTO DA PÁGINA ANTERIOR". 
+                - Use essa seção APENAS para completar questões que começam nela e terminam no conteúdo principal.
+                - Se uma questão estiver INTEIRAMENTE dentro da seção de contexto (já foi processada na fatia anterior), tente ignorá-la.
                 
                 Retorne JSON ESTRITO:
                 [{ 
