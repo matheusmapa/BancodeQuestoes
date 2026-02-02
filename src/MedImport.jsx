@@ -663,7 +663,7 @@ export default function App() {
       }
   };
 
-  // --- LOGIC: PDF HANDLING (ATUALIZADO COM OVERLAP) ---
+  // --- LOGIC: PDF HANDLING (ATUALIZADO COM DOUBLE OVERLAP) ---
   const handlePdfUpload = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -700,31 +700,45 @@ export default function App() {
           let chunks = [];
           let currentChunkText = "";
           let chunkStartPage = startP;
-          let lastPageContent = ""; // Variável para segurar a sobreposição
+          let lastPageContent = ""; // Variável para segurar o contexto da página anterior
 
           for (let i = startP; i <= endP; i++) {
               const page = await pdf.getPage(i);
               const content = await page.getTextContent();
               const text = content.items.map(item => item.str).join(' ');
               
-              // Guarda o texto "puro" da página atual para usar na próxima iteração
-              lastPageContent = text;
+              lastPageContent = text; // Guarda para ser o "passado" da próxima fatia
 
               const pageTextFormatted = `\n--- PÁGINA ${i} ---\n${text}`;
               currentChunkText += pageTextFormatted;
 
-              // Fatia a cada CHUNK_SIZE páginas OU se for a última página do range
+              // Verifica se é hora de fatiar OU se é a última página selecionada
               if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
+                  
+                  let finalChunkText = currentChunkText;
+
+                  // --- OLHAR PARA O FUTURO (NEXT PAGE CONTEXT) ---
+                  // Se não for a última página do intervalo selecionado, espia a próxima
+                  if (i < endP) {
+                      try {
+                          const nextPage = await pdf.getPage(i + 1);
+                          const nextContent = await nextPage.getTextContent();
+                          const nextText = nextContent.items.map(item => item.str).join(' ');
+                          finalChunkText += `\n\n--- CONTEXTO DA PRÓXIMA PÁGINA (${i+1}) ---\n${nextText}`;
+                      } catch (err) {
+                          console.warn("Não foi possível buscar o contexto da próxima página:", err);
+                      }
+                  }
+
                   chunks.push({
                       id: `chunk_${chunkStartPage}_${i}`,
                       pages: `${chunkStartPage} a ${i}`,
-                      text: currentChunkText,
+                      text: finalChunkText, // Usa o texto com o futuro anexado
                       status: 'pending',
                       errorCount: 0
                   });
                   
-                  // LÓGICA DE SOBREPOSIÇÃO (OVERLAP)
-                  // Se não for a última página de todas, prepara o próximo chunk com o final deste
+                  // --- PREPARAR A PRÓXIMA FATIA (PREVIOUS PAGE CONTEXT) ---
                   if (i < endP) {
                       currentChunkText = `\n--- CONTEXTO DA PÁGINA ANTERIOR (${i}) ---\n${lastPageContent}`;
                   } else {
@@ -860,9 +874,9 @@ export default function App() {
                    - Se não encontrar, deixe "".
 
                 OBSERVAÇÃO SOBRE CONTEXTO:
-                - O texto pode começar com uma seção de "CONTEXTO DA PÁGINA ANTERIOR". 
-                - Use essa seção APENAS para completar questões que começam nela e terminam no conteúdo principal.
-                - Se uma questão estiver INTEIRAMENTE dentro da seção de contexto (já foi processada na fatia anterior), tente ignorá-la.
+                - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
+                - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
+                - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
                 
                 Retorne JSON ESTRITO:
                 [{ 
