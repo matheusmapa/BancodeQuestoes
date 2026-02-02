@@ -976,22 +976,8 @@ export default function App() {
       
       processorRef.current = true; 
 
-      // --- FAST FORWARD (SE JÁ FOI FEITO) ---
-      if (chunk.status === 'success' || chunk.status === 'restored') {
-          addLog('info', `Fatia ${chunk.pages} já processada. Avançando...`);
-          
-          // Move a agulha para a próxima
-          setCurrentChunkIndex(prev => prev + 1);
-          
-          // Pequeno delay visual para ver a agulha andando
-          setTimeout(() => {
-              processorRef.current = false;
-              processNextChunk(); // Chama recursivo para a próxima
-          }, 150);
-          return;
-      }
-
-      // Se chegou aqui, é PENDING ou ERROR -> PROCESSA
+      // --- COMPORTAMENTO DE PLAYER: SEMPRE PROCESSA O QUE ESTIVER NA AGULHA ---
+      // Mesmo se já foi "success" ou "restored", se a agulha está lá, processa de novo.
       addLog('info', `Processando fatia ${chunk.pages}...`);
 
       try {
