@@ -6,7 +6,7 @@ import {
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock, Files, Info, History
+  SkipForward, BookOpen, Clock, Files, Info, History, FastForward
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -287,6 +287,7 @@ export default function App() {
   const keyRotationIndex = useRef(0);
   const doubleCheckRef = useRef(isDoubleCheckEnabled); 
   const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
+  const currentChunkIndexRef = useRef(currentChunkIndex); // REF PARA O INDEX
 
   const CHUNK_SIZE = 10; 
 
@@ -325,6 +326,9 @@ export default function App() {
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
   useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
+  
+  // SYNC REF DO INDEX
+  useEffect(() => { currentChunkIndexRef.current = currentChunkIndex; }, [currentChunkIndex]);
 
   // --- SYNC CHAVES API (GLOBAL SETTINGS) ---
   useEffect(() => {
@@ -947,36 +951,47 @@ export default function App() {
       const doDoubleCheck = doubleCheckRef.current;
       const ovr = overridesRef.current; 
       const currentFile = pdfFile; // Pega referência atual do arquivo
+      // USA O REF PARA EVITAR CLOSURE STALE
+      const activeIndex = currentChunkIndexRef.current;
 
       if (processorRef.current) return; 
       // Se estiver pausado ou erro e a função for chamada (ex: retry), ok.
       // Se estiver 'completed', para.
       if (currentStatus === 'completed') return;
       
-      // LÓGICA DE SEEK: Procura a próxima pendente A PARTIR do índice atual
-      const chunkIndex = currentChunks.findIndex((c, i) => i >= currentChunkIndex && c.status === 'pending');
+      // --- LÓGICA DE VÍDEO PLAYER (LINEAR) ---
+      // Não busca mais o "próximo pendente". Confia na agulha (activeIndex).
       
-      if (chunkIndex === -1) {
-          // Verifica se acabou tudo MESMO ou se só acabou a partir da agulha
-          const anyPending = currentChunks.some(c => c.status === 'pending');
-          if (anyPending) {
-               addLog('warning', 'Fim da linha de tempo. Existem fatias anteriores pendentes.');
-               setPdfStatus('paused'); 
-          } else {
-               setPdfStatus('completed');
-               addLog('success', 'Processamento Completo!');
-               showNotification('success', 'Todas as partes selecionadas foram processadas.');
-          }
-          return;
+      if (activeIndex >= currentChunks.length) {
+           setPdfStatus('completed');
+           addLog('success', 'Processamento Completo!');
+           showNotification('success', 'Todas as partes selecionadas foram processadas.');
+           return;
       }
 
-      setCurrentChunkIndex(chunkIndex); // Atualiza agulha visual
-      const chunk = currentChunks[chunkIndex];
+      const chunk = currentChunks[activeIndex];
 
       // Se não estiver 'pausing', garante que está 'processing'
       if (currentStatus !== 'pausing' && currentStatus !== 'processing') setPdfStatus('processing');
       
       processorRef.current = true; 
+
+      // --- FAST FORWARD (SE JÁ FOI FEITO) ---
+      if (chunk.status === 'success' || chunk.status === 'restored') {
+          addLog('info', `Fatia ${chunk.pages} já processada. Avançando...`);
+          
+          // Move a agulha para a próxima
+          setCurrentChunkIndex(prev => prev + 1);
+          
+          // Pequeno delay visual para ver a agulha andando
+          setTimeout(() => {
+              processorRef.current = false;
+              processNextChunk(); // Chama recursivo para a próxima
+          }, 150);
+          return;
+      }
+
+      // Se chegou aqui, é PENDING ou ERROR -> PROCESSA
       addLog('info', `Processando fatia ${chunk.pages}...`);
 
       try {
@@ -1128,7 +1143,7 @@ export default function App() {
           addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} novas, ${duplicateCount} duplicatas descartadas.`);
           setPdfChunks(prev => {
               const newChunks = [...prev];
-              newChunks[chunkIndex] = { ...newChunks[chunkIndex], status: 'success' };
+              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'success' };
               return newChunks;
           });
           setConsecutiveErrors(0); 
@@ -1137,7 +1152,7 @@ export default function App() {
           if (currentFile && currentFile.name && user) {
               const sessionData = {
                   fileName: currentFile.name,
-                  lastChunkIndex: chunkIndex, // Salva o índice que acabou de ser sucesso
+                  lastChunkIndex: activeIndex, // Salva o índice que acabou de ser sucesso
                   lastChunkPages: chunk.pages,
                   timestamp: new Date().toISOString()
               };
@@ -1159,7 +1174,8 @@ export default function App() {
               return;
           }
 
-          // Continua o loop
+          // MOVER A AGULHA E CONTINUAR
+          setCurrentChunkIndex(prev => prev + 1);
           setTimeout(() => {
               processorRef.current = false; 
               processNextChunk(); 
@@ -1194,12 +1210,16 @@ export default function App() {
                   addLog('error', `Fatia ${chunk.pages} marcada com ERRO APÓS 3 TENTATIVAS.`);
                   setPdfChunks(prev => {
                       const newChunks = [...prev];
-                      newChunks[chunkIndex] = { ...newChunks[chunkIndex], status: 'error', errorCount: newErrorCount };
+                      newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'error', errorCount: newErrorCount };
                       return newChunks;
                   });
                   setConsecutiveErrors(0);
                   processorRef.current = false;
-                  setTimeout(() => processNextChunk(), 1000); // Tenta a próxima fatia
+                  
+                  // Tenta a próxima fatia mesmo com erro nesta?
+                  // O usuário pediu comportamento linear. Se falhar 3x, marca erro e avança.
+                  setCurrentChunkIndex(prev => prev + 1);
+                  setTimeout(() => processNextChunk(), 1000); 
                   return;
               }
           }
@@ -1224,10 +1244,11 @@ export default function App() {
 
           setPdfChunks(prev => {
               const newChunks = [...prev];
-              newChunks[chunkIndex] = { ...newChunks[chunkIndex], status: 'pending' };
+              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'pending' };
               return newChunks;
           });
 
+          // Tenta a MESMA fatia de novo (retry)
           setTimeout(() => {
               processorRef.current = false;
               processNextChunk();
@@ -2083,7 +2104,7 @@ export default function App() {
                                             className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
                                             ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
                                             ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
-                                            ${chunk.status === 'restored' ? 'bg-indigo-100 text-indigo-600 border-indigo-200' : ''} 
+                                            ${chunk.status === 'restored' ? 'bg-indigo-100 text-indigo-600 border-indigo-200 shadow-sm' : ''} 
                                             ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
                                             ${idx === currentChunkIndex && (pdfStatus === 'processing' || pdfStatus === 'pausing') ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
                                             ${(pdfStatus === 'paused' || pdfStatus === 'ready' || pdfStatus === 'completed') ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer hover:border-blue-300' : ''}
