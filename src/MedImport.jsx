@@ -6,7 +6,7 @@ import {
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock, Files
+  SkipForward, BookOpen, Clock, Files, Info, History
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -128,13 +128,13 @@ function NotificationToast({ notification, onClose, positionClass }) {
     <div 
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : notification.type === 'warning' ? 'bg-white border-amber-200 text-amber-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
+        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : notification.type === 'warning' ? 'bg-white border-amber-200 text-amber-700' : notification.type === 'info' ? 'bg-white border-blue-200 text-blue-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
     >
-        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : notification.type === 'warning' ? 'bg-amber-100' : 'bg-emerald-100'}`}>
-            {notification.type === 'error' ? <AlertCircle size={20} /> : notification.type === 'warning' ? <AlertTriangle size={20} /> : <CheckCircle size={20} />}
+        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : notification.type === 'warning' ? 'bg-amber-100' : notification.type === 'info' ? 'bg-blue-100' : 'bg-emerald-100'}`}>
+            {notification.type === 'error' ? <AlertCircle size={20} /> : notification.type === 'warning' ? <AlertTriangle size={20} /> : notification.type === 'info' ? <Info size={20}/> : <CheckCircle size={20} />}
         </div>
         <div className="flex-1">
-            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Erro' : notification.type === 'warning' ? 'Atenção' : 'Sucesso'}</p>
+            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Erro' : notification.type === 'warning' ? 'Atenção' : notification.type === 'info' ? 'Info' : 'Sucesso'}</p>
             <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
         </div>
         <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
@@ -204,6 +204,13 @@ export default function App() {
   // PDF Range Inputs
   const [pdfStartPage, setPdfStartPage] = useState('');
   const [pdfEndPage, setPdfEndPage] = useState('');
+
+  // --- SESSION STATE (ÚLTIMO PDF) ---
+  const [lastSessionData, setLastSessionData] = useState(() => {
+      try {
+          return JSON.parse(localStorage.getItem('medmaps_last_session') || 'null');
+      } catch { return null; }
+  });
 
   const processorRef = useRef(null); 
   const batchProcessorRef = useRef(null);
@@ -753,6 +760,36 @@ export default function App() {
           setPdfStatus('ready');
           addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
 
+          // --- LOGICA DE RESTAURAÇÃO DE PROGRESSO (ATUALIZADA) ---
+          const savedSession = JSON.parse(localStorage.getItem('medmaps_last_session') || 'null');
+
+          if (savedSession && savedSession.fileName === file.name) {
+              const lastIdx = savedSession.lastChunkIndex;
+              const nextIndex = lastIdx + 1; // PULA PARA A PRÓXIMA FATIA APÓS A SUCESSO
+
+              if (nextIndex < chunks.length) {
+                  setCurrentChunkIndex(nextIndex);
+                  addLog('info', `Sessão encontrada! Agulha movida para a fatia ${chunks[nextIndex].pages} (Continuando de onde parou).`);
+                  showNotification('info', `Retomando ${file.name} a partir da fatia ${chunks[nextIndex].pages}.`);
+              } else {
+                  // Se já acabou
+                  setCurrentChunkIndex(chunks.length - 1);
+                  addLog('success', `Este arquivo já foi finalizado na última sessão.`);
+                  showNotification('success', 'Arquivo já finalizado anteriormente.');
+              }
+          } else {
+              // ARQUIVO NOVO -> RESETA O ARMAZENAMENTO PARA O NOVO ARQUIVO
+              const newSession = {
+                  fileName: file.name,
+                  lastChunkIndex: -1, // Nada processado ainda
+                  lastChunkPages: 'Início',
+                  timestamp: new Date().toISOString()
+              };
+              localStorage.setItem('medmaps_last_session', JSON.stringify(newSession));
+              setLastSessionData(newSession); // Atualiza UI
+              addLog('info', 'Novo arquivo detectado. Progresso resetado.');
+          }
+
       } catch (error) {
           console.error(error);
           setPdfStatus('error');
@@ -781,7 +818,18 @@ export default function App() {
       setPdfStatus('ready');
       setProcessingLogs([]);
       setConsecutiveErrors(0);
-      addLog('info', 'Processamento reiniciado.');
+      
+      // Reseta progresso no storage para este arquivo
+      const resetSession = {
+          fileName: pdfFile.name,
+          lastChunkIndex: -1,
+          lastChunkPages: 'Início',
+          timestamp: new Date().toISOString()
+      };
+      localStorage.setItem('medmaps_last_session', JSON.stringify(resetSession));
+      setLastSessionData(resetSession);
+      
+      addLog('info', 'Processamento reiniciado do zero.');
   };
 
   // --- NOVA LÓGICA DE NAVEGAÇÃO ("SEEK") ---
@@ -809,6 +857,7 @@ export default function App() {
       const currentChunks = pdfChunksRef.current;
       const doDoubleCheck = doubleCheckRef.current;
       const ovr = overridesRef.current; 
+      const currentFile = pdfFile; // Pega referência atual do arquivo
 
       if (processorRef.current) return; 
       // Se estiver pausado ou erro e a função for chamada (ex: retry), ok.
@@ -1006,6 +1055,18 @@ export default function App() {
               return newChunks;
           });
           setConsecutiveErrors(0); 
+
+          // --- SALVA O ÚLTIMO PROGRESSO (SOBRESCREVENDO SEMPRE) ---
+          if (currentFile && currentFile.name) {
+              const sessionData = {
+                  fileName: currentFile.name,
+                  lastChunkIndex: chunkIndex, // Salva o índice que acabou de ser sucesso
+                  lastChunkPages: chunk.pages,
+                  timestamp: new Date().toISOString()
+              };
+              localStorage.setItem('medmaps_last_session', JSON.stringify(sessionData));
+              setLastSessionData(sessionData); // Atualiza UI em tempo real
+          }
 
           // --- VERIFICAÇÃO DE PAUSA NO FINAL DO CICLO ---
           if (pdfStatusRef.current === 'pausing') {
@@ -1338,28 +1399,16 @@ export default function App() {
   // --- BULK METADATA CLEANING ---
   const clearAllField = (field) => {
       if (parsedQuestions.length === 0) return;
-      if (!window.confirm(`Tem certeza que deseja limpar o campo "${field === 'institution' ? 'Instituição' : 'Ano'}" de TODAS as questões da fila?`)) return;
       
-      // Atualiza localmente
-      const updated = parsedQuestions.map(q => ({ ...q, [field]: '' }));
-      setParsedQuestions(updated);
-      
-      // Atualiza no Firestore (batch)
-      // Nota: Para ser perfeito, deveríamos atualizar no Firestore também, 
-      // mas como o usuário vai revisar e clicar em "Salvar/Aprovar", a edição local é suficiente 
-      // pois ao aprovar ele salva o estado atual.
-      // Se quiser persistir a limpeza no RASCUNHO (draft_questions) imediatamente:
-      
-      const batch = writeBatch(db);
-      updated.forEach(q => {
-          const docRef = doc(db, "draft_questions", q.id);
-          batch.update(docRef, { [field]: '' });
-      });
-      batch.commit().then(() => {
-          showNotification('success', `Campo ${field === 'institution' ? 'Instituição' : 'Ano'} limpo em ${updated.length} questões.`);
-      }).catch(err => {
-          console.error(err);
-          showNotification('error', 'Erro ao salvar limpeza no banco.');
+      // SUBSTITUIÇÃO DO WINDOW CONFIRM PELO MODAL
+      setConfirmationModal({
+          isOpen: true,
+          type: field === 'institution' ? 'clear_institution' : 'clear_year',
+          data: null,
+          title: `Limpar ${field === 'institution' ? 'Instituições' : 'Anos'}?`,
+          message: `Tem certeza que deseja limpar o campo "${field === 'institution' ? 'Instituição' : 'Ano'}" de TODAS as ${parsedQuestions.length} questões da fila?`,
+          confirmText: 'Sim, Limpar Tudo',
+          confirmColor: 'red'
       });
   };
 
@@ -1432,6 +1481,28 @@ export default function App() {
   const executeConfirmationAction = async () => {
       const { type, data } = confirmationModal;
       setConfirmationModal({ ...confirmationModal, isOpen: false }); 
+
+      // --- LOGICA PARA LIMPEZA DE CAMPOS (NOVO) ---
+      if (type === 'clear_institution' || type === 'clear_year') {
+          const field = type === 'clear_institution' ? 'institution' : 'year';
+          
+          // Atualiza localmente
+          const updated = parsedQuestions.map(q => ({ ...q, [field]: '' }));
+          setParsedQuestions(updated);
+
+          const batch = writeBatch(db);
+          updated.forEach(q => {
+              const docRef = doc(db, "draft_questions", q.id);
+              batch.update(docRef, { [field]: '' });
+          });
+          batch.commit().then(() => {
+              showNotification('success', `Campo ${field === 'institution' ? 'Instituição' : 'Ano'} limpo em ${updated.length} questões.`);
+          }).catch(err => {
+              console.error(err);
+              showNotification('error', 'Erro ao salvar limpeza no banco.');
+          });
+          return;
+      }
 
       if (type === 'delete_one') {
           if (!data || !data.id) return;
@@ -1853,6 +1924,23 @@ export default function App() {
                     {/* DROPZONE PDF */}
                     {pdfStatus === 'idle' && (
                         <div className="space-y-4">
+                             {/* LAST SESSION INFO BOX */}
+                             {lastSessionData && (
+                                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-4 animate-in slide-in-from-top-2">
+                                     <div className="bg-blue-200 text-blue-700 p-2 rounded-lg">
+                                         <History size={24} />
+                                     </div>
+                                     <div className="flex-1">
+                                         <p className="text-xs font-bold text-blue-500 uppercase">Última Sessão Detectada</p>
+                                         <p className="font-bold text-slate-700 text-sm">Arquivo: {lastSessionData.fileName}</p>
+                                         <p className="text-xs text-slate-500">Parou na fatia: <strong>{lastSessionData.lastChunkPages || 'Desconhecido'}</strong></p>
+                                     </div>
+                                     <div className="text-xs text-blue-400 bg-white/50 px-2 py-1 rounded">
+                                         Se enviar este arquivo novamente,<br/>o sistema continuará automaticamente.
+                                     </div>
+                                 </div>
+                             )}
+
                              {/* RANGE INPUTS */}
                              <div className="flex items-end gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
                                 <div className="flex-1">
@@ -1961,28 +2049,38 @@ export default function App() {
                 {parsedQuestions.length > 0 && (
                      <div className="flex flex-col gap-4 mb-4">
                          
-                         {/* HEADER AND MAIN ACTIONS (EXISTING) */}
+                         {/* HEADER AND MAIN ACTIONS (REORGANIZED FOR ALIGNMENT) */}
                          <div className="flex flex-col xl:flex-row justify-between items-center bg-blue-50 p-4 rounded-xl border border-blue-100 gap-4">
-                            <div className="flex items-center gap-2 text-blue-800">
+                            <div className="flex items-center gap-2 text-blue-800 w-full xl:w-auto">
                                 <CloudLightning size={20} />
                                 <span className="font-bold">Fila de Aprovação ({parsedQuestions.length} itens)</span>
                             </div>
-                            <div className="flex flex-wrap gap-2 justify-end">
-                                <button onClick={handleDiscardSuspiciousClick} disabled={isBatchAction} className="bg-white border border-orange-200 text-orange-600 hover:bg-orange-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition-all disabled:opacity-70">
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={14} /> : <ShieldAlert size={14} />}
-                                    Descartar Suspeitas
-                                </button>
-                                <button onClick={handleApproveVerifiedClick} disabled={isBatchAction} className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition-all disabled:opacity-70">
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={14} /> : <ShieldCheck size={14} />}
-                                    Aprovar Verificadas
-                                </button>
-                                <div className="w-px h-6 bg-blue-200 mx-1 hidden md:block"></div>
-                                <button onClick={handleDiscardAllClick} disabled={isBatchAction} className="bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition-all disabled:opacity-70">
-                                    <Trash2 size={14} /> Descartar Tudo
-                                </button>
-                                <button onClick={handleApproveAllClick} disabled={isBatchAction} className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 transition-all disabled:opacity-70">
-                                    <CheckCircle size={14} /> Aprovar Tudo
-                                </button>
+                            
+                            {/* BUTTON GROUP */}
+                            <div className="flex flex-col sm:flex-row items-center gap-2 w-full xl:w-auto">
+                                {/* SUB-GROUP: FILTERS (SUSPICIOUS/VERIFIED) */}
+                                <div className="flex w-full sm:w-auto gap-2">
+                                    <button onClick={handleDiscardSuspiciousClick} disabled={isBatchAction} className="flex-1 sm:flex-none bg-white border border-orange-200 text-orange-600 hover:bg-orange-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 whitespace-nowrap">
+                                        {isBatchAction ? <Loader2 className="animate-spin" size={14} /> : <ShieldAlert size={14} />}
+                                        Descartar Suspeitas
+                                    </button>
+                                    <button onClick={handleApproveVerifiedClick} disabled={isBatchAction} className="flex-1 sm:flex-none bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 whitespace-nowrap">
+                                        {isBatchAction ? <Loader2 className="animate-spin" size={14} /> : <ShieldCheck size={14} />}
+                                        Aprovar Verificadas
+                                    </button>
+                                </div>
+                                
+                                <div className="hidden sm:block w-px h-6 bg-blue-200 mx-1"></div>
+
+                                {/* SUB-GROUP: MASS ACTIONS (DISCARD ALL / APPROVE ALL) */}
+                                <div className="flex w-full sm:w-auto gap-2">
+                                    <button onClick={handleDiscardAllClick} disabled={isBatchAction} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 whitespace-nowrap">
+                                        <Trash2 size={14} /> Descartar Tudo
+                                    </button>
+                                    <button onClick={handleApproveAllClick} disabled={isBatchAction} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 whitespace-nowrap">
+                                        <CheckCircle size={14} /> Aprovar Tudo
+                                    </button>
+                                </div>
                             </div>
                          </div>
 
