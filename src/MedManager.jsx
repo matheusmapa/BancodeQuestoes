@@ -5,7 +5,7 @@ import {
   ChevronRight, ArrowLeft, LogOut, Loader2, FileText, 
   CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
   MessageSquare, ThumbsUp, ThumbsDown, Flag, User, Calendar, Building, Phone,
-  Users, TrendingUp, Target, Zap, Clock, Percent, Award, MoreHorizontal, UserPlus, Shield, PlusCircle, Lock
+  Users, TrendingUp, Target, Zap, Clock, Percent, Award, MoreHorizontal, UserPlus, Shield, PlusCircle, Lock, RefreshCw
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -281,38 +281,32 @@ export default function MedManager() {
 
   const showNotification = (type, text) => setNotification({ type, text });
 
-  // --- HELPER FUNCTIONS ---
-  const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
+  // --- ACTIONS ---
   
-  const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
-  
-  const checkSubscriptionStatus = (d, role) => { 
-      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
-      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-  };
-  
-  const getReportDetails = (r) => {
-      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
-          return (
-              <div className="flex gap-4 mt-2">
-                 <div className="flex flex-col">
-                     <span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span>
-                     <span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span>
-                 </div>
-                 <div className="flex flex-col">
-                     <span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span>
-                     <span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span>
-                 </div>
-              </div>
-          );
-      }
-      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
+  const handleGoToReports = (questionId) => {
+      setReportFilterQuestionId(questionId);
+      setSearchTerm('');
+      setActiveView('reports');
   };
 
-  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+  const handleClearReportFilter = () => {
+      setReportFilterQuestionId(null);
+  };
 
-  // --- ACTIONS (USER MANAGEMENT) ---
+  const handleClearQuestionFilters = () => {
+      setSearchTerm('');
+      setSelectedArea('Todas');
+      setSelectedTopic('Todos');
+      setSelectedInstitution('Todas');
+      setSelectedYear('Todos');
+  };
+
+  const handleClearStudentFilters = () => {
+      setSearchTerm('');
+      setStudentRoleFilter('all');
+      setStudentStatusFilter('all');
+  };
+
   const handleCreateUser = async (e) => {
       e.preventDefault();
       setIsSaving(true);
@@ -450,6 +444,37 @@ export default function MedManager() {
       } catch (err) { showNotification('error', 'Erro ao copiar.'); }
   };
 
+  // --- HELPER FUNCTIONS ---
+  const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
+  
+  const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
+  
+  const checkSubscriptionStatus = (d, role) => { 
+      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
+      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+  };
+  
+  const getReportDetails = (r) => {
+      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
+          return (
+              <div className="flex gap-4 mt-2">
+                 <div className="flex flex-col">
+                     <span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span>
+                     <span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span>
+                 </div>
+                 <div className="flex flex-col">
+                     <span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span>
+                     <span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span>
+                 </div>
+              </div>
+          );
+      }
+      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
+  };
+
+  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+
   if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
   if (!user) return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
@@ -477,7 +502,7 @@ export default function MedManager() {
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1">
                   <Database /> MedManager
               </div>
-              <p className="text-xs text-gray-400">Gestão de Acervo v3.6</p>
+              <p className="text-xs text-gray-400">Gestão de Acervo v3.8</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -488,7 +513,10 @@ export default function MedManager() {
               {/* FILTERS FOR QUESTIONS */}
               {activeView === 'questions' && (
                 <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                        <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
+                    </div>
                     <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                     <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                     <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
@@ -499,9 +527,12 @@ export default function MedManager() {
               {/* FILTERS FOR STUDENTS */}
               {activeView === 'students' && (
                 <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros</label>
+                        <button onClick={handleClearStudentFilters} className="text-xs font-bold text-purple-600 hover:text-purple-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
+                    </div>
                     <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
-                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos (Premium)</option><option value="expired">Expirados</option></select></div>
+                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos</option><option value="expired">Expirados</option></select></div>
                 </div>
               )}
           </div>
@@ -586,7 +617,7 @@ export default function MedManager() {
                               </div>
                               <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
                               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar e Excluir</button>
+                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button>
                                   <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
                               </div>
                           </div>
@@ -704,7 +735,7 @@ export default function MedManager() {
                           <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
                       </div>
                       <div className="flex gap-3">
-                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar Reporte</span></button>}
+                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar</span></button>}
                           {associatedReport ? (
                               <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
                           ) : (
