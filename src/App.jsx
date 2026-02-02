@@ -9,7 +9,7 @@ import {
   TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, 
   CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map, Brain,
   Flag, Copy, MessageSquarePlus, ChevronLeft, PanelLeftClose, PanelLeftOpen,
-  CreditCard, Smartphone
+  CreditCard, Smartphone, Link as LinkIcon, ExternalLink
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -211,15 +211,15 @@ function CopyButton({ text, className }) {
         <button 
             onClick={handleCopy} 
             className={`hover:text-blue-600 transition-colors flex items-center gap-1 ${className}`} 
-            title="Copiar ID"
+            title="Copiar"
         >
             {isCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+            {isCopied && <span className="text-[10px] text-emerald-600 font-bold ml-1">Copiado!</span>}
         </button>
     );
 }
 
 // --- TOAST NOTIFICATIONS ---
-// Componente para notificações flutuantes (substitui alerts)
 function ToastContainer({ toasts, removeToast }) {
     return (
         <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
@@ -318,7 +318,6 @@ function ReportModal({ isOpen, onClose, questionId, type, userId, addToast }) {
             
             await addDoc(collection(db, "reports"), reportData);
             
-            // Substituído alert por addToast
             addToast('Recebido!', 'Sua colaboração foi enviada para análise.', 'success');
             onClose();
         } catch (error) {
@@ -538,6 +537,22 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [globalLoginError, setGlobalLoginError] = useState('');
+  const [renewalLink, setRenewalLink] = useState('');
+
+  // Fetch renewal link on load
+  useEffect(() => {
+    const fetchConfig = async () => {
+        try {
+            const configDoc = await getDoc(doc(db, "config", "general"));
+            if (configDoc.exists() && configDoc.data().renewalLink) {
+                setRenewalLink(configDoc.data().renewalLink);
+            }
+        } catch (error) {
+            console.error("Erro ao carregar configurações:", error);
+        }
+    };
+    fetchConfig();
+  }, []);
 
   useEffect(() => {
     let unsubscribeDoc = () => {};
@@ -595,10 +610,10 @@ export default function App() {
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
-  return <>{currentUser ? <Dashboard user={currentUser} onLogout={() => signOut(auth)} /> : <LoginPage globalError={globalLoginError} />}</>;
+  return <>{currentUser ? <Dashboard user={currentUser} onLogout={() => signOut(auth)} /> : <LoginPage globalError={globalLoginError} renewalLink={renewalLink} />}</>;
 }
 
-function LoginPage({ globalError }) {
+function LoginPage({ globalError, renewalLink }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -638,7 +653,27 @@ function LoginPage({ globalError }) {
         </div>
         <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
           <div className="mb-10"><h2 className="text-3xl font-bold text-slate-900 mb-3">Login</h2><p className="text-slate-500 text-lg">Insira suas credenciais de acesso.</p></div>
-          {error && <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r flex items-center gap-3"><AlertCircle className="text-red-500" size={20} /><p className="text-sm text-red-700 font-medium">{error}</p></div>}
+          
+          {error && (
+              <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r flex flex-col gap-2">
+                  <div className="flex items-center gap-3">
+                      <AlertCircle className="text-red-500" size={20} />
+                      <p className="text-sm text-red-700 font-medium">{error}</p>
+                  </div>
+                  {/* Link de renovação se for erro de vencimento */}
+                  {renewalLink && (error.includes('venceu') || error.includes('matrícula')) && (
+                      <a 
+                          href={renewalLink} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="ml-8 text-sm font-bold text-red-700 hover:text-red-900 underline flex items-center gap-1"
+                      >
+                          Renovar assinatura agora <ExternalLink size={12} />
+                      </a>
+                  )}
+              </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div><label className="block text-sm font-semibold text-slate-700 mb-2">E-mail</label><div className="relative group"><Mail className="absolute left-4 top-3.5 text-gray-400 w-5 h-5 group-focus-within:text-blue-600 transition-colors" /><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com" className="pl-12 w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800" /></div></div>
             <div><div className="flex justify-between items-center mb-2"><label className="block text-sm font-semibold text-slate-700">Senha</label></div><div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 w-5 h-5 group-focus-within:text-blue-600 transition-colors" /><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="pl-12 w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800" /></div></div>
@@ -1269,11 +1304,33 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory, addToast
   const [name, setName] = useState(user.name || '');
   const [whatsapp, setWhatsapp] = useState(user.whatsapp || ''); 
   const [isSaving, setIsSaving] = useState(false);
+  
+  // States para Link de Renovação
+  const [adminRenewalLink, setAdminRenewalLink] = useState('');
+  const [activeRenewalLink, setActiveRenewalLink] = useState('');
+  const [isAdminSaving, setIsAdminSaving] = useState(false);
 
   const subDate = user.subscriptionUntil ? new Date(user.subscriptionUntil) : null;
   const daysLeft = subDate ? Math.ceil((subDate - new Date()) / (1000 * 60 * 60 * 24)) : 0;
   const formattedDate = subDate ? subDate.toLocaleDateString('pt-BR') : 'N/A';
   const isExpired = subDate && new Date() > subDate;
+
+  // Carregar o link de renovação do Firestore
+  useEffect(() => {
+    const fetchRenewalLink = async () => {
+        try {
+            const configDoc = await getDoc(doc(db, "config", "general"));
+            if (configDoc.exists() && configDoc.data().renewalLink) {
+                const link = configDoc.data().renewalLink;
+                setActiveRenewalLink(link);
+                if (user.role === 'admin') setAdminRenewalLink(link);
+            }
+        } catch (error) {
+            console.error("Erro ao buscar link de renovação:", error);
+        }
+    };
+    fetchRenewalLink();
+  }, [user.role]);
 
   const handleSaveProfile = async () => {
     setIsSaving(true);
@@ -1310,6 +1367,20 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory, addToast
       }
   };
 
+  const handleSaveAdminLink = async () => {
+    setIsAdminSaving(true);
+    try {
+        await setDoc(doc(db, "config", "general"), { renewalLink: adminRenewalLink }, { merge: true });
+        setActiveRenewalLink(adminRenewalLink);
+        addToast('Sucesso', 'Link de renovação atualizado.', 'success');
+    } catch (error) {
+        console.error(error);
+        addToast('Erro', 'Erro ao atualizar link.', 'error');
+    } finally {
+        setIsAdminSaving(false);
+    }
+  };
+
   return (
     <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10">
       <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2"/> Voltar</button><h1 className="text-3xl font-bold text-slate-900">Configurações</h1></div>
@@ -1317,25 +1388,89 @@ function SettingsView({ user, onBack, onResetQuestions, onResetHistory, addToast
       {isPasswordModalOpen && (<ChangePasswordModal onClose={() => setIsPasswordModalOpen(false)} onSave={handleSavePassword} isLoading={isSaving} />)}
       
       <div className="space-y-6">
+        
+        {/* CARTÃO DE ASSINATURA */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm relative overflow-hidden">
             <div className={`absolute top-0 right-0 p-4 opacity-10 ${isExpired ? 'text-red-500' : 'text-emerald-500'}`}><CreditCard size={120} /></div>
             <div className="flex items-center gap-4 mb-6 relative z-10"><div className={`p-3 rounded-full ${isExpired ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}><Calendar size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Minha Assinatura</h2><p className="text-slate-500 text-sm">Detalhes do seu plano atual</p></div></div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10 mb-4">
                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Status</p><div className={`text-lg font-bold flex items-center gap-2 ${isExpired ? 'text-red-600' : 'text-emerald-600'}`}>{isExpired ? <XCircle size={20} /> : <CheckCircle size={20} />}{isExpired ? 'Expirada' : 'Ativa'}</div></div>
                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Vencimento</p><p className="text-lg font-bold text-slate-700">{formattedDate}</p></div>
                 <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Tempo Restante</p><p className={`text-lg font-bold ${daysLeft < 5 ? 'text-orange-600' : 'text-slate-700'}`}>{daysLeft > 0 ? `${daysLeft} dias` : '0 dias'}</p></div>
             </div>
+            
+            {/* BOTÃO DE RENOVAÇÃO PARA ALUNO */}
+            {activeRenewalLink && (
+                <div className="relative z-10 text-right">
+                    <button 
+                        onClick={() => window.open(activeRenewalLink, '_blank')}
+                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-lg shadow-emerald-200 transition-colors flex items-center justify-center gap-2 md:inline-flex w-full md:w-auto"
+                    >
+                        Renovar Assinatura Agora <ExternalLink size={16} />
+                    </button>
+                </div>
+            )}
         </div>
+
+        {/* PAINEL DE ADMINISTRAÇÃO DO SISTEMA */}
+        {user.role === 'admin' && (
+            <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-xl">
+                <div className="flex items-center gap-4 mb-6">
+                    <div className="bg-slate-800 p-3 rounded-full text-blue-400"><Database size={24} /></div>
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Administração do Sistema</h2>
+                        <p className="text-slate-400 text-sm">Configurações globais da plataforma</p>
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-sm font-semibold text-slate-300 mb-2 flex items-center gap-2">
+                        Link de Renovação de Assinatura
+                        <span className="text-xs font-normal text-slate-500">(Este link aparecerá para os alunos)</span>
+                    </label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="url" 
+                            value={adminRenewalLink} 
+                            onChange={(e) => setAdminRenewalLink(e.target.value)}
+                            placeholder="https://exemplo.com/pagamento"
+                            className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-slate-500" 
+                        />
+                        <button 
+                            onClick={handleSaveAdminLink}
+                            disabled={isAdminSaving}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+                        >
+                            {isAdminSaving ? 'Salvando...' : 'Salvar'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* PERFIL */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
             <div className="flex items-center gap-4 mb-6"><div className="bg-blue-100 p-3 rounded-full text-blue-600"><User size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Meu Perfil</h2><p className="text-slate-500 text-sm">Gerencie suas informações pessoais</p></div></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div><label className="block text-sm font-semibold text-slate-700 mb-2">Nome Completo</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /></div>
+                <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">Nome Completo</label>
+                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    {/* BOTÃO PARA COPIAR ID */}
+                    <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                        <span className="font-bold">SEU ID:</span> 
+                        <span className="font-mono bg-gray-100 px-2 py-1 rounded">{user.uid}</span>
+                        <CopyButton text={user.uid} className="text-blue-500 hover:text-blue-700" />
+                    </div>
+                </div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-2">E-mail</label><input type="email" value={user.email} disabled className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 cursor-not-allowed" /></div>
                 <div className="md:col-span-2"><label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2"><Smartphone size={16} className="text-green-600" /> WhatsApp (Opcional)</label><input type="text" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="(00) 00000-0000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /><p className="text-xs text-gray-400 mt-1">Usaremos apenas para comunicações importantes sobre sua conta.</p></div>
             </div>
             <div className="text-right"><button onClick={handleSaveProfile} disabled={isSaving || (name === user.name && whatsapp === user.whatsapp)} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Salvar Alterações</button></div>
         </div>
+
+        {/* SEGURANÇA */}
         <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm"><div className="flex items-center gap-4 mb-6"><div className="bg-orange-100 p-3 rounded-full text-orange-600"><Key size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Segurança</h2><p className="text-slate-500 text-sm">Gerencie sua senha de acesso</p></div></div><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-gray-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Alterar Senha</h4><p className="text-xs text-gray-500">Recomendamos usar uma senha forte e única.</p></div><button onClick={() => setIsPasswordModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors"><Key size={18} /> Alterar Senha</button></div></div>
+        
+        {/* ZONA DE PERIGO */}
         <div className="bg-red-50 rounded-2xl border border-red-200 p-6 shadow-sm"><div className="flex items-center gap-4 mb-6"><div className="bg-red-100 p-3 rounded-full text-red-600"><AlertTriangle size={24} /></div><div><h2 className="text-xl font-bold text-red-700">Zona de Perigo</h2><p className="text-red-500 text-sm">Ações irreversíveis de gerenciamento de dados</p></div></div><div className="space-y-4"><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Questões</h4><p className="text-xs text-gray-500">Apaga o histórico de respostas. As questões voltam a ser novas.</p></div><button onClick={() => openModal('questions')} className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 text-red-600 font-bold rounded-lg hover:bg-red-50 transition-colors"><RotateCcw size={18} /> Resetar Questões</button></div><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Tudo</h4><p className="text-xs text-gray-500">Apaga tudo, inclusive sua sequência (streak).</p></div><button onClick={() => openModal('history')} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors"><Trash2 size={18} /> Resetar Tudo</button></div></div></div>
       </div>
     </div>
