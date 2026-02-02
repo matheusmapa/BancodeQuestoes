@@ -9,14 +9,15 @@ import {
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from "firebase/app";
+import { initializeApp, deleteApp } from "firebase/app"; // Adicionado deleteApp
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
   limit, startAfter, getDocs, startAt, endAt
 } from "firebase/firestore";
 import { 
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  createUserWithEmailAndPassword, updateProfile // Adicionados para criar usuários
 } from "firebase/auth";
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -505,18 +506,78 @@ export default function MedManager() {
   const handleClearReportFilter = () => setReportFilterQuestionId(null);
   const handleClearQuestionFilters = () => { setSearchTerm(''); setSelectedArea('Todas'); setSelectedTopic('Todos'); setSelectedInstitution('Todas'); setSelectedYear('Todos'); };
 
+  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
   const handleCreateUser = async (e) => {
-      e.preventDefault(); setIsSaving(true);
+      e.preventDefault();
+      setIsSaving(true);
       const formData = new FormData(e.target);
       const userData = Object.fromEntries(formData);
+      
+      const appName = `SecondaryApp-${Date.now()}`;
+      let secondaryApp;
+
       try {
-          const newUserId = crypto.randomUUID(); 
-          const newUserObj = { id: newUserId, ...userData, createdAt: new Date().toISOString(), role: userData.role || 'student', subscriptionUntil: userData.subscriptionUntil || null, whatsapp: userData.whatsapp || '', stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 } };
+          // 1. Inicializa um "App Secundário" para criar o user SEM deslogar o admin
+          secondaryApp = initializeApp(firebaseConfig, appName);
+          const secondaryAuth = getAuth(secondaryApp);
+
+          // 2. Cria o login no Firebase Auth
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
+          const newUser = userCredential.user;
+          
+          // 3. Atualiza o nome do usuário no perfil do Auth
+          await updateProfile(newUser, { displayName: userData.name });
+
+          const newUserId = newUser.uid; // Pega o UID real gerado pelo Auth
+          
+          const newUserObj = {
+              id: newUserId,
+              name: userData.name,
+              email: userData.email,
+              role: userData.role || 'student',
+              createdAt: new Date().toISOString(),
+              subscriptionUntil: userData.subscriptionUntil || null,
+              whatsapp: userData.whatsapp || '',
+              dailyGoal: 50, // Padrão
+              // Stats básicos no documento principal (opcional, mas bom para lista rápida)
+              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
+          };
+          
+          // 4. Salva os dados no Firestore usando o UID real
           await setDoc(doc(db, "users", newUserId), newUserObj);
+          
+          // 5. Inicializa a subcoleção de estatísticas (padrão do app)
+          await setDoc(doc(db, "users", newUserId, "stats", "main"), {
+              correctAnswers: 0,
+              totalAnswers: 0,
+              questionsToday: 0,
+              streak: 0,
+              lastStudyDate: null
+          });
+          
+          // Atualiza lista local
           setStudents(prev => [newUserObj, ...prev]);
-          showNotification('success', 'Aluno criado!');
+          
+          showNotification('success', 'Aluno criado com acesso ao sistema!');
           setIsCreatingUser(false);
-      } catch (error) { showNotification('error', 'Erro ao criar: ' + error.message); } finally { setIsSaving(false); }
+      } catch (error) {
+          console.error(error);
+          if (error.code === 'auth/email-already-in-use') {
+              showNotification('error', 'Este email já está em uso.');
+          } else {
+              showNotification('error', 'Erro ao criar: ' + error.message);
+          }
+      } finally {
+          // 6. Limpa o app secundário da memória
+          if (secondaryApp) {
+              try {
+                  await deleteApp(secondaryApp); 
+              } catch (e) {
+                  console.error("Erro ao limpar app secundário", e);
+              }
+          }
+          setIsSaving(false);
+      }
   };
 
   const updateLocalList = (listType, id, newData) => {
@@ -561,8 +622,11 @@ export default function MedManager() {
       if (!deleteModal || !deleteModal.email) return; 
       try {
           await deleteDoc(doc(db, "users", deleteModal.id));
+          
+          // Tenta limpar subcoleções (embora exija delete recursivo ou Cloud Functions para limpeza total)
+          // Aqui fazemos o básico para a UI limpar
           removeLocalList('students', deleteModal.id);
-          showNotification('success', 'Aluno excluído.');
+          showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
           setDeleteModal(null);
       } catch (error) { showNotification('error', 'Erro ao excluir.'); }
   };
@@ -690,13 +754,13 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.3</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.4</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
-              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
-              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
-              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
+              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
+              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
+              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
               
               {/* FILTERS FOR QUESTIONS */}
               {activeView === 'questions' && (
