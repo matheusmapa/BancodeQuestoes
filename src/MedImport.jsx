@@ -5,7 +5,7 @@ import {
   Loader2, Wand2, Cpu, RefreshCw, User, X,
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
-  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw
+  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -75,6 +75,36 @@ const themesMap = {
     ]
 };
 
+// --- HELPER: HASH ID GENERATOR (DEDUPLICATION) ---
+const generateQuestionHash = async (text) => {
+    if (!text) return null;
+    const normalized = text
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+    
+    const msgBuffer = new TextEncoder().encode(normalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+};
+
+// --- HELPER: CLEAN INSTITUTION ---
+const cleanInstitutionText = (inst) => {
+    if (!inst) return "";
+    const lower = inst.toString().toLowerCase();
+    // Lista de termos que indicam "não informado" para serem limpos
+    if (
+        lower.includes("não informado") || 
+        lower.includes("nao informado") || 
+        lower.includes("detectar") ||
+        lower.includes("nao consta")
+    ) return "";
+    return inst;
+};
+
 // --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
 const extractRetryTime = (message) => {
     const match = message.match(/retry in ([0-9\.]+)s/);
@@ -97,13 +127,13 @@ function NotificationToast({ notification, onClose, positionClass }) {
     <div 
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
+        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : notification.type === 'warning' ? 'bg-white border-amber-200 text-amber-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
     >
-        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : 'bg-emerald-100'}`}>
-            {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
+        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : notification.type === 'warning' ? 'bg-amber-100' : 'bg-emerald-100'}`}>
+            {notification.type === 'error' ? <AlertCircle size={20} /> : notification.type === 'warning' ? <AlertTriangle size={20} /> : <CheckCircle size={20} />}
         </div>
         <div className="flex-1">
-            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Ocorreu um erro' : 'Sucesso'}</p>
+            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Erro' : notification.type === 'warning' ? 'Atenção' : 'Sucesso'}</p>
             <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
         </div>
         <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
@@ -120,11 +150,12 @@ export default function App() {
   // Gestão de Chaves API (Múltiplas)
   const [apiKeys, setApiKeys] = useState(() => JSON.parse(localStorage.getItem('gemini_api_keys') || '[]'));
   
-  // Modelos
+  // Modelos - ATUALIZADO PARA PRO PADRÃO
   const [availableModels, setAvailableModels] = useState([
-      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash (Padrão)' }
+      { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (Padrão)' },
+      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }
   ]);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-flash');
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-pro');
   
   // Estados UI Básicos
   const [rawText, setRawText] = useState('');
@@ -443,8 +474,6 @@ export default function App() {
 
       try {
           // --- CONSTRUÇÃO INTELIGENTE DO MAPA DE TEMAS E PROMPT ---
-          // Se o usuário filtrou a Área, restringimos o mapa de tópicos APENAS para aquela área.
-          // Se não filtrou, mandamos tudo.
           const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
 
           // USANDO ROTAÇÃO DE CHAVES PARA A GERAÇÃO PRINCIPAL
@@ -511,27 +540,50 @@ export default function App() {
           });
 
           // --- PÓS-PROCESSAMENTO (O "ROLO COMPRESSOR") ---
-          // Aplica os overrides na marra via JS
-          const finalQuestions = questions.map(q => ({
-              ...q,
-              institution: ovr.overrideInst || q.institution, // Se overrideInst tem valor, usa ele. Se não, usa o da IA.
-              year: ovr.overrideYear || q.year,
-              area: ovr.overrideArea || q.area,
-              topic: ovr.overrideTopic || q.topic // Se overrideTopic tem valor, usa ele.
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
+              // 1. Aplica overrides E limpa instituição
+              const rawInst = ovr.overrideInst || q.institution;
+              const cleanInst = cleanInstitutionText(rawInst);
+
+              const finalQ = {
+                  ...q,
+                  institution: cleanInst, 
+                  year: ovr.overrideYear || q.year,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic 
+              };
+
+              // 2. GERA HASH (ID ÚNICO)
+              const hashId = await generateQuestionHash(finalQ.text);
+              
+              // 3. VERIFICA DUPLICATA NO BANCO FINAL (QUESTIONS)
+              let isDuplicate = false;
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                  }
+              }
+
+              return { ...finalQ, hashId, isDuplicate };
           }));
 
-          // --- LOGICA DOUBLE CHECK SEQUENCIAL ---
-          if (finalQuestions.length > 0) {
+          // --- LOGICA DOUBLE CHECK SEQUENCIAL (OTIMIZADA PARA ALTA PERFORMANCE) ---
+          const newQuestions = processedQuestions.filter(q => !q.isDuplicate);
+          const duplicateCount = processedQuestions.length - newQuestions.length;
+
+          if (newQuestions.length > 0) {
               if (doDoubleCheck) {
-                  addLog('info', `Iniciando Auditoria IA sequencial para ${finalQuestions.length} questões...`);
+                  addLog('info', `Iniciando Auditoria IA sequencial para ${newQuestions.length} questões novas...`);
                   
-                  for (let i = 0; i < finalQuestions.length; i++) {
-                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 6000));
+                  for (let i = 0; i < newQuestions.length; i++) {
+                      // OTIMIZAÇÃO: Delay reduzido de 6000ms para 100ms
+                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 100));
                       
                       try {
-                          const verification = await verifyQuestionWithAI(finalQuestions[i]);
-                          finalQuestions[i] = { 
-                              ...finalQuestions[i], 
+                          const verification = await verifyQuestionWithAI(newQuestions[i]);
+                          newQuestions[i] = { 
+                              ...newQuestions[i], 
                               verificationStatus: verification.status, 
                               verificationReason: verification.reason 
                           };
@@ -541,8 +593,8 @@ export default function App() {
                               throw err; 
                           }
                           console.error("Falha na auditoria individual:", err);
-                          finalQuestions[i] = { 
-                              ...finalQuestions[i], 
+                          newQuestions[i] = { 
+                              ...newQuestions[i], 
                               verificationStatus: 'unchecked', 
                               verificationReason: 'Falha na auditoria (Erro genérico)' 
                           };
@@ -550,14 +602,17 @@ export default function App() {
                   }
               } else {
                   // Mapeia sem verificação
-                  finalQuestions.forEach((q, idx) => {
-                      finalQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
+                  newQuestions.forEach((q, idx) => {
+                      newQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
                   });
               }
 
               const batch = writeBatch(db);
-              finalQuestions.forEach(q => {
-                  const docRef = doc(collection(db, "draft_questions"));
+              newQuestions.forEach(q => {
+                  // USAMOS O HASH COMO ID DO DOCUMENTO NO DRAFT TAMBÉM
+                  const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+                  const docRef = doc(db, "draft_questions", docId);
+                  
                   batch.set(docRef, {
                       ...q,
                       institution: q.institution || "", 
@@ -572,7 +627,7 @@ export default function App() {
               await batch.commit();
           }
 
-          addLog('success', `Sucesso fatia ${chunk.pages}: ${finalQuestions.length} questões.`);
+          addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} novas, ${duplicateCount} duplicatas descartadas.`);
           setPdfChunks(prev => {
               const newChunks = [...prev];
               newChunks[chunkIndex] = { ...newChunks[chunkIndex], status: 'success' };
@@ -580,10 +635,11 @@ export default function App() {
           });
           setConsecutiveErrors(0); 
 
+          // OTIMIZAÇÃO: Delay reduzido de 3000ms para 500ms
           setTimeout(() => {
               processorRef.current = false; 
               processNextChunk(); 
-          }, 3000); 
+          }, 500); 
 
       } catch (error) {
           console.error(error);
@@ -753,7 +809,6 @@ export default function App() {
     const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
 
     try {
-        // Mapa dinâmico também para processamento único
         const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
 
         const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
@@ -820,39 +875,65 @@ export default function App() {
         });
 
         // Pós-processamento e Auditoria
-        let finalQuestions = questions.map(q => ({
-            ...q,
-            institution: ovr.overrideInst || q.institution,
-            year: ovr.overrideYear || q.year,
-            area: ovr.overrideArea || q.area,
-            topic: ovr.overrideTopic || q.topic
+        let finalQuestions = await Promise.all(questions.map(async (q) => {
+            // Limpeza de instituição
+            const rawInst = ovr.overrideInst || q.institution;
+            const cleanInst = cleanInstitutionText(rawInst);
+            
+            const finalQ = {
+                ...q,
+                institution: cleanInst,
+                year: ovr.overrideYear || q.year,
+                area: ovr.overrideArea || q.area,
+                topic: ovr.overrideTopic || q.topic
+            };
+
+            // GERAÇÃO DE HASH E VERIFICAÇÃO DE DUPLICATA
+            const hashId = await generateQuestionHash(finalQ.text);
+            let isDuplicate = false;
+            if (hashId) {
+                const existingDoc = await getDoc(doc(db, "questions", hashId));
+                if (existingDoc.exists()) isDuplicate = true;
+            }
+
+            return { ...finalQ, hashId, isDuplicate };
         }));
 
-        if (isDoubleCheckEnabled) {
-            showNotification('success', 'Iniciando Auditoria IA...');
-            for (let i = 0; i < finalQuestions.length; i++) {
-                if (i > 0) await new Promise(resolve => setTimeout(resolve, 1500));
+        // FILTRA DUPLICATAS ANTES DO DOUBLE CHECK
+        const uniqueQuestions = finalQuestions.filter(q => !q.isDuplicate);
+        const duplicateCount = finalQuestions.length - uniqueQuestions.length;
+
+        if (isDoubleCheckEnabled && uniqueQuestions.length > 0) {
+            showNotification('success', 'Iniciando Auditoria IA nas questões novas...');
+            for (let i = 0; i < uniqueQuestions.length; i++) {
+                // OTIMIZAÇÃO: Delay reduzido para 200ms
+                if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
                 try {
-                    const verification = await verifyQuestionWithAI(finalQuestions[i]);
-                    finalQuestions[i] = { 
-                        ...finalQuestions[i], 
+                    const verification = await verifyQuestionWithAI(uniqueQuestions[i]);
+                    uniqueQuestions[i] = { 
+                        ...uniqueQuestions[i], 
                         verificationStatus: verification.status, 
                         verificationReason: verification.reason 
                     };
                 } catch (err) {
                     console.error("Erro auditoria unica:", err);
-                    finalQuestions[i] = { ...finalQuestions[i], verificationStatus: 'unchecked' };
+                    uniqueQuestions[i] = { ...uniqueQuestions[i], verificationStatus: 'unchecked' };
                 }
             }
         } else {
-            finalQuestions = finalQuestions.map(q => ({ ...q, verificationStatus: 'unchecked', verificationReason: '' }));
+            uniqueQuestions.forEach((q, idx) => {
+                 uniqueQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
+            });
         }
 
         let savedCount = 0;
         const batch = writeBatch(db);
         
-        for (const q of finalQuestions) {
-            const docRef = doc(collection(db, "draft_questions"));
+        for (const q of uniqueQuestions) {
+            // USA HASH COMO ID
+            const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+            const docRef = doc(db, "draft_questions", docId);
+            
             batch.set(docRef, {
                 ...q,
                 institution: q.institution || "", 
@@ -863,12 +944,21 @@ export default function App() {
             });
             savedCount++;
         }
-        await batch.commit();
+        
+        if (savedCount > 0) await batch.commit();
 
         setRawText('');
         setSelectedImage(null);
         setActiveTab('review');
-        showNotification('success', `${savedCount} questões enviadas para fila!`);
+        
+        // NOTIFICAÇÕES MELHORADAS
+        if (savedCount === 0 && duplicateCount > 0) {
+            showNotification('warning', `Todas as ${duplicateCount} questões eram duplicatas e foram descartadas.`);
+        } else if (duplicateCount > 0) {
+            showNotification('success', `${savedCount} enviadas. ${duplicateCount} duplicatas descartadas.`);
+        } else {
+            showNotification('success', `${savedCount} questões enviadas para fila!`);
+        }
 
     } catch (error) {
         console.error(error);
@@ -893,6 +983,13 @@ export default function App() {
 
   const handleApproveAllClick = () => {
       if (parsedQuestions.length === 0) return;
+      // Verifica se tem alguma duplicata na lista (segurança extra)
+      const hasDuplicates = parsedQuestions.some(q => q.isDuplicate);
+      if (hasDuplicates) {
+          showNotification('error', 'Remova as questões duplicadas antes de aprovar tudo.');
+          return;
+      }
+
       setConfirmationModal({
           isOpen: true,
           type: 'approve_all',
@@ -950,9 +1047,12 @@ export default function App() {
           let count = 0;
           try {
               for (const q of parsedQuestions) {
-                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, ...finalData } = q;
+                  if (q.isDuplicate) continue; // Pula duplicatas por segurança
+
+                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, ...finalData } = q;
                   if (q.area && q.topic && q.text) {
-                     await addDoc(collection(db, "questions"), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
+                     // SETDOC para garantir ID idempotente
+                     await setDoc(doc(db, "questions", id), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
                      await deleteDoc(doc(db, "draft_questions", id));
                      count++;
                   }
@@ -973,11 +1073,11 @@ export default function App() {
           setIsBatchAction(true);
           let count = 0;
           try {
-              const toApprove = parsedQuestions.filter(q => q.verificationStatus === 'verified');
+              const toApprove = parsedQuestions.filter(q => q.verificationStatus === 'verified' && !q.isDuplicate);
               for (const q of toApprove) {
-                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, ...finalData } = q;
+                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, ...finalData } = q;
                   if (q.area && q.topic && q.text) {
-                     await addDoc(collection(db, "questions"), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
+                     await setDoc(doc(db, "questions", id), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
                      await deleteDoc(doc(db, "draft_questions", id));
                      count++;
                   }
@@ -998,12 +1098,16 @@ export default function App() {
   };
 
   const approveQuestion = async (q) => {
+    if (q.isDuplicate) {
+        return showNotification('error', 'Esta questão já existe no banco de dados (Duplicata).');
+    }
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
       return showNotification('error', 'Preencha os campos obrigatórios.');
     }
     try {
-      const { id, status, createdAt, createdBy, verificationStatus, verificationReason, ...finalData } = q;
-      await addDoc(collection(db, "questions"), {
+      const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, ...finalData } = q;
+      // Garante o ID
+      await setDoc(doc(db, "questions", id), {
         ...finalData,
         createdAt: new Date().toISOString(),
         approvedBy: user.email,
@@ -1386,14 +1490,22 @@ export default function App() {
                     </div>
                 ) : (
                     parsedQuestions.map((q, idx) => (
-                        <div key={q.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative group">
-                            {/* VERIFICATION BADGE */}
-                            <div className={`absolute top-0 right-0 p-2 z-10 rounded-bl-xl shadow-sm text-xs font-bold flex items-center gap-1
-                                ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : 
-                                  q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                                {q.verificationStatus === 'verified' && <><ShieldCheck size={14}/> Double-Checked</>}
-                                {q.verificationStatus === 'suspicious' && <><ShieldAlert size={14}/> Suspeita: {q.verificationReason}</>}
-                                {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
+                        <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
+                            {/* STATUS BADGES */}
+                            <div className="absolute top-0 right-0 z-10 flex flex-col items-end gap-1">
+                                <div className={`p-2 rounded-bl-xl shadow-sm text-xs font-bold flex items-center gap-1
+                                    ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : 
+                                    q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={14}/> Double-Checked</>}
+                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={14}/> Suspeita: {q.verificationReason}</>}
+                                    {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
+                                </div>
+                                
+                                {q.isDuplicate && (
+                                    <div className="bg-amber-100 text-amber-800 p-2 rounded-l-lg shadow-sm text-xs font-bold flex items-center gap-1 animate-pulse">
+                                        <Copy size={14}/> JÁ CADASTRADA
+                                    </div>
+                                )}
                             </div>
 
                             <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
@@ -1426,7 +1538,14 @@ export default function App() {
                             
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
                                 <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
-                                <button onClick={()=>approveQuestion(q)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
+                                
+                                {q.isDuplicate ? (
+                                    <button disabled className="bg-amber-200 text-amber-700 font-bold text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 cursor-not-allowed opacity-70">
+                                        <Copy size={18}/> Questão Duplicada
+                                    </button>
+                                ) : (
+                                    <button onClick={()=>approveQuestion(q)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
+                                )}
                             </div>
                         </div>
                     ))
