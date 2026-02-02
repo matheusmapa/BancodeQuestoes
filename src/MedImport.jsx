@@ -5,7 +5,8 @@ import {
   Loader2, Wand2, Cpu, RefreshCw, User, X,
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
-  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy
+  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
+  SkipForward, BookOpen, Clock
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -190,11 +191,16 @@ export default function App() {
 
   // --- PDF PROCESSING STATES ---
   const [pdfFile, setPdfFile] = useState(null);
-  const [pdfStatus, setPdfStatus] = useState('idle'); // idle, reading, ready, processing, paused, error, completed
+  const [pdfStatus, setPdfStatus] = useState('idle'); // idle, reading, ready, processing, pausing, paused, error, completed
   const [pdfChunks, setPdfChunks] = useState([]); 
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [processingLogs, setProcessingLogs] = useState([]);
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+  
+  // PDF Range Inputs
+  const [pdfStartPage, setPdfStartPage] = useState('');
+  const [pdfEndPage, setPdfEndPage] = useState('');
+
   const processorRef = useRef(null); 
   
   // --- REFS ---
@@ -373,35 +379,52 @@ export default function App() {
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
           
-          addLog('info', `PDF carregado. Total de páginas: ${pdf.numPages}`);
+          addLog('info', `PDF carregado. Total: ${pdf.numPages} págs.`);
           
+          // Lógica de Range de Páginas
+          let startP = parseInt(pdfStartPage) || 1;
+          let endP = parseInt(pdfEndPage) || pdf.numPages;
+
+          if (startP < 1) startP = 1;
+          if (endP > pdf.numPages) endP = pdf.numPages;
+          if (startP > endP) {
+               startP = 1; 
+               endP = pdf.numPages;
+               showNotification('warning', 'Intervalo inválido. Usando PDF completo.');
+          } else {
+               if (startP !== 1 || endP !== pdf.numPages) {
+                   addLog('info', `Recortando páginas: ${startP} até ${endP}`);
+               }
+          }
+
           let chunks = [];
           let currentChunkText = "";
-          let startPage = 1;
+          let chunkStartPage = startP;
 
-          for (let i = 1; i <= pdf.numPages; i++) {
+          for (let i = startP; i <= endP; i++) {
               const page = await pdf.getPage(i);
               const content = await page.getTextContent();
               const text = content.items.map(item => item.str).join(' ');
               
               currentChunkText += `\n--- PÁGINA ${i} ---\n${text}`;
 
-              if (i % CHUNK_SIZE === 0 || i === pdf.numPages) {
+              // Fatia a cada CHUNK_SIZE páginas OU se for a última página do range
+              if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
                   chunks.push({
-                      id: `chunk_${startPage}_${i}`,
-                      pages: `${startPage} a ${i}`,
+                      id: `chunk_${chunkStartPage}_${i}`,
+                      pages: `${chunkStartPage} a ${i}`,
                       text: currentChunkText,
                       status: 'pending',
                       errorCount: 0
                   });
                   currentChunkText = "";
-                  startPage = i + 1;
+                  chunkStartPage = i + 1;
               }
           }
 
           setPdfChunks(chunks);
           setPdfStatus('ready');
-          addLog('success', `Fatiamento concluído! ${chunks.length} partes criadas.`);
+          addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
 
       } catch (error) {
           console.error(error);
@@ -412,17 +435,19 @@ export default function App() {
   };
 
   const handleResetPdf = () => {
-      if (pdfStatus === 'processing') return; 
+      if (pdfStatus === 'processing' || pdfStatus === 'pausing') return; 
       setPdfFile(null);
       setPdfChunks([]);
       setPdfStatus('idle');
       setCurrentChunkIndex(0);
       setProcessingLogs([]);
       setConsecutiveErrors(0);
+      setPdfStartPage('');
+      setPdfEndPage('');
   };
 
   const handleRestartPdf = () => {
-      if (!pdfFile || pdfStatus === 'processing') return;
+      if (!pdfFile || pdfStatus === 'processing' || pdfStatus === 'pausing') return;
       const resetChunks = pdfChunks.map(c => ({ ...c, status: 'pending', errorCount: 0 }));
       setPdfChunks(resetChunks);
       setCurrentChunkIndex(0);
@@ -432,18 +457,24 @@ export default function App() {
       addLog('info', 'Processamento reiniciado.');
   };
 
+  // --- NOVA LÓGICA DE NAVEGAÇÃO ("SEEK") ---
   const handleJumpToChunk = (index) => {
-      if (pdfStatus === 'processing' || pdfStatus === 'idle') return;
+      if (pdfStatus === 'processing' || pdfStatus === 'idle' || pdfStatus === 'pausing' || pdfStatus === 'reading') return;
       
-      addLog('warning', `Rebobinando para a fatia ${index + 1}...`);
+      const chunk = pdfChunks[index];
+      addLog('info', `Agulha movida para fatia ${chunk.pages} (Aguardando Início)...`);
       
-      // Reseta o status desta fatia e das próximas para pending
-      setPdfChunks(prev => prev.map((chunk, i) => {
-          if (i >= index) return { ...chunk, status: 'pending', errorCount: 0 };
-          return chunk;
-      }));
-      
+      // 1. Move a agulha para o índice clicado
       setCurrentChunkIndex(index);
+
+      // 2. Força o status da fatia clicada para 'pending' (para reprocessar se quiser)
+      //    Isso permite "tocar" o vídeo a partir daqui.
+      setPdfChunks(prev => {
+          const newChunks = [...prev];
+          // Reseta APENAS a fatia atual para garantir que ela rode
+          newChunks[index] = { ...newChunks[index], status: 'pending', errorCount: 0 };
+          return newChunks;
+      });
   };
 
   const processNextChunk = async () => {
@@ -453,21 +484,32 @@ export default function App() {
       const ovr = overridesRef.current; 
 
       if (processorRef.current) return; 
-      if (currentStatus === 'paused' || currentStatus === 'error' || currentStatus === 'completed') return;
+      // Se estiver pausado ou erro e a função for chamada (ex: retry), ok.
+      // Se estiver 'completed', para.
+      if (currentStatus === 'completed') return;
       
-      const chunkIndex = currentChunks.findIndex(c => c.status === 'pending');
+      // LÓGICA DE SEEK: Procura a próxima pendente A PARTIR do índice atual
+      const chunkIndex = currentChunks.findIndex((c, i) => i >= currentChunkIndex && c.status === 'pending');
       
       if (chunkIndex === -1) {
-          setPdfStatus('completed');
-          addLog('success', 'Processamento Completo!');
-          showNotification('success', 'Todos as partes do PDF foram processadas.');
+          // Verifica se acabou tudo MESMO ou se só acabou a partir da agulha
+          const anyPending = currentChunks.some(c => c.status === 'pending');
+          if (anyPending) {
+               addLog('warning', 'Fim da linha de tempo. Existem fatias anteriores pendentes.');
+               setPdfStatus('paused'); 
+          } else {
+               setPdfStatus('completed');
+               addLog('success', 'Processamento Completo!');
+               showNotification('success', 'Todas as partes selecionadas foram processadas.');
+          }
           return;
       }
 
-      setCurrentChunkIndex(chunkIndex);
+      setCurrentChunkIndex(chunkIndex); // Atualiza agulha visual
       const chunk = currentChunks[chunkIndex];
 
-      if (currentStatus !== 'processing') setPdfStatus('processing');
+      // Se não estiver 'pausing', garante que está 'processing'
+      if (currentStatus !== 'pausing' && currentStatus !== 'processing') setPdfStatus('processing');
       
       processorRef.current = true; 
       addLog('info', `Processando fatia ${chunk.pages}...`);
@@ -568,7 +610,7 @@ export default function App() {
               return { ...finalQ, hashId, isDuplicate };
           }));
 
-          // --- LOGICA DOUBLE CHECK SEQUENCIAL (OTIMIZADA PARA ALTA PERFORMANCE) ---
+          // --- LOGICA DOUBLE CHECK SEQUENCIAL ---
           const newQuestions = processedQuestions.filter(q => !q.isDuplicate);
           const duplicateCount = processedQuestions.length - newQuestions.length;
 
@@ -577,7 +619,6 @@ export default function App() {
                   addLog('info', `Iniciando Auditoria IA sequencial para ${newQuestions.length} questões novas...`);
                   
                   for (let i = 0; i < newQuestions.length; i++) {
-                      // OTIMIZAÇÃO: Delay reduzido de 6000ms para 100ms
                       if (i > 0) await new Promise(resolve => setTimeout(resolve, 100));
                       
                       try {
@@ -609,7 +650,6 @@ export default function App() {
 
               const batch = writeBatch(db);
               newQuestions.forEach(q => {
-                  // USAMOS O HASH COMO ID DO DOCUMENTO NO DRAFT TAMBÉM
                   const docId = q.hashId || doc(collection(db, "draft_questions")).id;
                   const docRef = doc(db, "draft_questions", docId);
                   
@@ -635,7 +675,21 @@ export default function App() {
           });
           setConsecutiveErrors(0); 
 
-          // OTIMIZAÇÃO: Delay reduzido de 3000ms para 500ms
+          // --- VERIFICAÇÃO DE PAUSA NO FINAL DO CICLO ---
+          if (pdfStatusRef.current === 'pausing') {
+              setPdfStatus('paused');
+              addLog('warning', 'Pausa solicitada. Ciclo atual concluído e salvo.');
+              processorRef.current = false;
+              return; // PARA A RECURSÃO AQUI
+          }
+
+          // Se estiver pausado ou idle por outro motivo
+          if (pdfStatusRef.current === 'paused' || pdfStatusRef.current === 'idle') {
+              processorRef.current = false;
+              return;
+          }
+
+          // Continua o loop
           setTimeout(() => {
               processorRef.current = false; 
               processNextChunk(); 
@@ -690,6 +744,14 @@ export default function App() {
               return; 
           }
 
+          // Se deu erro, mas o usuário pediu pausa, vamos respeitar a pausa
+          if (pdfStatusRef.current === 'pausing') {
+              setPdfStatus('paused');
+              addLog('warning', 'Pausa solicitada durante erro. Sistema pausado.');
+              processorRef.current = false;
+              return;
+          }
+
           setPdfChunks(prev => {
               const newChunks = [...prev];
               newChunks[chunkIndex] = { ...newChunks[chunkIndex], status: 'pending' };
@@ -706,11 +768,13 @@ export default function App() {
   const togglePdfProcessing = () => {
       const currentStatus = pdfStatusRef.current;
       if (currentStatus === 'processing') {
-          setPdfStatus('paused');
-          addLog('warning', 'Usuário pausou.');
-      } else {
+          // EM VEZ DE PAUSED DIRETO, VAI PARA PAUSING
+          setPdfStatus('pausing');
+          addLog('warning', 'Solicitando pausa... Aguardando conclusão da fatia atual.');
+      } else if (currentStatus === 'paused' || currentStatus === 'ready') {
+          // ADICIONADO 'ready' PARA O BOTÃO INICIAR FUNCIONAR
           setPdfStatus('processing');
-          addLog('info', 'Retomando...');
+          addLog('info', currentStatus === 'ready' ? 'Iniciando processamento...' : 'Retomando...');
           processorRef.current = false; 
           setTimeout(() => processNextChunk(), 100);
       }
@@ -1362,11 +1426,13 @@ export default function App() {
                         </div>
                         {pdfStatus !== 'idle' && (
                             <div className="flex items-center gap-2">
-                                <button onClick={handleResetPdf} title="Cancelar e Novo PDF" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><XCircle size={20}/></button>
-                                <button onClick={handleRestartPdf} title="Reiniciar Processamento" className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors mr-2"><RotateCcw size={20}/></button>
+                                <button onClick={handleResetPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Cancelar e Novo PDF" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><XCircle size={20}/></button>
+                                <button onClick={handleRestartPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Reiniciar Processamento" className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors mr-2 disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw size={20}/></button>
                                 
                                 {pdfStatus === 'processing' ? (
                                     <button onClick={togglePdfProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
+                                ) : pdfStatus === 'pausing' ? (
+                                    <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
                                 ) : (
                                     <button onClick={togglePdfProcessing} disabled={pdfStatus === 'reading' || pdfStatus === 'completed' || pdfStatus === 'error'} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {pdfStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
                                 )}
@@ -1376,13 +1442,30 @@ export default function App() {
                     
                     {/* DROPZONE PDF */}
                     {pdfStatus === 'idle' && (
-                        <div className="w-full h-64 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400">
-                             <div className="text-center pointer-events-none p-4">
-                                <FileText size={48} className="mx-auto text-gray-400 mb-3" />
-                                <p className="text-gray-600 font-bold mb-1">Arraste seu PDF aqui</p>
-                                <p className="text-gray-400 text-sm">Suporta arquivos grandes (100MB+)</p>
-                            </div>
-                            <input type="file" accept="application/pdf" onChange={handlePdfUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                        <div className="space-y-4">
+                             {/* RANGE INPUTS */}
+                             <div className="flex items-end gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><BookOpen size={12}/> De pg.</label>
+                                    <input type="number" min="1" value={pdfStartPage} onChange={e=>setPdfStartPage(e.target.value)} placeholder="Início" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><SkipForward size={12}/> Até pg.</label>
+                                    <input type="number" min="1" value={pdfEndPage} onChange={e=>setPdfEndPage(e.target.value)} placeholder="Fim" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
+                                </div>
+                                <div className="text-xs text-gray-400 pb-2 w-1/3 leading-tight">
+                                    Deixe em branco para processar o PDF inteiro.
+                                </div>
+                             </div>
+
+                             <div className="w-full h-56 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400">
+                                <div className="text-center pointer-events-none p-4">
+                                    <FileText size={48} className="mx-auto text-gray-400 mb-3" />
+                                    <p className="text-gray-600 font-bold mb-1">Arraste seu PDF aqui</p>
+                                    <p className="text-gray-400 text-sm">Suporta arquivos grandes (100MB+)</p>
+                                </div>
+                                <input type="file" accept="application/pdf" onChange={handlePdfUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                             </div>
                         </div>
                     )}
 
@@ -1392,16 +1475,24 @@ export default function App() {
                             {/* STATUS BAR */}
                             <div className="bg-gray-100 rounded-xl p-4 flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-lg ${pdfStatus === 'error' ? 'bg-red-100 text-red-600' : pdfStatus === 'processing' ? 'bg-blue-100 text-blue-600 animate-pulse' : 'bg-gray-200 text-gray-600'}`}>
+                                    <div className={`p-2 rounded-lg 
+                                        ${pdfStatus === 'error' ? 'bg-red-100 text-red-600' : 
+                                          pdfStatus === 'processing' ? 'bg-blue-100 text-blue-600 animate-pulse' : 
+                                          pdfStatus === 'pausing' ? 'bg-amber-100 text-amber-600 animate-pulse' :
+                                          'bg-gray-200 text-gray-600'}`}>
                                         {pdfStatus === 'reading' && <Loader2 className="animate-spin" size={24}/>}
                                         {pdfStatus === 'ready' && <CheckCircle size={24}/>}
                                         {pdfStatus === 'processing' && <Cpu size={24}/>}
+                                        {pdfStatus === 'pausing' && <Clock size={24}/>}
                                         {pdfStatus === 'paused' && <Pause size={24}/>}
                                         {pdfStatus === 'completed' && <CheckCircle size={24}/>}
                                         {pdfStatus === 'error' && <AlertOctagon size={24}/>}
                                     </div>
                                     <div>
-                                        <p className="font-bold text-slate-800 text-sm uppercase">{pdfStatus === 'reading' ? 'Lendo Arquivo...' : pdfStatus}</p>
+                                        <p className="font-bold text-slate-800 text-sm uppercase">
+                                            {pdfStatus === 'reading' ? 'Lendo Arquivo...' : 
+                                             pdfStatus === 'pausing' ? 'Pausando...' : pdfStatus}
+                                        </p>
                                         <p className="text-xs text-gray-500">{pdfFile?.name} • {pdfChunks.length} fatias</p>
                                     </div>
                                 </div>
@@ -1413,20 +1504,21 @@ export default function App() {
                             {/* GRID DE CHUNKS - INTERATIVO SE PAUSADO */}
                             <div className="border border-gray-200 rounded-xl p-4 max-h-60 overflow-y-auto">
                                 <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
-                                    <span>Mapa de Processamento (Fatias de {CHUNK_SIZE} pgs)</span>
-                                    {pdfStatus === 'paused' && <span className="text-blue-500 text-[10px]">Clique para rebobinar</span>}
+                                    <span>Timeline (Navegação)</span>
+                                    {pdfStatus === 'paused' && <span className="text-blue-500 text-[10px]">Clique para Navegar (Seek)</span>}
                                 </p>
                                 <div className="grid grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2">
                                     {pdfChunks.map((chunk, idx) => (
                                         <button key={chunk.id} 
                                             onClick={() => handleJumpToChunk(idx)}
-                                            disabled={pdfStatus === 'processing' || pdfStatus === 'reading'}
+                                            disabled={pdfStatus === 'reading' || pdfStatus === 'processing' || pdfStatus === 'pausing'}
                                             className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
                                             ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
                                             ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
                                             ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
-                                            ${idx === currentChunkIndex && pdfStatus === 'processing' ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
-                                            ${pdfStatus === 'paused' && idx <= currentChunkIndex ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer' : ''}
+                                            ${idx === currentChunkIndex && (pdfStatus === 'processing' || pdfStatus === 'pausing') ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
+                                            ${(pdfStatus === 'paused' || pdfStatus === 'ready' || pdfStatus === 'completed') ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer hover:border-blue-300' : ''}
+                                            ${(pdfStatus === 'processing' || pdfStatus === 'pausing') && idx !== currentChunkIndex ? 'opacity-50 cursor-not-allowed' : ''}
                                             `}
                                             title={`Páginas ${chunk.pages} | Erros: ${chunk.errorCount}`}
                                         >
