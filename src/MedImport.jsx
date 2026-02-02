@@ -167,7 +167,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('input');
   const [notification, setNotification] = useState(null);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
-  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(false); 
+  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
   
   // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
