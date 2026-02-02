@@ -6,7 +6,7 @@ import {
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock
+  SkipForward, BookOpen, Clock, Images
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -160,7 +160,7 @@ export default function App() {
   
   // Estados UI Básicos
   const [rawText, setRawText] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
+  // const [selectedImage, setSelectedImage] = useState(null); // REMOVIDO: Unificado no batch
   const [isProcessing, setIsProcessing] = useState(false);
   const [isBatchAction, setIsBatchAction] = useState(false); 
   const [isSavingKey, setIsSavingKey] = useState(false);
@@ -189,6 +189,11 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // --- BATCH IMAGE STATES ---
+  const [batchImages, setBatchImages] = useState([]); // { id, file, preview, status: 'pending'|'success'|'error', errorMsg }
+  const [batchStatus, setBatchStatus] = useState('idle'); // idle, processing, pausing, paused
+  const [batchLogs, setBatchLogs] = useState([]); // SEPARADO: Logs de imagens
+
   // --- PDF PROCESSING STATES ---
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfStatus, setPdfStatus] = useState('idle'); // idle, reading, ready, processing, pausing, paused, error, completed
@@ -202,10 +207,13 @@ export default function App() {
   const [pdfEndPage, setPdfEndPage] = useState('');
 
   const processorRef = useRef(null); 
+  const batchProcessorRef = useRef(null);
   
   // --- REFS ---
   const pdfStatusRef = useRef(pdfStatus);
   const pdfChunksRef = useRef(pdfChunks);
+  const batchImagesRef = useRef(batchImages);
+  const batchStatusRef = useRef(batchStatus);
   const apiKeysRef = useRef(apiKeys);
   const keyRotationIndex = useRef(0);
   const doubleCheckRef = useRef(isDoubleCheckEnabled); 
@@ -243,6 +251,8 @@ export default function App() {
   // --- SYNC REFS ---
   useEffect(() => { pdfStatusRef.current = pdfStatus; }, [pdfStatus]);
   useEffect(() => { pdfChunksRef.current = pdfChunks; }, [pdfChunks]);
+  useEffect(() => { batchImagesRef.current = batchImages; }, [batchImages]);
+  useEffect(() => { batchStatusRef.current = batchStatus; }, [batchStatus]);
   useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
   useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
   useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
@@ -304,7 +314,8 @@ export default function App() {
               const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429");
               
               if (isQuotaError) {
-                  addLog('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
+                  const logFn = operationName.includes("Imagem") ? addBatchLog : addLog;
+                  logFn('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
                   lastError = error;
                   continue; 
               } else {
@@ -358,12 +369,302 @@ export default function App() {
       });
   };
 
-  // --- LOGIC: PDF HANDLING ---
+  // --- COMMON: LOGS ---
   const addLog = (type, message) => {
       const time = new Date().toLocaleTimeString();
       setProcessingLogs(prev => [{ type, message, time }, ...prev].slice(0, 50)); 
   };
+  
+  // --- BATCH LOGS (SEPARADO) ---
+  const addBatchLog = (type, message) => {
+      const time = new Date().toLocaleTimeString();
+      setBatchLogs(prev => [{ type, message, time }, ...prev].slice(0, 50));
+  };
 
+  // --- LOGIC: BATCH IMAGE PROCESSING ---
+  const handleBatchImageUpload = (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+
+      const newImages = files.map(file => ({
+          id: Math.random().toString(36).substr(2, 9),
+          file,
+          name: file.name,
+          preview: URL.createObjectURL(file),
+          status: 'pending',
+          errorMsg: ''
+      }));
+
+      setBatchImages(prev => [...prev, ...newImages]);
+      addBatchLog('info', `${files.length} imagens adicionadas à fila.`);
+  };
+
+  const handleBatchPaste = (e) => {
+      const items = e.clipboardData.items;
+      const newImages = [];
+      for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+              const blob = items[i].getAsFile();
+              newImages.push({
+                  id: Math.random().toString(36).substr(2, 9),
+                  file: blob,
+                  name: `Colada_${new Date().getTime()}_${i}.png`,
+                  preview: URL.createObjectURL(blob),
+                  status: 'pending',
+                  errorMsg: ''
+              });
+          }
+      }
+      if (newImages.length > 0) {
+          setBatchImages(prev => [...prev, ...newImages]);
+          addBatchLog('info', `${newImages.length} imagens coladas (Ctrl+V) na fila.`);
+      }
+  };
+
+  const removeBatchImage = (id) => {
+      setBatchImages(prev => prev.filter(img => img.id !== id));
+  };
+
+  const clearBatchQueue = () => {
+      if (batchStatus === 'processing' || batchStatus === 'pausing') return;
+      setBatchImages([]);
+      addBatchLog('info', 'Fila de imagens limpa.');
+      setBatchLogs([]);
+  };
+
+  const toggleBatchProcessing = () => {
+      const currentStatus = batchStatusRef.current;
+      
+      if (currentStatus === 'processing') {
+          // LÓGICA DE PAUSA SUAVE
+          setBatchStatus('pausing');
+          addBatchLog('warning', 'Solicitando pausa... Aguardando a imagem atual finalizar.');
+      } else if (currentStatus === 'paused' || currentStatus === 'idle') {
+          setBatchStatus('processing');
+          addBatchLog('info', 'Iniciando processamento de imagens...');
+          batchProcessorRef.current = false; // Reset lock
+          setTimeout(() => processNextBatchImage(), 100);
+      }
+  };
+
+  const fileToBase64 = (file) => {
+      return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = error => reject(error);
+      });
+  };
+
+  const processNextBatchImage = async () => {
+      // Verifica Bloqueio
+      if (batchProcessorRef.current) return;
+
+      // Verifica Status e Pausa Suave
+      const currentStatus = batchStatusRef.current;
+      
+      // Se estava pausando, agora efetiva a pausa
+      if (currentStatus === 'pausing') {
+          setBatchStatus('paused');
+          addBatchLog('warning', 'Processamento pausado com segurança.');
+          return;
+      }
+
+      if (currentStatus !== 'processing') return;
+
+      // Encontra a próxima pendente
+      const queue = batchImagesRef.current;
+      const nextImg = queue.find(img => img.status === 'pending');
+
+      if (!nextImg) {
+          setBatchStatus('idle');
+          addBatchLog('success', 'Fila de imagens finalizada!');
+          showNotification('success', 'Todas as imagens foram processadas.');
+          return;
+      }
+
+      batchProcessorRef.current = true; // Lock
+      const ovr = overridesRef.current;
+      const doDoubleCheck = doubleCheckRef.current; // Ler status do Double Check
+      addBatchLog('info', `Processando imagem: ${nextImg.name}...`);
+
+      try {
+          // 1. Converter Base64
+          const base64Data = await fileToBase64(nextImg.file);
+          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
+
+          // 2. Chamar IA (Geração)
+          const questions = await executeWithKeyRotation("Imagem Batch", async (key) => {
+              const systemPrompt = `
+                Você é um especialista em banco de dados médicos (MedMaps).
+                Analise esta imagem (print de questão médica).
+                Extraia questões no formato JSON ESTRITO.
+                
+                CONTEXTO (Informacional):
+                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar da imagem)"}
+                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar da imagem)"}
+
+                REGRAS:
+                1. Retorne APENAS o JSON (sem markdown).
+                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
+                   - Classifique CADA questão usando a lista abaixo.
+                   - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
+                3. GABARITO E COMENTÁRIO: 
+                   - Tente encontrar o gabarito visual na imagem. Se não houver, RESOLVA a questão.
+                   - Gere sempre um campo "explanation".
+                
+                Formato Saída:
+                [
+                  {
+                    "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                    "text": "String", "options": [{"id": "a", "text": "String"}],
+                    "correctOptionId": "char", "explanation": "String"
+                  }
+                ]
+              `;
+
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      contents: [{
+                          parts: [
+                              { text: systemPrompt },
+                              { inline_data: { mime_type: nextImg.file.type, data: base64Data } }
+                          ]
+                      }]
+                  })
+              });
+
+              const data = await response.json();
+              if (data.error) throw new Error(data.error.message);
+
+              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+
+              try {
+                  return JSON.parse(jsonString);
+              } catch (e) {
+                  jsonString = jsonString.replace(/[\u0000-\u0019]+/g,""); 
+                  return JSON.parse(jsonString);
+              }
+          });
+
+          // 3. Pós-Processamento, Verificação de Duplicatas e Auditoria
+          const batch = writeBatch(db);
+          let savedCount = 0;
+          let newQuestionsForAudit = [];
+
+          for (const q of questions) {
+              const rawInst = ovr.overrideInst || q.institution;
+              const cleanInst = cleanInstitutionText(rawInst);
+              
+              const finalQ = {
+                  ...q,
+                  institution: cleanInst,
+                  year: ovr.overrideYear || q.year,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic
+              };
+
+              // Hash Check
+              const hashId = await generateQuestionHash(finalQ.text);
+              let isDuplicate = false;
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) isDuplicate = true;
+              }
+
+              if (!isDuplicate) {
+                  // Adiciona para auditoria
+                  newQuestionsForAudit.push({ ...finalQ, hashId });
+              }
+          }
+
+          // 4. Auditoria IA (Double Check)
+          if (newQuestionsForAudit.length > 0) {
+              if (doDoubleCheck) {
+                  addBatchLog('info', `Auditando ${newQuestionsForAudit.length} questões (Double Check)...`);
+                  
+                  for (let i = 0; i < newQuestionsForAudit.length; i++) {
+                      // Pequeno delay para não sobrecarregar
+                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
+                      
+                      try {
+                          const verification = await verifyQuestionWithAI(newQuestionsForAudit[i]);
+                          newQuestionsForAudit[i] = { 
+                              ...newQuestionsForAudit[i], 
+                              verificationStatus: verification.status, 
+                              verificationReason: verification.reason 
+                          };
+                      } catch (err) {
+                          console.error("Falha na auditoria (Imagem):", err);
+                          newQuestionsForAudit[i] = { 
+                              ...newQuestionsForAudit[i], 
+                              verificationStatus: 'unchecked', 
+                              verificationReason: 'Falha na auditoria (Erro genérico)' 
+                          };
+                      }
+                  }
+              } else {
+                  // Marca como não verificada se a flag estiver off
+                  newQuestionsForAudit.forEach((q, idx) => {
+                      newQuestionsForAudit[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
+                  });
+              }
+
+              // 5. Salvar no Firestore
+              for (const q of newQuestionsForAudit) {
+                  const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+                  const docRef = doc(db, "draft_questions", docId);
+                  batch.set(docRef, {
+                      ...q,
+                      institution: q.institution || "", 
+                      year: q.year || "",
+                      createdAt: new Date().toISOString(),
+                      createdBy: user.email,
+                      sourceFile: nextImg.name,
+                      hasImage: true 
+                  });
+                  savedCount++;
+              }
+              await batch.commit();
+          }
+
+          // 6. Sucesso -> Remover da fila ("Joga fora")
+          addBatchLog('success', `Sucesso em ${nextImg.name}: ${savedCount} questões salvas.`);
+          setBatchImages(prev => prev.filter(img => img.id !== nextImg.id));
+
+          // Delay pequeno para não atropelar
+          setTimeout(() => {
+              batchProcessorRef.current = false;
+              processNextBatchImage();
+          }, 1000);
+
+      } catch (error) {
+          console.error(error);
+          const errorMessage = error.message || "Erro desconhecido";
+          
+          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
+              addBatchLog('warning', `Cota excedida. Aguardando 10s...`);
+              setTimeout(() => {
+                  batchProcessorRef.current = false;
+                  processNextBatchImage(); // Tenta a mesma imagem de novo
+              }, 10000);
+          } else {
+              // Erro real na imagem -> Marca como erro e mantém na lista
+              addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
+              setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
+              
+              setTimeout(() => {
+                  batchProcessorRef.current = false;
+                  processNextBatchImage(); // Vai para a próxima
+              }, 1000);
+          }
+      }
+  };
+
+  // --- LOGIC: PDF HANDLING (Mantido igual) ---
   const handlePdfUpload = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -820,26 +1121,9 @@ export default function App() {
   const closeNotification = () => { setNotification(null); };
   const handleLogout = () => { signOut(auth); setParsedQuestions([]); setActiveTab('input'); };
 
-  const handleImageUpload = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onloadend = () => { setSelectedImage({ data: reader.result.split(',')[1], mime: file.type, preview: reader.result }); };
-      reader.readAsDataURL(file);
-  };
-
-  const handlePasteImage = (e) => {
-      const items = e.clipboardData.items;
-      for (let i = 0; i < items.length; i++) {
-          if (items[i].type.indexOf("image") !== -1) {
-              const blob = items[i].getAsFile();
-              const reader = new FileReader();
-              reader.onloadend = () => { setSelectedImage({ data: reader.result.split(',')[1], mime: blob.type, preview: reader.result }); };
-              reader.readAsDataURL(blob);
-          }
-      }
-  };
-
+  // --- IMAGEM ÚNICA (AGORA REDUNDANTE MAS NECESSÁRIA PARA O TAB INPUT)
+  // Mas como removemos a tab, podemos remover esses handlers ou adaptar se quiseres manter texto
+  
   const validateKeyAndFetchModels = async () => {
       const currentKey = apiKeysRef.current[0]; 
       if (!currentKey) return showNotification('error', 'Configure as chaves API primeiro.');
@@ -863,11 +1147,10 @@ export default function App() {
       }
   };
 
-  // --- PROCESSAMENTO IA (Texto/Imagem Único) ---
+  // --- PROCESSAMENTO IA (Texto Único) ---
   const processWithAI = async () => {
     if (activeTab === 'input' && !rawText.trim()) return showNotification('error', 'Cole o texto.');
-    if (activeTab === 'image' && !selectedImage) return showNotification('error', 'Selecione uma imagem.');
-
+    
     setIsProcessing(true);
 
     const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
@@ -905,18 +1188,8 @@ export default function App() {
               ]
             `;
 
-            let contentsPayload = [];
-            if (activeTab === 'input') {
-                contentsPayload = [{ parts: [{ text: systemPrompt + "\n\nCONTEÚDO:\n" + rawText }] }];
-            } else {
-                contentsPayload = [{
-                    parts: [
-                        { text: systemPrompt + "\n\nAnalise esta imagem:" },
-                        { inline_data: { mime_type: selectedImage.mime, data: selectedImage.data } }
-                    ]
-                }];
-            }
-
+            let contentsPayload = [{ parts: [{ text: systemPrompt + "\n\nCONTEÚDO:\n" + rawText }] }];
+            
             const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
                 method: 'POST',
@@ -1012,7 +1285,6 @@ export default function App() {
         if (savedCount > 0) await batch.commit();
 
         setRawText('');
-        setSelectedImage(null);
         setActiveTab('review');
         
         // NOTIFICAÇÕES MELHORADAS
@@ -1326,7 +1598,7 @@ export default function App() {
         <div className="flex justify-center mb-8">
             <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex overflow-x-auto max-w-full">
                 <button onClick={() => setActiveTab('input')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'input' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><FileText size={18} /> Texto</button>
-                <button onClick={() => setActiveTab('image')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'image' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><ImageIcon size={18} /> Imagem</button>
+                <button onClick={() => setActiveTab('batch_images')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'batch_images' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Images size={18} /> Imagens (Lote)</button>
                 <button onClick={() => setActiveTab('pdf')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'pdf' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Database size={18} /> PDF Massivo</button>
                 <button onClick={() => setActiveTab('review')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
                     <CloudLightning size={18} /> Fila de Aprovação 
@@ -1336,7 +1608,7 @@ export default function App() {
         </div>
 
         {/* OVERRIDES SECTION (PRÉ-DEFINIÇÕES) */}
-        {(activeTab === 'input' || activeTab === 'image' || activeTab === 'pdf') && (
+        {(activeTab === 'input' || activeTab === 'pdf' || activeTab === 'batch_images') && (
             <div className="max-w-4xl mx-auto mb-6 animate-in slide-in-from-top-4">
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
@@ -1378,36 +1650,115 @@ export default function App() {
             </div>
         )}
 
-        {/* INPUT TABS */}
-        {(activeTab === 'input' || activeTab === 'image') && (
+        {/* INPUT TABS (TEXTO ÚNICO) */}
+        {activeTab === 'input' && (
             <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                     <label className="block text-lg font-bold text-slate-800 mb-2">
-                        {activeTab === 'input' ? 'Cole suas questões (Texto)' : 'Envie uma Imagem'}
+                        Cole suas questões (Texto)
                     </label>
                     <p className="text-sm text-gray-500 mb-4">A IA vai analisar e enviar para a fila de aprovação (Database).</p>
                     
-                    {activeTab === 'input' ? (
-                        <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="Cole aqui o texto..." className="w-full h-96 p-4 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm resize-y mb-4"/>
-                    ) : (
-                        <div className="w-full h-96 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400" onPaste={handlePasteImage}>
-                            {selectedImage ? (
-                                <>
-                                    <img src={selectedImage.preview} alt="Preview" className="w-full h-full object-contain p-2" />
-                                    <button onClick={(e) => { e.stopPropagation(); setSelectedImage(null); }} className="absolute top-4 right-4 bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600"><Trash2 size={20} /></button>
-                                </>
-                            ) : (
-                                <div className="text-center pointer-events-none p-4"><UploadCloud size={48} className="mx-auto text-gray-400 mb-3" /><p className="text-gray-500 font-medium">Clique ou cole (Ctrl+V)</p></div>
-                            )}
-                            <input type="file" accept="image/*" onChange={handleImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" disabled={!!selectedImage}/>
-                        </div>
-                    )}
+                    <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="Cole aqui o texto..." className="w-full h-96 p-4 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm resize-y mb-4"/>
 
                     <div className="flex justify-end gap-3 mt-4">
-                        <button onClick={() => { setRawText(''); setSelectedImage(null); }} className="px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold">Limpar</button>
+                        <button onClick={() => { setRawText(''); }} className="px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold">Limpar</button>
                         <button onClick={processWithAI} disabled={isProcessing || apiKeys.length === 0} className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
                             {isProcessing ? <><Loader2 className="animate-spin" size={20} /> Processando...</> : <><Wand2 size={20} /> Enviar para Fila</>}
                         </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* BATCH IMAGES TAB (UNIFICADA) */}
+        {activeTab === 'batch_images' && (
+            <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                            <label className="block text-lg font-bold text-slate-800 mb-1">
+                                Importador de Imagens (Lote ou Única)
+                            </label>
+                            <p className="text-sm text-gray-500">Adicione ou cole (Ctrl+V) várias imagens. As processadas com sucesso serão removidas automaticamente.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button onClick={clearBatchQueue} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} title="Limpar Tudo" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30"><Trash2 size={20}/></button>
+                            
+                            {batchStatus === 'processing' ? (
+                                <button onClick={toggleBatchProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
+                            ) : batchStatus === 'pausing' ? (
+                                <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
+                            ) : (
+                                <button onClick={toggleBatchProcessing} disabled={batchImages.length === 0} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {batchStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* DROPZONE MULTIPLE + PASTE SUPPORT */}
+                    <div 
+                        onPaste={handleBatchPaste}
+                        className="w-full h-32 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        tabIndex="0"
+                    >
+                        <div className="text-center pointer-events-none p-4">
+                            <UploadCloud size={32} className="mx-auto text-gray-400 mb-2" />
+                            <p className="text-gray-600 font-bold text-sm">Arraste, Clique ou Cole (Ctrl+V)</p>
+                        </div>
+                        <input type="file" accept="image/*" multiple onChange={handleBatchImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-6">
+                        {/* QUEUE GRID */}
+                        <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-200 h-[500px] overflow-y-auto">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3 flex justify-between">
+                                <span>Fila ({batchImages.length})</span>
+                                {batchStatus === 'processing' && <span className="text-blue-600 flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Processando...</span>}
+                                {batchStatus === 'pausing' && <span className="text-amber-600 flex items-center gap-1"><Clock size={10} className="animate-spin"/> Pausando...</span>}
+                            </h3>
+                            
+                            {batchImages.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+                                    <Images size={48} className="mb-2"/>
+                                    <p className="text-sm">Nenhuma imagem na fila</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                    {batchImages.map((img) => (
+                                        <div key={img.id} className={`relative group rounded-lg overflow-hidden border bg-white aspect-square shadow-sm ${img.status === 'error' ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'}`}>
+                                            <img src={img.preview} alt="Preview" className="w-full h-full object-cover" />
+                                            <button onClick={() => removeBatchImage(img.id)} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} className="absolute top-1 right-1 bg-white/80 p-1 rounded-full text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"><X size={14}/></button>
+                                            
+                                            {img.status === 'error' && (
+                                                <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center p-2 text-center">
+                                                    <span className="text-xs font-bold text-white bg-red-600 px-2 py-1 rounded shadow-sm truncate max-w-full">{img.errorMsg || 'Erro'}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* CONSOLE / LOGS (SEPARADO E CORRIGIDO) */}
+                        <div className="w-full lg:w-1/3 flex flex-col h-[500px]">
+                            <div className="bg-slate-900 rounded-xl overflow-hidden shadow-inner flex flex-col h-full">
+                                {/* Header no TOPO */}
+                                <div className="p-3 bg-slate-800 border-b border-slate-700 text-gray-400 text-xs font-bold flex items-center gap-2">
+                                    <Terminal size={14}/> Console de Imagens
+                                </div>
+                                {/* Logs rolando abaixo */}
+                                <div className="flex-1 p-4 overflow-y-auto font-mono text-xs text-gray-300 space-y-1">
+                                    {batchLogs.length === 0 && <span className="opacity-50">Aguardando logs de imagem...</span>}
+                                    {batchLogs.map((log, i) => (
+                                        <div key={i} className={`mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-amber-400' : 'text-blue-300'}`}>
+                                            <span className="opacity-50 mr-2">[{log.time}]</span>
+                                            {log.message}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1528,7 +1879,7 @@ export default function App() {
                                 </div>
                             </div>
 
-                            {/* TERMINAL DE LOGS */}
+                            {/* TERMINAL DE LOGS DO PDF (AGORA SEPARADO) */}
                             <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-gray-300 h-48 overflow-y-auto shadow-inner flex flex-col-reverse">
                                 {processingLogs.length === 0 && <span className="opacity-50">Aguardando logs...</span>}
                                 {processingLogs.map((log, i) => (
@@ -1537,7 +1888,7 @@ export default function App() {
                                         {log.message}
                                     </div>
                                 ))}
-                                <div className="text-gray-500 border-b border-gray-800 mb-2 pb-1 flex items-center gap-2 sticky top-0 bg-slate-900"><Terminal size={12}/> Console de Execução</div>
+                                <div className="text-gray-500 border-b border-gray-800 mb-2 pb-1 flex items-center gap-2 sticky top-0 bg-slate-900"><Terminal size={12}/> Console de PDF</div>
                             </div>
                         </div>
                     )}
