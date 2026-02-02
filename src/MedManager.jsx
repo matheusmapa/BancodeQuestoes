@@ -50,7 +50,6 @@ function NotificationToast({ notification, onClose }) {
   const [isHovered, setIsHovered] = useState(false);
   useEffect(() => {
     if (!notification || isHovered) return;
-    // Tempo reduzido para 3 segundos (3000ms)
     const timer = setTimeout(() => onClose(), 3000);
     return () => clearTimeout(timer);
   }, [notification, isHovered, onClose]);
@@ -99,8 +98,8 @@ export default function MedManager() {
   const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
 
   // Filter State (Students)
-  const [studentStatusFilter, setStudentStatusFilter] = useState('all'); // 'all', 'active', 'expired'
-  const [studentRoleFilter, setStudentRoleFilter] = useState('all'); // 'all', 'admin', 'student'
+  const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
+  const [studentRoleFilter, setStudentRoleFilter] = useState('all'); 
   
   // Edit State (Questions)
   const [editingQuestion, setEditingQuestion] = useState(null);
@@ -145,7 +144,6 @@ export default function MedManager() {
       try {
           await signOut(auth);
           setUser(null);
-          // Limpa estados locais ao sair
           setQuestions([]);
           setReports([]);
           setStudents([]);
@@ -262,18 +260,15 @@ export default function MedManager() {
       const lower = searchTerm.toLowerCase();
       
       return students.filter(s => {
-          // Busca textual
           const matchesSearch = 
               s.name?.toLowerCase().includes(lower) || 
               s.email?.toLowerCase().includes(lower) || 
               s.id?.toLowerCase().includes(lower);
           
-          // Filtro de Role
           const matchesRole = studentRoleFilter === 'all' || s.role === studentRoleFilter;
 
-          // Filtro de Status (Assinatura)
-          // Se for Admin, ignora o status
-          if (s.role === 'admin') return matchesSearch && matchesRole;
+          // Admins não entram no filtro de status
+          if (studentStatusFilter !== 'all' && s.role === 'admin') return false;
 
           const isPremium = s.subscriptionUntil && new Date(s.subscriptionUntil) > new Date();
           let matchesStatus = true;
@@ -286,7 +281,7 @@ export default function MedManager() {
 
   const showNotification = (type, text) => setNotification({ type, text });
 
-  // --- HELPERS ---
+  // --- HELPER FUNCTIONS ---
   const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
   
   const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
@@ -297,6 +292,24 @@ export default function MedManager() {
       return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
   };
   
+  const getReportDetails = (r) => {
+      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
+          return (
+              <div className="flex gap-4 mt-2">
+                 <div className="flex flex-col">
+                     <span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span>
+                     <span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span>
+                 </div>
+                 <div className="flex flex-col">
+                     <span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span>
+                     <span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span>
+                 </div>
+              </div>
+          );
+      }
+      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
+  };
+
   const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
 
   // --- ACTIONS (USER MANAGEMENT) ---
@@ -336,18 +349,13 @@ export default function MedManager() {
   const handleAdd30Days = async (student) => {
       const now = new Date();
       let newDate = new Date();
-      
       if (student.subscriptionUntil) {
           const currentExpiry = new Date(student.subscriptionUntil);
-          // Se ainda não venceu, soma 30 dias na data de vencimento
           if (currentExpiry > now) {
               newDate = new Date(currentExpiry);
           }
       }
-      
-      // Adiciona 30 dias
       newDate.setDate(newDate.getDate() + 30);
-      
       try {
           await updateDoc(doc(db, "users", student.id), { subscriptionUntil: newDate.toISOString() });
           showNotification('success', '+30 dias adicionados com sucesso!');
@@ -469,7 +477,7 @@ export default function MedManager() {
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1">
                   <Database /> MedManager
               </div>
-              <p className="text-xs text-gray-400">Gestão de Acervo v3.4</p>
+              <p className="text-xs text-gray-400">Gestão de Acervo v3.6</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
