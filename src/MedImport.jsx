@@ -9,7 +9,7 @@ import {
   SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter
 } from 'lucide-react';
 
-// --- FIREBASE IMPORTS ---
+// --- FIREBASE IMPORTS M---
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
