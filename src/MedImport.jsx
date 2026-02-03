@@ -11,17 +11,15 @@ import {
 
 // --- FIREBASE IMPORTS ---
 import { 
-  // ... (outros imports firestore/auth) ...
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
 } from "firebase/firestore";
 import { 
-  getStorage, ref, uploadBytes, getDownloadURL // <--- Import do Storage
+  getStorage, ref, uploadBytes, getDownloadURL 
 } from "firebase/storage"; 
-
-// ... (logo abaixo de init app)
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-const storage = getStorage(app); // <--- Inicializa Storage
+import { 
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+} from "firebase/auth";
+import { initializeApp } from "firebase/app"; // Certifique-se que este import está aqui
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
 const loadPdfJs = async () => {
