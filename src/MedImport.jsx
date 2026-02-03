@@ -50,9 +50,11 @@ const firebaseConfig = {
   measurementId: "G-XNHXB5BCGF"
 };
 
+// --- INICIALIZAÇÃO (APENAS UM BLOCO DESSE) ---
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const storage = getStorage(app);
 
 // --- DADOS DE REFERÊNCIA ---
 const areasBase = [
