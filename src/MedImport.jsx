@@ -232,7 +232,11 @@ export default function App() {
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
   
   // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
-  const [activeFilters, setActiveFilters] = useState(['all']); // Array em vez de string
+  // ... outros estados
+  const [activeFilters, setActiveFilters] = useState(['all']); 
+  // ADICIONE ESTA LINHA:
+  const [filterLogic, setFilterLogic] = useState('OR'); // 'OR' (Soma) ou 'AND' (Restritivo)
+  
 
   // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
@@ -545,20 +549,28 @@ export default function App() {
     if (activeFilters.includes('all')) return parsedQuestions;
     
     return parsedQuestions.filter(q => {
-      // Verifica condições ativas
-      const matchesVerified = activeFilters.includes('verified') && q.verificationStatus === 'verified';
-      const matchesSuspicious = activeFilters.includes('suspicious') && q.verificationStatus === 'suspicious';
-      const matchesSource = activeFilters.includes('source') && q.sourceFound;
-      const matchesNoSource = activeFilters.includes('no_source') && !q.sourceFound; // NOVA
-      const matchesDuplicates = activeFilters.includes('duplicates') && q.isDuplicate;
-
-      // Se bater em QUALQUER um, passa (Lógica OR)
-      const isMatch = matchesVerified || matchesSuspicious || matchesSource || matchesNoSource || matchesDuplicates;
-      
-      // Mas se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde
+      // Regra Global: Se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde sempre
       if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
 
-      return isMatch;
+      // Define as condições baseadas nos filtros ativos
+      // Mapeia cada filtro ativo para um booleano (se a questão atende aquele filtro específico)
+      const results = activeFilters.map(filterKey => {
+          if (filterKey === 'verified') return q.verificationStatus === 'verified';
+          if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
+          if (filterKey === 'source') return !!q.sourceFound;
+          if (filterKey === 'no_source') return !q.sourceFound;
+          if (filterKey === 'duplicates') return !!q.isDuplicate;
+          return true; // Fallback
+      });
+
+      // Aplica a Lógica Selecionada
+      if (filterLogic === 'AND') {
+          // Lógica E: A questão precisa atender TODAS as condições dos filtros ativos
+          return results.every(r => r === true);
+      } else {
+          // Lógica OU (Padrão): A questão precisa atender PELO MENOS UMA condição
+          return results.some(r => r === true);
+      }
     });
   };
 
@@ -2302,10 +2314,23 @@ export default function App() {
                         <div className="flex flex-col gap-2">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros Ativos</span>
+                                
+                                {/* --- NOVO: SWITCH DE LÓGICA --- */}
+                                <button 
+                                    onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
+                                    className={`text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
+                                    title={filterLogic === 'AND' ? "Mostra questões que têm TODAS as características" : "Mostra questões que têm QUALQUER uma das características"}
+                                >
+                                    {filterLogic === 'AND' ? <ToggleRight size={14}/> : <ToggleLeft size={14}/>}
+                                    Lógica: {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
+                                </button>
+                                {/* ------------------------------ */}
+
                                 <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
                             </div>
                             
                             <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                                {/* ... MANTENHA OS BOTÕES DE FILTRO EXISTENTES AQUI ... */}
                                 <button onClick={() => toggleFilter('all')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>Todas</button>
                                 <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
                                 <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
