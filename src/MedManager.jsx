@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
   AlertCircle, Database, List, ArrowLeft, LogOut, Loader2, 
   CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
-  Shield, Award, UserPlus, ExternalLink, HelpCircle
+  Shield, Award, UserPlus, ExternalLink, HelpCircle, 
+  RotateCcw, AlertOctagon, Eraser // Novos ícones importados
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp, deleteApp } from "firebase/app"; // Adicionado deleteApp
+import { initializeApp, deleteApp } from "firebase/app"; 
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
@@ -17,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  createUserWithEmailAndPassword, updateProfile // Adicionados para criar usuários
+  createUserWithEmailAndPassword, updateProfile 
 } from "firebase/auth";
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -90,7 +91,7 @@ export default function MedManager() {
   
   // Data State
   const [questions, setQuestions] = useState([]);
-  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); // Nova lista para prioridades
+  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); 
   const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
@@ -134,6 +135,10 @@ export default function MedManager() {
   const [notification, setNotification] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null); 
   const [rejectReportModal, setRejectReportModal] = useState(null);
+
+  // --- NOVO: Modal de Confirmação em Lote ---
+  const [confirmModal, setConfirmModal] = useState(null);
+  const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   
   // Login Inputs
   const [email, setEmail] = useState('');
@@ -177,221 +182,99 @@ export default function MedManager() {
       const counts = {}; reports.forEach(r => { counts[r.questionId] = (counts[r.questionId] || 0) + 1; }); return counts;
   }, [reports]);
 
-  // Busca automática das questões reportadas que não estão na tela
   useEffect(() => {
     const fetchMissing = async () => {
         if (reports.length === 0) return;
-        
         const reportedIds = Object.keys(reportsCountByQuestion);
-        // IDs que têm report mas não estão nem na lista principal nem na lista extra
-        const missingIds = reportedIds.filter(id => 
-            !questions.find(q => q.id === id) && 
-            !extraReportedQuestions.find(q => q.id === id)
-        );
-
+        const missingIds = reportedIds.filter(id => !questions.find(q => q.id === id) && !extraReportedQuestions.find(q => q.id === id));
         if (missingIds.length === 0) return;
-
         const newDocs = [];
-        // Limitando a 20 requests paralelos para não sobrecarregar
         const idsToFetch = missingIds.slice(0, 20); 
-
         await Promise.all(idsToFetch.map(async (id) => {
-            try {
-                const snap = await getDoc(doc(db, "questions", id));
-                if (snap.exists()) {
-                    newDocs.push({ id: snap.id, ...snap.data() });
-                }
-            } catch (e) { console.error("Erro fetch reported q", id, e); }
+            try { const snap = await getDoc(doc(db, "questions", id)); if (snap.exists()) { newDocs.push({ id: snap.id, ...snap.data() }); } } catch (e) { console.error(e); }
         }));
-
-        if (newDocs.length > 0) {
-            setExtraReportedQuestions(prev => [...prev, ...newDocs]);
-        }
+        if (newDocs.length > 0) { setExtraReportedQuestions(prev => [...prev, ...newDocs]); }
     };
-    
-    const timer = setTimeout(fetchMissing, 1000);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(fetchMissing, 1000); return () => clearTimeout(timer);
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS ---
+  // --- LOAD DATA FUNCTIONS ---
   const loadQuestions = async (reset = false) => {
       if (loadingQuestions) return;
       if (!reset && !hasMoreQuestions) return;
-
-      setLoadingQuestions(true);
-      setMissingIndexLink(null); // Limpa erro anterior
-
+      setLoadingQuestions(true); setMissingIndexLink(null);
       try {
           let q = collection(db, "questions");
           let constraints = [orderBy("createdAt", "desc")];
-
-          // Filtros de Servidor
           if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
           if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
-
-          // Paginação
-          if (!reset && lastQuestionDoc) {
-              constraints.push(startAfter(lastQuestionDoc));
-          }
-          
+          if (!reset && lastQuestionDoc) constraints.push(startAfter(lastQuestionDoc));
           constraints.push(limit(ITEMS_PER_PAGE));
-          
           const finalQuery = query(q, ...constraints);
           const snapshot = await getDocs(finalQuery);
-          
           const newQuestions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-          
-          if (reset) {
-              setQuestions(newQuestions);
-          } else {
-              setQuestions(prev => [...prev, ...newQuestions]);
-          }
-
+          if (reset) { setQuestions(newQuestions); } else { setQuestions(prev => [...prev, ...newQuestions]); }
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
-
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
           if (error.message.includes("requires an index")) {
               const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
               const link = linkMatch ? linkMatch[0] : null;
               setMissingIndexLink(link);
-              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro. Clique no link para criar.', link);
-          } else {
-              showNotification('error', 'Erro ao carregar dados: ' + error.message);
-          }
-      } finally {
-          setLoadingQuestions(false);
-      }
+              showNotification('error', 'Índice ausente! Clique no link para criar.', link);
+          } else { showNotification('error', 'Erro ao carregar dados: ' + error.message); }
+      } finally { setLoadingQuestions(false); }
   };
 
-  // --- SERVER SIDE SEARCH ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
-      if (!term) {
-          loadQuestions(true);
-          return;
-      }
-      setIsSearchingServer(true);
-      setMissingIndexLink(null);
+      if (!term) { loadQuestions(true); return; }
+      setIsSearchingServer(true); setMissingIndexLink(null);
       let foundDocs = [];
-
       try {
-          try {
-            const docRef = doc(db, "questions", term);
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                foundDocs.push({ id: docSnap.id, ...docSnap.data() });
-            }
-          } catch(e) { }
-
+          try { const docRef = doc(db, "questions", term); const docSnap = await getDoc(docRef); if (docSnap.exists()) { foundDocs.push({ id: docSnap.id, ...docSnap.data() }); } } catch(e) { }
           if (foundDocs.length === 0) {
-              const qText = query(
-                  collection(db, "questions"),
-                  orderBy("text"),
-                  startAt(term),
-                  endAt(term + '\uf8ff'),
-                  limit(5)
-              );
+              const qText = query(collection(db, "questions"), orderBy("text"), startAt(term), endAt(term + '\uf8ff'), limit(5));
               const textSnap = await getDocs(qText);
-              textSnap.forEach(d => {
-                  if (!foundDocs.some(f => f.id === d.id)) {
-                      foundDocs.push({ id: d.id, ...d.data() });
-                  }
-              });
+              textSnap.forEach(d => { if (!foundDocs.some(f => f.id === d.id)) { foundDocs.push({ id: d.id, ...d.data() }); } });
           }
-
-          if (foundDocs.length > 0) {
-              setQuestions(foundDocs); 
-              setHasMoreQuestions(false); 
-              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s) no servidor!`);
-          } else {
-              showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
-          }
+          if (foundDocs.length > 0) { setQuestions(foundDocs); setHasMoreQuestions(false); showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`); } 
+          else { showNotification('error', 'Nada encontrado. Cole o início exato do enunciado.'); }
       } catch (error) {
           console.error("Erro na busca:", error);
           if (error.message.includes("requires an index")) {
             const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
             const link = linkMatch ? linkMatch[0] : null;
             setMissingIndexLink(link);
-            showNotification('error', 'Falta índice para busca de texto! Clique no link acima.', link);
-          } else {
-            showNotification('error', 'Erro ao buscar no servidor.');
-          }
-      } finally {
-          setIsSearchingServer(false);
-      }
+            showNotification('error', 'Falta índice para busca de texto!', link);
+          } else { showNotification('error', 'Erro ao buscar no servidor.'); }
+      } finally { setIsSearchingServer(false); }
   };
 
-  const handleKeyDownSearch = (e) => {
-      if (e.key === 'Enter') {
-          handleServerSearch();
-      }
-  };
-
-  // --- LOAD STUDENTS ---
   const loadStudents = async (reset = false) => {
       if (loadingStudents) return;
       if (!reset && !hasMoreStudents) return;
-
       setLoadingStudents(true);
       try {
           let q = collection(db, "users");
           let constraints = [orderBy("name")]; 
-
-          if (studentRoleFilter !== 'all') {
-              constraints.push(where("role", "==", studentRoleFilter));
-          }
-
-          if (!reset && lastStudentDoc) {
-              constraints.push(startAfter(lastStudentDoc));
-          }
-
+          if (studentRoleFilter !== 'all') constraints.push(where("role", "==", studentRoleFilter));
+          if (!reset && lastStudentDoc) constraints.push(startAfter(lastStudentDoc));
           constraints.push(limit(ITEMS_PER_PAGE));
-
           const finalQuery = query(q, ...constraints);
           const snapshot = await getDocs(finalQuery);
-
           const newStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-
-          if (reset) {
-              setStudents(newStudents);
-          } else {
-              setStudents(prev => [...prev, ...newStudents]);
-          }
-
+          if (reset) { setStudents(newStudents); } else { setStudents(prev => [...prev, ...newStudents]); }
           setLastStudentDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreStudents(snapshot.docs.length === ITEMS_PER_PAGE);
-
-      } catch (error) {
-          console.error(error);
-          showNotification('error', 'Erro ao carregar alunos.');
-      } finally {
-          setLoadingStudents(false);
-      }
+      } catch (error) { console.error(error); showNotification('error', 'Erro ao carregar alunos.'); } finally { setLoadingStudents(false); }
   };
 
-  useEffect(() => {
-      if (activeView === 'students' && students.length === 0) {
-          loadStudents(true);
-      }
-  }, [activeView]);
-
-  useEffect(() => {
-      if(user) {
-          const timer = setTimeout(() => {
-             if(!searchTerm) loadQuestions(true);
-          }, 500);
-          return () => clearTimeout(timer);
-      }
-  }, [selectedArea, selectedTopic]); 
-
-  useEffect(() => {
-      if(user && activeView === 'students') {
-          loadStudents(true);
-      }
-  }, [studentRoleFilter]);
+  useEffect(() => { if (activeView === 'students' && students.length === 0) loadStudents(true); }, [activeView]);
+  useEffect(() => { if(user) { const timer = setTimeout(() => { if(!searchTerm) loadQuestions(true); }, 500); return () => clearTimeout(timer); } }, [selectedArea, selectedTopic]); 
+  useEffect(() => { if(user && activeView === 'students') loadStudents(true); }, [studentRoleFilter]);
 
   // --- HELPER DATA ---
   useEffect(() => {
@@ -401,65 +284,34 @@ export default function MedManager() {
         const newProfiles = { ...userProfiles };
         const toFetch = [];
         uids.forEach(uid => { if (!newProfiles[uid]) toFetch.push(uid); });
-
         if (toFetch.length === 0) return;
-
-        await Promise.all(toFetch.map(async (uid) => {
-            try {
-                const snap = await getDoc(doc(db, "users", uid));
-                if (snap.exists()) { newProfiles[uid] = snap.data(); } 
-                else { newProfiles[uid] = { name: 'Desconhecido', whatsapp: '' }; }
-            } catch (e) { console.error("Erro user", uid, e); }
-        }));
+        await Promise.all(toFetch.map(async (uid) => { try { const snap = await getDoc(doc(db, "users", uid)); if (snap.exists()) { newProfiles[uid] = snap.data(); } else { newProfiles[uid] = { name: 'Desconhecido', whatsapp: '' }; } } catch (e) { } }));
         setUserProfiles(newProfiles);
       };
       fetchReporters();
   }, [reports]);
 
-  // --- FILTERS MEMO & SORTING ---
+  // --- FILTERS & SORTING ---
   const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
   const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
   
   const filteredQuestions = useMemo(() => {
-      // 1. Merge: Junta a lista normal + a lista de questões com report (sem duplicatas)
       const allQuestionsMap = new Map();
       questions.forEach(q => allQuestionsMap.set(q.id, q));
       extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
-      
       const allQuestions = Array.from(allQuestionsMap.values());
-
-      // 2. Filtra
       let result = allQuestions.filter(q => {
-          const matchesSearch = searchTerm ? (
-              q.text.toLowerCase().includes(searchTerm.toLowerCase()) || 
-              q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-              q.id === searchTerm.trim()
-          ) : true;
-          
-          const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
-          const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-          const matchesInstitution = selectedInstitution === 'Todas' || q.institution === selectedInstitution;
-          const matchesYear = selectedYear === 'Todos' || String(q.year) === selectedYear;
-          return matchesSearch && matchesArea && matchesTopic && matchesInstitution && matchesYear;
+          const matchesSearch = searchTerm ? (q.text.toLowerCase().includes(searchTerm.toLowerCase()) || q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) || q.id === searchTerm.trim()) : true;
+          return matchesSearch && (selectedArea === 'Todas' || q.area === selectedArea) && (selectedTopic === 'Todos' || q.topic === selectedTopic) && (selectedInstitution === 'Todas' || q.institution === selectedInstitution) && (selectedYear === 'Todos' || String(q.year) === selectedYear);
       });
-
-      // 3. Ordena: Quem tem Report primeiro (maior número), depois por data de criação
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
-
-          // Se um tem report e o outro não, ou se os counts são diferentes
-          if (countA > 0 || countB > 0) {
-              if (countA !== countB) return countB - countA; // Maior report primeiro
-          }
-
-          // Desempate ou lista normal: Data de criação (mais recente primeiro)
-          // createdAt pode ser string ISO ou objeto Firestore, garantindo comparação segura
+          if (countA > 0 || countB > 0) { if (countA !== countB) return countB - countA; }
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
           return dateB - dateA;
       });
-
       return result;
   }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear]);
 
@@ -486,265 +338,142 @@ export default function MedManager() {
       });
   }, [students, searchTerm, activeView, studentStatusFilter]);
 
-
-  // --- ACTIONS ---
-  const handleLogout = async () => {
+  // --- BATCH ACTIONS (RESET & DELETE) ---
+  
+  // 1. Resetar APENAS Questões/Simulados (Mantém Streak)
+  const handleResetStudentQuestions = async () => {
+      if (!confirmModal || !confirmModal.data) return;
+      const studentId = confirmModal.data.id;
+      setIsProcessingBatch(true);
       try {
-          await signOut(auth);
-          setUser(null);
-          setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]);
-          setActiveView('questions');
-      } catch (error) { console.error(error); }
+          const simsRef = collection(db, "users", studentId, "simulations");
+          const simsSnap = await getDocs(simsRef);
+          const deleteBatch = writeBatch(db);
+          let count = 0;
+          simsSnap.docs.forEach((doc) => { deleteBatch.delete(doc.ref); count++; });
+
+          // Reset Parcial (Mantém streak e questionsToday se for hoje)
+          // Mas para limpar "Questões", zeramos totalAnswers e correctAnswers
+          const statsRef = doc(db, "users", studentId, "stats", "main");
+          deleteBatch.update(statsRef, {
+              correctAnswers: 0,
+              totalAnswers: 0
+              // streak: NÃO MEXE
+              // questionsToday: NÃO MEXE
+          });
+
+          await deleteBatch.commit();
+          showNotification('success', `Questões resetadas para ${confirmModal.data.name}. Streak mantido.`);
+          setConfirmModal(null);
+      } catch (error) {
+           // Se der erro (ex: documento de stats não existe), tenta setar
+           console.error(error);
+           showNotification('error', 'Erro parcial: ' + error.message);
+      } finally { setIsProcessingBatch(false); }
   };
 
-  const handleGoToReports = (questionId) => {
-      setReportFilterQuestionId(questionId);
-      setSearchTerm('');
-      setActiveView('reports');
-  };
-
-  const handleClearReportFilter = () => setReportFilterQuestionId(null);
-  const handleClearQuestionFilters = () => { setSearchTerm(''); setSelectedArea('Todas'); setSelectedTopic('Todos'); setSelectedInstitution('Todas'); setSelectedYear('Todos'); };
-
-  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
-  const handleCreateUser = async (e) => {
-      e.preventDefault();
-      setIsSaving(true);
-      const formData = new FormData(e.target);
-      const userData = Object.fromEntries(formData);
-      
-      const appName = `SecondaryApp-${Date.now()}`;
-      let secondaryApp;
-
+  // 2. Resetar TUDO (Zera Streak)
+  const handleResetStudentFull = async () => {
+      if (!confirmModal || !confirmModal.data) return;
+      const studentId = confirmModal.data.id;
+      setIsProcessingBatch(true);
       try {
-          // 1. Inicializa um "App Secundário" para criar o user SEM deslogar o admin
-          secondaryApp = initializeApp(firebaseConfig, appName);
-          const secondaryAuth = getAuth(secondaryApp);
+          const simsRef = collection(db, "users", studentId, "simulations");
+          const simsSnap = await getDocs(simsRef);
+          const deleteBatch = writeBatch(db);
+          let count = 0;
+          simsSnap.docs.forEach((doc) => { deleteBatch.delete(doc.ref); count++; });
 
-          // 2. Cria o login no Firebase Auth
-          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
-          const newUser = userCredential.user;
-          
-          // 3. Atualiza o nome do usuário no perfil do Auth
-          await updateProfile(newUser, { displayName: userData.name });
-
-          const newUserId = newUser.uid; // Pega o UID real gerado pelo Auth
-          
-          const newUserObj = {
-              id: newUserId,
-              name: userData.name,
-              email: userData.email,
-              role: userData.role || 'student',
-              createdAt: new Date().toISOString(),
-              subscriptionUntil: userData.subscriptionUntil || null,
-              whatsapp: userData.whatsapp || '',
-              dailyGoal: 50, // Padrão
-              // Stats básicos no documento principal (opcional, mas bom para lista rápida)
-              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
-          };
-          
-          // 4. Salva os dados no Firestore usando o UID real
-          await setDoc(doc(db, "users", newUserId), newUserObj);
-          
-          // 5. Inicializa a subcoleção de estatísticas (padrão do app)
-          await setDoc(doc(db, "users", newUserId, "stats", "main"), {
+          // Reset Total
+          const statsRef = doc(db, "users", studentId, "stats", "main");
+          deleteBatch.set(statsRef, {
               correctAnswers: 0,
               totalAnswers: 0,
               questionsToday: 0,
               streak: 0,
               lastStudyDate: null
-          });
-          
-          // Atualiza lista local
+          }, { merge: true });
+
+          await deleteBatch.commit();
+          showNotification('success', `Histórico COMPLETO de ${confirmModal.data.name} apagado.`);
+          setConfirmModal(null);
+      } catch (error) { console.error(error); showNotification('error', 'Erro: ' + error.message); } finally { setIsProcessingBatch(false); }
+  };
+
+  // 3. Deletar TODAS as Questões do Banco
+  const handleDeleteAllQuestions = async () => {
+      setIsProcessingBatch(true);
+      try {
+          let deletedTotal = 0;
+          while (true) {
+              const q = query(collection(db, "questions"), limit(500));
+              const snapshot = await getDocs(q);
+              if (snapshot.size === 0) break;
+              const batch = writeBatch(db);
+              snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+              await batch.commit();
+              deletedTotal += snapshot.size;
+          }
+          setQuestions([]); setHasMoreQuestions(false);
+          showNotification('success', `Banco de dados limpo! ${deletedTotal} questões removidas.`);
+          setConfirmModal(null);
+      } catch (error) { console.error(error); showNotification('error', 'Erro crítico: ' + error.message); } finally { setIsProcessingBatch(false); }
+  };
+
+  // --- ACTIONS ---
+  const handleLogout = async () => { try { await signOut(auth); setUser(null); setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]); setActiveView('questions'); } catch (error) { console.error(error); } };
+  const handleGoToReports = (questionId) => { setReportFilterQuestionId(questionId); setSearchTerm(''); setActiveView('reports'); };
+  const handleClearReportFilter = () => setReportFilterQuestionId(null);
+  const handleClearQuestionFilters = () => { setSearchTerm(''); setSelectedArea('Todas'); setSelectedTopic('Todos'); setSelectedInstitution('Todas'); setSelectedYear('Todos'); };
+
+  const handleCreateUser = async (e) => {
+      e.preventDefault(); setIsSaving(true);
+      const formData = new FormData(e.target); const userData = Object.fromEntries(formData);
+      const appName = `SecondaryApp-${Date.now()}`; let secondaryApp;
+      try {
+          secondaryApp = initializeApp(firebaseConfig, appName); const secondaryAuth = getAuth(secondaryApp);
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
+          const newUser = userCredential.user;
+          await updateProfile(newUser, { displayName: userData.name });
+          const newUserId = newUser.uid; 
+          const newUserObj = { id: newUserId, name: userData.name, email: userData.email, role: userData.role || 'student', createdAt: new Date().toISOString(), subscriptionUntil: userData.subscriptionUntil || null, whatsapp: userData.whatsapp || '', dailyGoal: 50, stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 } };
+          await setDoc(doc(db, "users", newUserId), newUserObj);
+          await setDoc(doc(db, "users", newUserId, "stats", "main"), { correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null });
           setStudents(prev => [newUserObj, ...prev]);
-          
-          showNotification('success', 'Aluno criado com acesso ao sistema!');
-          setIsCreatingUser(false);
-      } catch (error) {
-          console.error(error);
-          if (error.code === 'auth/email-already-in-use') {
-              showNotification('error', 'Este email já está em uso.');
-          } else {
-              showNotification('error', 'Erro ao criar: ' + error.message);
-          }
-      } finally {
-          // 6. Limpa o app secundário da memória
-          if (secondaryApp) {
-              try {
-                  await deleteApp(secondaryApp); 
-              } catch (e) {
-                  console.error("Erro ao limpar app secundário", e);
-              }
-          }
-          setIsSaving(false);
-      }
+          showNotification('success', 'Aluno criado!'); setIsCreatingUser(false);
+      } catch (error) { showNotification('error', 'Erro: ' + error.message); } finally { if (secondaryApp) try { await deleteApp(secondaryApp); } catch (e) {} setIsSaving(false); }
   };
 
   const updateLocalList = (listType, id, newData) => {
-      if (listType === 'questions') {
-          setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
-          setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
-      } else if (listType === 'students') {
-          setStudents(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
-      }
+      if (listType === 'questions') { setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item)); setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item)); } 
+      else if (listType === 'students') { setStudents(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item)); }
   };
-
   const removeLocalList = (listType, id) => {
-      if (listType === 'questions') {
-          setQuestions(prev => prev.filter(item => item.id !== id));
-          setExtraReportedQuestions(prev => prev.filter(item => item.id !== id));
-      } else if (listType === 'students') {
-          setStudents(prev => prev.filter(item => item.id !== id));
-      }
+      if (listType === 'questions') { setQuestions(prev => prev.filter(item => item.id !== id)); setExtraReportedQuestions(prev => prev.filter(item => item.id !== id)); } 
+      else if (listType === 'students') { setStudents(prev => prev.filter(item => item.id !== id)); }
   };
-
-  const handleInlineUserUpdate = async (id, field, value) => {
-      try {
-          await updateDoc(doc(db, "users", id), { [field]: value });
-          updateLocalList('students', id, { [field]: value }); 
-          showNotification('success', 'Atualizado com sucesso!');
-      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
-  };
-
+  const handleInlineUserUpdate = async (id, field, value) => { try { await updateDoc(doc(db, "users", id), { [field]: value }); updateLocalList('students', id, { [field]: value }); showNotification('success', 'Atualizado!'); } catch (error) { showNotification('error', 'Erro: ' + error.message); } };
   const handleAdd30Days = async (student) => {
-      const now = new Date(); let newDate = new Date();
-      if (student.subscriptionUntil) { const currentExpiry = new Date(student.subscriptionUntil); if (currentExpiry > now) { newDate = new Date(currentExpiry); } }
-      newDate.setDate(newDate.getDate() + 30);
-      try {
-          const isoDate = newDate.toISOString();
-          await updateDoc(doc(db, "users", student.id), { subscriptionUntil: isoDate });
-          updateLocalList('students', student.id, { subscriptionUntil: isoDate });
-          showNotification('success', '+30 dias adicionados!');
-      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+      const now = new Date(); let newDate = new Date(); if (student.subscriptionUntil) { const currentExpiry = new Date(student.subscriptionUntil); if (currentExpiry > now) { newDate = new Date(currentExpiry); } } newDate.setDate(newDate.getDate() + 30);
+      try { const isoDate = newDate.toISOString(); await updateDoc(doc(db, "users", student.id), { subscriptionUntil: isoDate }); updateLocalList('students', student.id, { subscriptionUntil: isoDate }); showNotification('success', '+30 dias adicionados!'); } catch (error) { showNotification('error', 'Erro: ' + error.message); }
   };
-
-  const handleDeleteUser = async () => {
-      if (!deleteModal || !deleteModal.email) return; 
-      try {
-          await deleteDoc(doc(db, "users", deleteModal.id));
-          
-          // Tenta limpar subcoleções (embora exija delete recursivo ou Cloud Functions para limpeza total)
-          // Aqui fazemos o básico para a UI limpar
-          removeLocalList('students', deleteModal.id);
-          showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
-  };
-
-  const fetchUserStats = async (student) => {
-      setViewingUserStats({ ...student, loading: true });
-      try {
-          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
-          if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } 
-          else { setViewingUserStats({ ...student, stats: null, loading: false }); }
-      } catch (e) { console.error(e); setViewingUserStats({ ...student, stats: null, loading: false }); }
-  };
-
-  const handleSave = async (shouldResolveReport = false) => {
-      setIsSaving(true);
-      try {
-          const batch = writeBatch(db);
-          const { id, ...data } = editingQuestion;
-          batch.update(doc(db, "questions", id), data);
-          if (shouldResolveReport && associatedReport) {
-              batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() });
-          }
-          await batch.commit();
-          updateLocalList('questions', id, data);
-          showNotification('success', shouldResolveReport ? 'Salvo e resolvido!' : 'Atualizado!');
-          setEditingQuestion(null);
-          setAssociatedReport(null);
-      } catch (error) { console.error(error); showNotification('error', error.message); } finally { setIsSaving(false); }
-  };
-
-  const handleRejectReport = async () => {
-      if (!rejectReportModal) return;
-      try {
-          await deleteDoc(doc(db, "reports", rejectReportModal.id));
-          showNotification('success', 'Reporte excluído.');
-          if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); }
-          setRejectReportModal(null);
-      } catch (error) { showNotification('error', error.message); }
-  };
-
-  const handleOpenFromReport = async (report) => {
-      let question = questions.find(q => q.id === report.questionId) || extraReportedQuestions.find(q => q.id === report.questionId);
-      if (!question) {
-          try {
-              const qSnap = await getDoc(doc(db, "questions", report.questionId));
-              if (qSnap.exists()) { question = { id: qSnap.id, ...qSnap.data() }; }
-          } catch (e) { console.error(e); }
-      }
-      if (question) {
-          let qToEdit = { ...question };
-          if (report.category === "metadata_suggestion" || report.category === "suggestion_update") {
-              if (report.suggestedInstitution) qToEdit.institution = report.suggestedInstitution;
-              if (report.suggestedYear) qToEdit.year = report.suggestedYear;
-          }
-          setEditingQuestion(qToEdit);
-          setAssociatedReport(report);
-      } else { showNotification('error', 'Questão não encontrada.'); }
-  };
-
-  const handleDeleteQuestion = async () => {
-      if (!deleteModal || deleteModal.email) return; 
-      try {
-          await deleteDoc(doc(db, "questions", deleteModal.id));
-          removeLocalList('questions', deleteModal.id); 
-          showNotification('success', 'Questão excluída.');
-          if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); }
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
-  };
-
-  const copyToClipboard = async (text) => {
-      try {
-          const textArea = document.createElement("textarea"); textArea.value = text;
-          textArea.style.position = "fixed"; textArea.style.left = "-9999px";
-          document.body.appendChild(textArea); textArea.focus(); textArea.select();
-          document.execCommand('copy'); document.body.removeChild(textArea);
-          showNotification('success', 'Copiado!');
-      } catch (err) { showNotification('error', 'Erro ao copiar.'); }
-  };
+  const handleDeleteUser = async () => { if (!deleteModal || !deleteModal.email) return; try { await deleteDoc(doc(db, "users", deleteModal.id)); removeLocalList('students', deleteModal.id); showNotification('success', 'Dados do aluno excluídos.'); setDeleteModal(null); } catch (error) { showNotification('error', 'Erro ao excluir.'); } };
+  const fetchUserStats = async (student) => { setViewingUserStats({ ...student, loading: true }); try { const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main")); if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } else { setViewingUserStats({ ...student, stats: null, loading: false }); } } catch (e) { setViewingUserStats({ ...student, stats: null, loading: false }); } };
+  const handleSave = async (shouldResolveReport = false) => { setIsSaving(true); try { const batch = writeBatch(db); const { id, ...data } = editingQuestion; batch.update(doc(db, "questions", id), data); if (shouldResolveReport && associatedReport) { batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() }); } await batch.commit(); updateLocalList('questions', id, data); showNotification('success', shouldResolveReport ? 'Salvo e resolvido!' : 'Atualizado!'); setEditingQuestion(null); setAssociatedReport(null); } catch (error) { showNotification('error', error.message); } finally { setIsSaving(false); } };
+  const handleRejectReport = async () => { if (!rejectReportModal) return; try { await deleteDoc(doc(db, "reports", rejectReportModal.id)); showNotification('success', 'Reporte excluído.'); if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); } setRejectReportModal(null); } catch (error) { showNotification('error', error.message); } };
+  const handleOpenFromReport = async (report) => { let question = questions.find(q => q.id === report.questionId) || extraReportedQuestions.find(q => q.id === report.questionId); if (!question) { try { const qSnap = await getDoc(doc(db, "questions", report.questionId)); if (qSnap.exists()) { question = { id: qSnap.id, ...qSnap.data() }; } } catch (e) {} } if (question) { let qToEdit = { ...question }; if (report.category === "metadata_suggestion" || report.category === "suggestion_update") { if (report.suggestedInstitution) qToEdit.institution = report.suggestedInstitution; if (report.suggestedYear) qToEdit.year = report.suggestedYear; } setEditingQuestion(qToEdit); setAssociatedReport(report); } else { showNotification('error', 'Questão não encontrada.'); } };
+  const handleDeleteQuestion = async () => { if (!deleteModal || deleteModal.email) return; try { await deleteDoc(doc(db, "questions", deleteModal.id)); removeLocalList('questions', deleteModal.id); showNotification('success', 'Questão excluída.'); if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); } setDeleteModal(null); } catch (error) { showNotification('error', 'Erro ao excluir.'); } };
+  const copyToClipboard = async (text) => { try { await navigator.clipboard.writeText(text); showNotification('success', 'Copiado!'); } catch (err) { showNotification('error', 'Erro ao copiar.'); } };
 
   const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
   const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
-  const checkSubscriptionStatus = (d, role) => { 
-      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
-      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-  };
-  const getReportDetails = (r) => {
-      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
-          return (
-              <div className="flex gap-4 mt-2">
-                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span><span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span></div>
-                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span><span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span></div>
-              </div>
-          );
-      }
-      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
-  };
-
+  const checkSubscriptionStatus = (d, role) => { if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' }; if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; };
+  const getReportDetails = (r) => { if (r.category === "metadata_suggestion" || r.category === "suggestion_update") { return ( <div className="flex gap-4 mt-2"> <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span><span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span></div> <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span><span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span></div> </div> ); } return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>; };
   const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
   const pendingReportsCount = reports.length;
 
   if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
-  if (!user) return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center">
-              <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div>
-              <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1>
-              <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p>
-              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro de login: " + err.message)); }} className="space-y-4">
-                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
-                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
-                  <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button>
-              </form>
-          </div>
-          <NotificationToast notification={notification} onClose={() => setNotification(null)} />
-      </div>
-  );
+  if (!user) return ( <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans"> <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center"> <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div> <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1> <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p> <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro: " + err.message)); }} className="space-y-4"> <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/> <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/> <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button> </form> </div> <NotificationToast notification={notification} onClose={() => setNotification(null)} /> </div> );
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-slate-800 flex">
@@ -754,37 +483,25 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.4</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.5</p>
           </div>
-          
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
               <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
               <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
               <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
               
-              {/* FILTERS FOR QUESTIONS */}
               {activeView === 'questions' && (
                 <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
-                    <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros (Servidor)</label>
-                        <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
-                    </div>
-                    {missingIndexLink && (
-                        <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="block text-xs bg-red-100 text-red-700 p-2 rounded border border-red-200 hover:bg-red-200 transition-colors mb-2 font-bold animate-pulse">
-                            <AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui
-                        </a>
-                    )}
-                    <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca no banco de dados.</div>
+                    <div className="flex justify-between items-center mb-1"><label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros (Servidor)</label><button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button></div>
+                    {missingIndexLink && (<a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="block text-xs bg-red-100 text-red-700 p-2 rounded border border-red-200 hover:bg-red-200 transition-colors mb-2 font-bold animate-pulse"><AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui</a>)}
                     <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                     <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                    
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais</label>
                     <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
                     <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
                 </div>
               )}
 
-              {/* FILTERS FOR STUDENTS */}
               {activeView === 'students' && (
                 <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
                     <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
@@ -792,7 +509,6 @@ export default function MedManager() {
                 </div>
               )}
           </div>
-          
           <div className="p-4 border-t border-gray-100 space-y-1">
               <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors"><ArrowLeft size={16} /> Voltar ao App</button>
               <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors"><LogOut size={16} /> Sair</button>
@@ -801,8 +517,6 @@ export default function MedManager() {
 
       {/* MAIN CONTENT */}
       <main className="ml-64 flex-1 p-8 overflow-y-auto">
-          
-          {/* SEARCH HEADER */}
           <div className="flex items-center justify-between mb-8 gap-4">
               <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
                   {activeView === 'questions' && <><List className="text-blue-600"/> Questões</>}
@@ -811,38 +525,24 @@ export default function MedManager() {
               </h2>
               <div className="relative flex-1 max-w-md group">
                   <Search onClick={handleServerSearch} className="absolute left-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600 z-10" size={20} />
-                  <input 
-                    type="text" 
-                    placeholder="Cole o começo do enunciado ou o ID..." 
-                    value={searchTerm} 
-                    onChange={e => setSearchTerm(e.target.value)} 
-                    onKeyDown={handleKeyDownSearch}
-                    className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
-                  />
+                  <input type="text" placeholder="Cole o começo do enunciado ou o ID..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" />
                   {isSearchingServer && <div className="absolute right-4 top-3.5"><Loader2 className="animate-spin text-blue-600" size={20}/></div>}
-                  <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto"><HelpCircle size={16}/></div>
               </div>
               {activeView === 'students' && (
-                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
-                      <UserPlus size={20} /> Novo Aluno
-                  </button>
+                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105"><UserPlus size={20} /> Novo Aluno</button>
               )}
           </div>
 
           {/* VIEW: QUESTIONS */}
           {activeView === 'questions' && (
               <div className="space-y-4 pb-10">
-                  {missingIndexLink && (
-                       <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-4 mb-4">
-                           <AlertTriangle size={32} className="flex-shrink-0"/>
-                           <div>
-                               <h3 className="font-bold text-lg">Índice do Firebase Ausente</h3>
-                               <p className="text-sm mb-2">Para filtrar por Área e Tópico, o Firebase exige um índice composto.</p>
-                               <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-sm inline-flex items-center gap-2 hover:bg-red-700">
-                                   <ExternalLink size={16}/> Criar Índice Agora
-                               </a>
-                           </div>
-                       </div>
+                  {/* BOTÃO PERIGOSO DE LIMPAR BANCO */}
+                  {questions.length > 0 && (
+                      <div className="flex justify-end mb-2">
+                          <button onClick={() => setConfirmModal({ type: 'delete_all_questions' })} className="text-xs font-bold text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors border border-transparent hover:border-red-100">
+                              <AlertOctagon size={14}/> DELETAR TODAS AS QUESTÕES
+                          </button>
+                      </div>
                   )}
 
                   {loadingQuestions && questions.length === 0 ? (
@@ -856,13 +556,8 @@ export default function MedManager() {
                                     <div className="flex-1 min-w-0">
                                         <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
                                             <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
-                                            {reportCount > 0 && (
-                                                <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
-                                            )}
-                                            <div className="flex items-center gap-2">
-                                                <span className="flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded border border-blue-100"><Building size={10}/> {q.institution || 'N/A'}</span>
-                                                <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200"><Calendar size={10}/> {q.year || '----'}</span>
-                                            </div>
+                                            {reportCount > 0 && (<button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>)}
+                                            <div className="flex items-center gap-2"><span className="flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded border border-blue-100"><Building size={10}/> {q.institution || 'N/A'}</span><span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200"><Calendar size={10}/> {q.year || '----'}</span></div>
                                             <div className="flex items-center flex-wrap gap-1"><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></div>
                                         </div>
                                         <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
@@ -874,27 +569,9 @@ export default function MedManager() {
                                 </div>
                             );
                         })}
-                        
-                        {/* LOAD MORE BUTTON */}
-                        {hasMoreQuestions && !missingIndexLink && (
-                            <button 
-                                onClick={() => loadQuestions(false)} 
-                                disabled={loadingQuestions}
-                                className="w-full py-4 mt-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
-                            >
-                                {loadingQuestions ? <Loader2 className="animate-spin" size={20}/> : <ChevronDown size={20}/>}
-                                {loadingQuestions ? 'Carregando...' : 'Carregar Mais Questões'}
-                            </button>
-                        )}
-                        {!hasMoreQuestions && questions.length > 0 && (
-                            <p className="text-center text-gray-400 text-sm py-4">Fim da lista.</p>
-                        )}
-                        {questions.length === 0 && !loadingQuestions && (
-                            <div className="text-center py-10 text-gray-500">
-                                <Database size={48} className="mx-auto mb-2 opacity-20"/>
-                                <p>Nenhuma questão encontrada.</p>
-                            </div>
-                        )}
+                        {hasMoreQuestions && !missingIndexLink && (<button onClick={() => loadQuestions(false)} disabled={loadingQuestions} className="w-full py-4 mt-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors">{loadingQuestions ? <Loader2 className="animate-spin" size={20}/> : <ChevronDown size={20}/>}{loadingQuestions ? 'Carregando...' : 'Carregar Mais Questões'}</button>)}
+                        {!hasMoreQuestions && questions.length > 0 && (<p className="text-center text-gray-400 text-sm py-4">Fim da lista.</p>)}
+                        {questions.length === 0 && !loadingQuestions && (<div className="text-center py-10 text-gray-500"><Database size={48} className="mx-auto mb-2 opacity-20"/><p>Nenhuma questão encontrada.</p></div>)}
                       </>
                   )}
               </div>
@@ -903,28 +580,14 @@ export default function MedManager() {
           {/* VIEW: REPORTS */}
           {activeView === 'reports' && (
               <div className="max-w-4xl mx-auto space-y-6">
-                  {reportFilterQuestionId && (
-                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between">
-                          <div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div>
-                          <button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button>
-                      </div>
-                  )}
+                  {reportFilterQuestionId && (<div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between"><div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div><button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button></div>)}
                   {filteredReports.map(report => {
                       const reporter = getUserDetails(report.userId);
                       return (
                           <div key={report.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
-                              <div className="flex justify-between items-start mb-4">
-                                  <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
-                                      <div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div>
-                                  </div>
-                                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span>
-                              </div>
+                              <div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div><div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div></div><span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span></div>
                               <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
-                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button>
-                                  <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
-                              </div>
+                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100"><button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button><button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button></div>
                           </div>
                       );
                   })}
@@ -937,63 +600,31 @@ export default function MedManager() {
                   <div className="overflow-x-auto">
                       <table className="w-full text-left text-sm text-slate-600">
                           <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b border-gray-200">
-                              <tr>
-                                  <th className="px-6 py-4">Aluno / Email</th>
-                                  <th className="px-6 py-4">Função</th>
-                                  <th className="px-6 py-4">ID</th>
-                                  <th className="px-6 py-4">Status / Vencimento</th>
-                                  <th className="px-6 py-4 text-right">Ações</th>
-                              </tr>
+                              <tr><th className="px-6 py-4">Aluno / Email</th><th className="px-6 py-4">Função</th><th className="px-6 py-4">ID</th><th className="px-6 py-4">Status / Vencimento</th><th className="px-6 py-4 text-right">Ações</th></tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                               {filteredStudents.map(student => {
                                   const subStatus = checkSubscriptionStatus(student.subscriptionUntil, student.role);
                                   const isAdmin = student.role === 'admin';
-                                  
                                   return (
                                       <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                                          <td className="px-6 py-4">
-                                              <div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div>
-                                              <div className="text-xs text-gray-500 mb-1">{student.email}</div>
-                                              {student.whatsapp && (
-                                                  <div className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
-                                                      <Phone size={12}/> {student.whatsapp}
-                                                  </div>
-                                              )}
-                                          </td>
-                                          <td className="px-6 py-4">
-                                              <select 
-                                                  value={student.role} 
-                                                  onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)}
-                                                  className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}
-                                              >
-                                                  <option value="student">Aluno</option>
-                                                  <option value="admin">Admin</option>
-                                              </select>
-                                          </td>
-                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>
-                                              {student.id.slice(0, 8)}... <Copy size={12}/>
-                                          </td>
-                                          <td className="px-6 py-4">
-                                              {!isAdmin ? (
-                                                  <>
-                                                      <div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div>
-                                                      <div className="flex items-center gap-2">
-                                                          <input 
-                                                              type="date" 
-                                                              value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''}
-                                                              onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)}
-                                                              className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"
-                                                          />
-                                                          <button onClick={() => handleAdd30Days(student)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors" title="Adicionar 30 dias"><PlusCircle size={10}/> +30</button>
-                                                      </div>
-                                                  </>
-                                              ) : ( <span className="text-gray-400 text-sm font-medium">–</span> )}
-                                          </td>
+                                          <td className="px-6 py-4"><div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div><div className="text-xs text-gray-500 mb-1">{student.email}</div>{student.whatsapp && (<div className="text-xs text-emerald-600 flex items-center gap-1 font-medium"><Phone size={12}/> {student.whatsapp}</div>)}</td>
+                                          <td className="px-6 py-4"><select value={student.role} onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)} className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}><option value="student">Aluno</option><option value="admin">Admin</option></select></td>
+                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>{student.id.slice(0, 8)}... <Copy size={12}/></td>
+                                          <td className="px-6 py-4">{!isAdmin ? (<><div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div><div className="flex items-center gap-2"><input type="date" value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''} onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)} className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"/><button onClick={() => handleAdd30Days(student)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors" title="Adicionar 30 dias"><PlusCircle size={10}/> +30</button></div></>) : ( <span className="text-gray-400 text-sm font-medium">–</span> )}</td>
                                           <td className="px-6 py-4 text-right">
                                               <div className="flex justify-end gap-2">
+                                                  {/* VER DESEMPENHO */}
                                                   <button onClick={() => fetchUserStats(student)} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors" title="Ver Desempenho"><TrendingUp size={18}/></button>
-                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Excluir"><Trash2 size={18}/></button>
+                                                  
+                                                  {/* RESETAR QUESTÕES (Manter Streak) */}
+                                                  <button onClick={() => setConfirmModal({ type: 'reset_student_questions', data: student })} className="p-2 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors" title="Resetar Questões (Mantém Streak)"><RotateCcw size={18}/></button>
+
+                                                  {/* ZERAR TUDO (Hard Reset) */}
+                                                  <button onClick={() => setConfirmModal({ type: 'reset_student_full', data: student })} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Apagar TUDO (Zera Streak)"><AlertTriangle size={18}/></button>
+                                                  
+                                                  {/* EXCLUIR CONTA */}
+                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 hover:text-red-600 transition-colors" title="Excluir Conta"><Trash2 size={18}/></button>
                                               </div>
                                           </td>
                                       </tr>
@@ -1002,18 +633,55 @@ export default function MedManager() {
                           </tbody>
                       </table>
                   </div>
-                  {/* PAGINATION FOR STUDENTS */}
-                  <div className="p-4 border-t border-gray-100">
-                      {loadingStudents && <div className="text-center py-2"><Loader2 className="animate-spin inline text-purple-600"/> Carregando alunos...</div>}
-                      {hasMoreStudents && !loadingStudents && (
-                          <button onClick={() => loadStudents(false)} className="w-full py-2 bg-gray-50 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-100">Carregar Mais Alunos</button>
-                      )}
-                  </div>
+                  <div className="p-4 border-t border-gray-100">{loadingStudents && <div className="text-center py-2"><Loader2 className="animate-spin inline text-purple-600"/> Carregando alunos...</div>}{hasMoreStudents && !loadingStudents && (<button onClick={() => loadStudents(false)} className="w-full py-2 bg-gray-50 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-100">Carregar Mais Alunos</button>)}</div>
               </div>
           )}
       </main>
 
-      {/* --- MODALS (Igual ao original, mas edit/delete chamam novas funções) --- */}
+      {/* --- MODAIS --- */}
+
+      {/* MODAL DE CONFIRMAÇÃO DE AÇÃO EM MASSA */}
+      {confirmModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className={`p-4 rounded-full mb-4 animate-pulse ${confirmModal.type === 'delete_all_questions' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>
+                        <AlertOctagon size={32}/>
+                    </div>
+                    
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">
+                        {confirmModal.type === 'reset_student_questions' ? 'Resetar Questões?' : 
+                         confirmModal.type === 'reset_student_full' ? 'ZERAR TUDO?' : 
+                         'Apagar TODAS as Questões?'}
+                    </h2>
+                    
+                    <p className="text-gray-600 mb-6 text-sm leading-relaxed">
+                        {confirmModal.type === 'reset_student_questions' ? 
+                            <>Simulados e acertos de <strong>{confirmModal.data.name}</strong> serão apagados. <br/><span className="text-emerald-600 font-bold">O Streak (sequência) será mantido.</span></> :
+                         confirmModal.type === 'reset_student_full' ?
+                            <>CUIDADO: Isso apagará <strong>TUDO</strong> (Simulados, Stats, Streak) de <strong>{confirmModal.data.name}</strong>. É como um aluno novo.</> :
+                            <>CUIDADO: Isso vai excluir <strong>permanentemente</strong> todas as questões do banco de dados. Essa ação não pode ser desfeita.</>
+                        }
+                    </p>
+                    
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setConfirmModal(null)} disabled={isProcessingBatch} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50 disabled:opacity-50">Cancelar</button>
+                        <button 
+                            onClick={() => {
+                                if (confirmModal.type === 'reset_student_questions') handleResetStudentQuestions();
+                                else if (confirmModal.type === 'reset_student_full') handleResetStudentFull();
+                                else handleDeleteAllQuestions();
+                            }} 
+                            disabled={isProcessingBatch}
+                            className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200 flex items-center justify-center gap-2 disabled:opacity-70"
+                        >
+                            {isProcessingBatch ? <Loader2 className="animate-spin" size={18}/> : 'Sim, Confirmar'}
+                        </button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
@@ -1021,27 +689,14 @@ export default function MedManager() {
               <div className="max-w-4xl mx-auto p-6 pb-20">
                   {associatedReport && (
                       <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between shadow-sm">
-                          <div className="flex items-start gap-3 w-full">
-                              <div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div>
-                              <div className="w-full">
-                                  <h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3>
-                                  <div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div>
-                              </div>
-                          </div>
+                          <div className="flex items-start gap-3 w-full"><div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div><div className="w-full"><h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3><div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div></div></div>
                       </div>
                   )}
                   <div className="flex items-center justify-between mb-8 sticky top-0 bg-white py-4 border-b border-gray-100 z-10">
-                      <div className="flex items-center gap-3">
-                          <button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
-                          <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
-                      </div>
+                      <div className="flex items-center gap-3"><button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button><h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2></div>
                       <div className="flex gap-3">
                           {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar</span></button>}
-                          {associatedReport ? (
-                              <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
-                          ) : (
-                              <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
-                          )}
+                          {associatedReport ? (<button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>) : (<button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>)}
                           <button onClick={() => setDeleteModal(editingQuestion)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 ml-2" title="Excluir Questão"><Trash2 size={20} /></button>
                       </div>
                   </div>
@@ -1064,23 +719,14 @@ export default function MedManager() {
       {isCreatingUser && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
-                  <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4">
-                      <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><UserPlus size={24}/></div>
-                      <h2 className="text-xl font-bold text-slate-800">Novo Aluno</h2>
-                  </div>
+                  <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4"><div className="bg-purple-100 p-2 rounded-lg text-purple-600"><UserPlus size={24}/></div><h2 className="text-xl font-bold text-slate-800">Novo Aluno</h2></div>
                   <form onSubmit={handleCreateUser} className="space-y-4">
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input name="name" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="Ex: Ana Silva" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">E-mail</label><input name="email" type="email" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="email@exemplo.com" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha (Provisória)</label><input name="password" type="text" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="123456" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WhatsApp (Opcional)</label><input name="whatsapp" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="31999999999" /></div>
-                      <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div>
-                      </div>
-                      <div className="flex gap-3 pt-4">
-                          <button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                          <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button>
-                      </div>
+                      <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div><div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div></div>
+                      <div className="flex gap-3 pt-4"><button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button><button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button></div>
                   </form>
               </div>
           </div>
@@ -1091,37 +737,19 @@ export default function MedManager() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
                   <button onClick={() => setViewingUserStats(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
-                  <div className="flex items-center gap-4 mb-6">
-                      <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-2xl">
-                          {viewingUserStats.name ? viewingUserStats.name.charAt(0) : 'U'}
-                      </div>
-                      <div>
-                          <h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2>
-                          <p className="text-sm text-gray-500">{viewingUserStats.email}</p>
-                          <div className="flex gap-2 mt-1">
-                              {checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>}
-                              <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span>
-                          </div>
-                      </div>
-                  </div>
-                  {viewingUserStats.loading ? (
-                      <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-purple-600" size={32} /></div>
-                  ) : (
+                  <div className="flex items-center gap-4 mb-6"><div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-2xl">{viewingUserStats.name ? viewingUserStats.name.charAt(0) : 'U'}</div><div><h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2><p className="text-sm text-gray-500">{viewingUserStats.email}</p><div className="flex gap-2 mt-1">{checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>}<span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span></div></div></div>
+                  {viewingUserStats.loading ? (<div className="py-10 flex justify-center"><Loader2 className="animate-spin text-purple-600" size={32} /></div>) : (
                       <div className="grid grid-cols-2 gap-4">
                           <div className="bg-orange-50 p-4 rounded-xl text-center border border-orange-100"><div className="flex justify-center text-orange-600 mb-1"><Zap size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.streak || 0}</div><div className="text-xs uppercase font-bold text-orange-600">Dias em Sequência</div></div>
                           <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100"><div className="flex justify-center text-blue-600 mb-1"><CheckSquare size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.totalAnswers || 0}</div><div className="text-xs uppercase font-bold text-blue-600">Questões Totais</div></div>
-                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2">
-                              <div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span><span className="text-2xl font-bold text-emerald-600">{viewingUserStats.stats?.totalAnswers > 0 ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) : 0}%</span></div>
-                              <div className="w-full bg-emerald-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div></div>
-                              <p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p>
-                          </div>
+                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2"><div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span><span className="text-2xl font-bold text-emerald-600">{viewingUserStats.stats?.totalAnswers > 0 ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) : 0}%</span></div><div className="w-full bg-emerald-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div></div><p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p></div>
                       </div>
                   )}
               </div>
           </div>
       )}
 
-      {/* DELETE MODAL */}
+      {/* DELETE MODAL (Single Item) */}
       {deleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
@@ -1129,10 +757,7 @@ export default function MedManager() {
                     <div className="bg-red-100 p-3 rounded-full text-red-600 mb-4"><AlertTriangle size={32}/></div>
                     <h2 className="text-xl font-bold mb-2 text-slate-800">Excluir Definitivamente?</h2>
                     <p className="text-gray-600 mb-6 text-sm">{deleteModal.email ? `O aluno ${deleteModal.name} será removido.` : 'Essa questão será removida do banco de dados oficial.'}</p>
-                    <div className="flex gap-3 w-full">
-                        <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                        <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
-                    </div>
+                    <div className="flex gap-3 w-full"><button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button><button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button></div>
                   </div>
               </div>
           </div>
@@ -1146,10 +771,7 @@ export default function MedManager() {
                     <div className="bg-orange-100 p-3 rounded-full text-orange-600 mb-4"><ThumbsDown size={32}/></div>
                     <h2 className="text-xl font-bold mb-2 text-slate-800">Recusar Sugestão?</h2>
                     <p className="text-gray-600 mb-6 text-sm">Esta ação vai <strong>APAGAR</strong> o reporte do banco de dados.</p>
-                    <div className="flex gap-3 w-full">
-                        <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                        <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button>
-                    </div>
+                    <div className="flex gap-3 w-full"><button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button><button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button></div>
                   </div>
               </div>
           </div>
