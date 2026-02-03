@@ -9,7 +9,7 @@ import {
   SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter
 } from 'lucide-react';
 
-// --- FIREBASE IMPORTS M---
+// --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
   getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
@@ -2437,98 +2437,15 @@ export default function App() {
                 )}
 
                {/* --- AQUI COMEÇA A LISTAGEM DAS QUESTÕES (CÓDIGO COMPLETO) --- */}
-                {/* REVIEW TAB (ATUALIZADA E CORRIGIDA) */}
-        {activeTab === 'review' && (
-            <div className="max-w-4xl mx-auto space-y-4">
-                {parsedQuestions.length > 0 && (
-                    /* --- BARRA DE FERRAMENTAS --- */
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-4 sticky top-20 z-10">
-                        
-                        {/* Linha 1: Filtros Principais */}
-                        <div className="flex flex-col gap-2">
-                            <div className="flex justify-between items-center px-1">
-                                <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros Ativos</span>
-                                
-                                {/* SWITCH DE LÓGICA */}
-                                <button 
-                                    onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
-                                    className={`text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
-                                    title={filterLogic === 'AND' ? "Mostra questões que têm TODAS as características" : "Mostra questões que têm QUALQUER uma das características"}
-                                >
-                                    {filterLogic === 'AND' ? <ToggleRight size={14}/> : <ToggleLeft size={14}/>}
-                                    Lógica: {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
-                                </button>
-
-                                <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                <button onClick={() => toggleFilter('all')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>Todas</button>
-                                <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
-                                <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
-                                <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
-                                <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
-                                <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
-                                <button onClick={() => toggleFilter('needs_image')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('needs_image') ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ImagePlus size={14}/> Falta Imagem</button>
-                            </div>
-                        </div>
-
-                        {/* Linha 1.5: Sub-Filtros (Selects) */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-100">
-                            <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Filtrar Área</label>
-                                <select value={subFilterArea} onChange={e=>setSubFilterArea(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
-                                    <option value="all">Todas as Áreas</option>
-                                    {[...new Set(parsedQuestions.map(q=>q.area).filter(Boolean))].sort().map(a=><option key={a} value={a}>{a}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Filtrar Tópico</label>
-                                <select value={subFilterTopic} onChange={e=>setSubFilterTopic(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
-                                    <option value="all">Todos os Tópicos</option>
-                                    {[...new Set(parsedQuestions.map(q=>q.topic).filter(Boolean))].sort().map(t=><option key={t} value={t}>{t}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Enviado Por</label>
-                                <select value={subFilterUser} onChange={e=>setSubFilterUser(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
-                                    <option value="all">Todos os Usuários</option>
-                                    {[...new Set(parsedQuestions.map(q=>q.createdBy).filter(Boolean))].sort().map(u=><option key={u} value={u}>{u}</option>)}
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="h-px bg-gray-100 w-full"></div>
-
-                        {/* Linha 2: Ações */}
-                        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-                                <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap"><Eraser size={14}/> Limpar Inst.</button>
-                                <button onClick={() => clearAllField('year')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap"><Eraser size={14}/> Limpar Anos</button>
-                            </div>
-
-                            <div className="flex items-center gap-2 w-full sm:w-auto">
-                                <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm">
-                                    <Trash2 size={16} /> Descartar {currentFilteredList.length}
-                                </button>
-                                
-                                <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0">
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16} />} 
-                                    Aprovar {currentFilteredList.length}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* --- AQUI COMEÇA A LISTAGEM DAS QUESTÕES --- */}
                 {currentFilteredList.length === 0 ? (
+                    /* ESTADO VAZIO (Nenhuma questão encontrada) */
                     <div className="text-center py-20 opacity-50">
                         <Database size={64} className="mx-auto mb-4 text-gray-300" />
                         <p className="text-xl font-medium text-gray-500">Nenhuma questão encontrada neste filtro.</p>
                         {parsedQuestions.length === 0 && <button onClick={() => setActiveTab('input')} className="mt-4 text-blue-600 font-bold hover:underline">Adicionar novas</button>}
                     </div>
                 ) : (
+                    /* LISTA DE CARDS */
                     currentFilteredList.map((q, idx) => (
                         <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                             
