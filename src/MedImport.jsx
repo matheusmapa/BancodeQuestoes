@@ -96,6 +96,7 @@ const generateQuestionHash = async (text) => {
 const cleanInstitutionText = (inst) => {
     if (!inst) return "";
     const lower = inst.toString().toLowerCase();
+    // Lista de termos que indicam "não informado" para serem limpos
     if (
         lower.includes("não informado") || 
         lower.includes("nao informado") || 
@@ -105,52 +106,74 @@ const cleanInstitutionText = (inst) => {
     return inst;
 };
 
-// --- HELPER: EXTRAIR TEMPO DE ESPERA ---
+// --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
 const extractRetryTime = (message) => {
     const match = message.match(/retry in ([0-9\.]+)s/);
     return match ? parseFloat(match[1]) : null;
 };
 
-// --- HELPER: PARSER JSON BLINDADO ---
+// --- HELPER: PARSER JSON BLINDADO (RECUPERAÇÃO ITERATIVA) ---
+// Tenta salvar o que for possível de um JSON cortado
 const safeJsonParse = (jsonString) => {
+    // 1. Limpeza básica
     let clean = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
     clean = clean.replace(/[\u0000-\u0019]+/g, ""); 
 
+    // 2. Encontrar inicio do array
     const startIndex = clean.indexOf('[');
     if (startIndex === -1) {
+        // Tenta parsing direto caso não seja array
         try { return JSON.parse(clean); } catch(e) { 
+            // Se falhar e não tiver array, tenta forçar como array vazio ou joga erro
             throw new Error("Formato inválido: JSON não encontrado."); 
         }
     }
     clean = clean.substring(startIndex);
 
+    // 3. Tenta parse direto (Caminho Feliz)
     try {
         const parsed = JSON.parse(clean);
         if (!Array.isArray(parsed) && typeof parsed === 'object') return [parsed];
         return parsed;
     } catch (e) {
-        console.warn("JSON quebrado. Recuperando...", e.message);
+        console.warn("JSON quebrado detectado. Iniciando recuperação iterativa...", e.message);
+        
+        // 4. Estratégia de Recuperação Iterativa (Backtracking)
         let currentString = clean;
         let attempts = 0;
-        const maxAttempts = 50;
+        const maxAttempts = 50; // Evita loop infinito
 
         while (currentString.length > 2 && attempts < maxAttempts) {
             attempts++;
-            const lastClose = currentString.lastIndexOf('}');
-            if (lastClose === -1) return []; 
             
+            // Acha o último '}'
+            const lastClose = currentString.lastIndexOf('}');
+            
+            if (lastClose === -1) {
+                // Não tem mais objetos fechados, recuperação falhou total
+                console.error("Recuperação falhou: nenhum objeto válido encontrado.");
+                return []; // Retorna vazio para não travar o processo
+            }
+            
+            // Tenta fechar o array ali
             const candidate = currentString.substring(0, lastClose + 1) + ']';
+            
             try {
-                return JSON.parse(candidate);
+                const result = JSON.parse(candidate);
+                console.log(`Recuperação com sucesso na tentativa ${attempts}! ${result.length} itens salvos de um JSON quebrado.`);
+                return result;
             } catch (e2) {
                 currentString = currentString.substring(0, lastClose);
             }
         }
+        
+        // Se saiu do loop, falhou. Retorna array vazio para continuar o fluxo.
+        console.error("Falha total na recuperação do JSON após múltiplas tentativas.");
         return [];
     }
 };
 
-// --- COMPONENTE DE NOTIFICAÇÃO ---
+// --- COMPONENTE DE NOTIFICAÇÃO INTELIGENTE ---
 function NotificationToast({ notification, onClose, positionClass }) {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -186,10 +209,10 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   
-  // Gestão de Chaves API
+  // Gestão de Chaves API (Múltiplas)
   const [apiKeys, setApiKeys] = useState(() => JSON.parse(localStorage.getItem('gemini_api_keys') || '[]'));
   
-  // Modelos
+  // Modelos - ATUALIZADO PARA PRO PADRÃO
   const [availableModels, setAvailableModels] = useState([
       { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (Padrão)' },
       { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }
@@ -205,14 +228,14 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('input');
   const [notification, setNotification] = useState(null);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
-  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true);
-  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true);
+  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
   
-  // --- FILTROS ---
-  const [activeFilters, setActiveFilters] = useState(['all']); 
-  const [filterLogic, setFilterLogic] = useState('OR'); // 'OR' (Soma) ou 'AND' (Estrito)
-  
-  // Override States
+  // --- MUDANÇA 1: Estado para Filtros Múltiplos e Lógica ---
+  const [activeFilters, setActiveFilters] = useState(['all']); // Array para múltiplos
+  const [filterLogic, setFilterLogic] = useState('OR'); // Lógica de filtro: OR (Soma) ou AND (Estrito)
+
+  // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
   const [overrideYear, setOverrideYear] = useState('');
   const [overrideArea, setOverrideArea] = useState('');
@@ -232,21 +255,23 @@ export default function App() {
   const [password, setPassword] = useState('');
 
   // --- BATCH IMAGE STATES ---
-  const [batchImages, setBatchImages] = useState([]);
-  const [batchStatus, setBatchStatus] = useState('idle');
-  const [batchLogs, setBatchLogs] = useState([]);
+  const [batchImages, setBatchImages] = useState([]); // { id, file, preview, status: 'pending'|'success'|'error', errorMsg }
+  const [batchStatus, setBatchStatus] = useState('idle'); // idle, processing, pausing, paused
+  const [batchLogs, setBatchLogs] = useState([]); // SEPARADO: Logs de imagens
 
   // --- PDF PROCESSING STATES ---
   const [pdfFile, setPdfFile] = useState(null);
-  const [pdfStatus, setPdfStatus] = useState('idle');
+  const [pdfStatus, setPdfStatus] = useState('idle'); // idle, reading, ready, processing, pausing, paused, error, completed
   const [pdfChunks, setPdfChunks] = useState([]); 
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [processingLogs, setProcessingLogs] = useState([]);
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
   
+  // PDF Range Inputs
   const [pdfStartPage, setPdfStartPage] = useState('');
   const [pdfEndPage, setPdfEndPage] = useState('');
 
+  // --- SESSION STATE (ÚLTIMO PDF) - AGORA VEM DO DB ---
   const [lastSessionData, setLastSessionData] = useState(null);
 
   const processorRef = useRef(null); 
@@ -260,9 +285,9 @@ export default function App() {
   const apiKeysRef = useRef(apiKeys);
   const keyRotationIndex = useRef(0);
   const doubleCheckRef = useRef(isDoubleCheckEnabled); 
-  const webSearchRef = useRef(isWebSearchEnabled);
+  const webSearchRef = useRef(isWebSearchEnabled); // Ref para o novo toggle
   const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
-  const currentChunkIndexRef = useRef(currentChunkIndex);
+  const currentChunkIndexRef = useRef(currentChunkIndex); // REF PARA O INDEX
 
   const CHUNK_SIZE = 10; 
 
@@ -302,9 +327,11 @@ export default function App() {
   useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
   useEffect(() => { webSearchRef.current = isWebSearchEnabled; }, [isWebSearchEnabled]);
   useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
+  
+  // SYNC REF DO INDEX
   useEffect(() => { currentChunkIndexRef.current = currentChunkIndex; }, [currentChunkIndex]);
 
-  // --- SYNC CHAVES API ---
+  // --- SYNC CHAVES API (GLOBAL SETTINGS) ---
   useEffect(() => {
       if (!user) return;
       const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
@@ -316,7 +343,10 @@ export default function App() {
               } else if (data.geminiApiKey) {
                   newKeys = [data.geminiApiKey];
               }
+
+              // Normaliza chaves e remove duplicatas no carregamento também
               const uniqueKeys = [...new Set(newKeys.filter(k => k && k.trim().length > 0))];
+
               if (JSON.stringify(uniqueKeys) !== JSON.stringify(apiKeysRef.current)) {
                   setApiKeys(uniqueKeys);
                   localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
@@ -337,11 +367,19 @@ export default function App() {
       return () => unsubscribe();
   }, [user]);
 
-  // --- SYNC PROGRESSO PDF ---
+  // --- SYNC PROGRESSO DO PDF (POR USUÁRIO) ---
   useEffect(() => {
-      if (!user) { setLastSessionData(null); return; }
+      if (!user) {
+          setLastSessionData(null);
+          return;
+      }
+      // Escuta mudanças em tempo real no documento de progresso do usuário
       const unsubscribe = onSnapshot(doc(db, "users", user.uid, "progress", "pdf_session"), (docSnap) => {
-          if (docSnap.exists()) { setLastSessionData(docSnap.data()); } else { setLastSessionData(null); }
+          if (docSnap.exists()) {
+              setLastSessionData(docSnap.data());
+          } else {
+              setLastSessionData(null);
+          }
       });
       return () => unsubscribe();
   }, [user]);
@@ -357,6 +395,7 @@ export default function App() {
       for (let i = 0; i < keys.length; i++) {
           const currentIndex = (startIndex + i) % keys.length;
           const currentKey = keys[currentIndex];
+          
           keyRotationIndex.current = (currentIndex + 1) % keys.length;
 
           try {
@@ -364,6 +403,7 @@ export default function App() {
           } catch (error) {
               const msg = error.message || "";
               const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429");
+              
               if (isQuotaError) {
                   const logFn = operationName.includes("Imagem") ? addBatchLog : addLog;
                   logFn('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
@@ -377,17 +417,28 @@ export default function App() {
       throw lastError || new Error("Todas as chaves falharam.");
   };
 
-  // --- SEARCH AGENT ---
+  // --- NOVO: FUNÇÃO DE PESQUISA GOOGLE (BANCAS) ---
   const searchQuestionSource = async (questionText) => {
       return executeWithKeyRotation("Pesquisa Web", async (key) => {
           const systemPrompt = `Você é um verificador de questões de residência médica.
           Sua missão: Identificar a origem da questão usando a Pesquisa Google.
+          
           CRITÉRIOS DE ESCOLHA:
-          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal).
-          REGRAS DE FORMATAÇÃO DE NOME:
+          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal sobre simulados).
+
+          REGRAS DE FORMATAÇÃO DE NOME (CRÍTICO):
           - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
+          - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
+          - Exemplo Bom: "BA - SUS Bahia"
+          - Exemplo Bom: "SP - USP São Paulo"
+          - Exemplo Bom: "Nacional - ENARE"
+
           SAÍDA OBRIGATÓRIA (JSON):
-          { "institution": "Nome...", "year": "Ano..." }`;
+          {
+            "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
+            "year": "Ano (apenas números, ou vazio se não achar)"
+          }
+          `;
 
           const response = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${key}`,
@@ -401,24 +452,45 @@ export default function App() {
               })
             }
           );
+
           if (!response.ok) throw new Error("Erro na API Search");
+          
           const data = await response.json();
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          try { return safeJsonParse(jsonString); } catch(e) { return { institution: "", year: "" }; }
+          
+          // Tenta limpar e parsear
+          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+          try {
+              return JSON.parse(jsonString);
+          } catch(e) {
+              // Fallback se não vier JSON: Tenta extrair linhas
+              console.warn("Search não retornou JSON, tentando extrair texto:", jsonString);
+              return { institution: "", year: "" };
+          }
       });
   };
 
-  // --- DOUBLE CHECK AGENT ---
+  // --- LOGIC: VERIFICATION AGENT (DOUBLE CHECK) ---
   const verifyQuestionWithAI = async (questionData) => {
       return executeWithKeyRotation("Auditoria", async (key) => {
           const verifyPrompt = `
             Você é um Auditor Sênior de Questões Médicas.
-            QUESTÃO: ${questionData.text}
+            Analise a questão abaixo gerada por uma IA.
+            
+            QUESTÃO:
+            Enunciado: ${questionData.text}
             Alternativas: ${JSON.stringify(questionData.options)}
             Gabarito Indicado: ${questionData.correctOptionId}
+            Comentário Gerado: ${questionData.explanation}
             
-            TAREFA: Verifique se a questão é medicamente correta e não é alucinação.
-            Retorne JSON: { "isValid": boolean, "reason": "Explicação curta" }
+            TAREFA:
+            Verifique se a questão é medicamente correta, se o gabarito faz sentido e se não há alucinações graves.
+            
+            Retorne APENAS um JSON:
+            {
+                "isValid": boolean (true se aceitável, false se tiver erro grave/alucinação),
+                "reason": "Explicação curta se for false"
+            }
           `;
 
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
@@ -426,10 +498,12 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: [{ parts: [{ text: verifyPrompt }] }] })
           });
+          
           const data = await response.json();
           if (data.error) throw new Error(data.error.message);
+
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          return safeJsonParse(jsonString); 
+          return safeJsonParse(jsonString); // Usa o parser blindado
       }).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
@@ -438,41 +512,48 @@ export default function App() {
       });
   };
 
-  // --- LOGS ---
+  // --- COMMON: LOGS ---
   const addLog = (type, message) => {
       const time = new Date().toLocaleTimeString();
       setProcessingLogs(prev => [{ type, message, time }, ...prev].slice(0, 50)); 
   };
+  
+  // --- BATCH LOGS (SEPARADO) ---
   const addBatchLog = (type, message) => {
       const time = new Date().toLocaleTimeString();
       setBatchLogs(prev => [{ type, message, time }, ...prev].slice(0, 50));
   };
 
-  // --- LOGIC: FILTERS ---
+  // --- MUDANÇA 2: FUNÇÃO DE TOGGLE DO FILTRO ---
   const toggleFilter = (filterKey) => {
       setActiveFilters(prev => {
           if (filterKey === 'all') return ['all'];
           let newFilters = prev.filter(f => f !== 'all');
+          
           if (newFilters.includes(filterKey)) {
               newFilters = newFilters.filter(f => f !== filterKey);
           } else {
               newFilters.push(filterKey);
           }
+          
           if (newFilters.length === 0) return ['all'];
           return newFilters;
       });
   };
 
+  // --- MUDANÇA 3: FILTRO COM LÓGICA 'OR' (SOMA) + SWITCH 'AND' ---
   const getFilteredQuestions = () => {
     if (activeFilters.includes('all')) return parsedQuestions;
     
     return parsedQuestions.filter(q => {
+      // Definição das condições
       const isVerified = q.verificationStatus === 'verified';
       const isSuspicious = q.verificationStatus === 'suspicious';
       const hasSource = q.sourceFound;
       const noSource = !q.sourceFound;
       const isDuplicate = q.isDuplicate;
 
+      // --- MODO ESTRITO (AND) ---
       if (filterLogic === 'AND') {
           if (activeFilters.includes('verified') && !isVerified) return false;
           if (activeFilters.includes('suspicious') && !isSuspicious) return false;
@@ -482,7 +563,7 @@ export default function App() {
           return true;
       }
 
-      // OR Logic
+      // --- MODO SOMA (OR) - PADRÃO ---
       const matchesVerified = activeFilters.includes('verified') && isVerified;
       const matchesSuspicious = activeFilters.includes('suspicious') && isSuspicious;
       const matchesSource = activeFilters.includes('source') && hasSource;
@@ -491,17 +572,19 @@ export default function App() {
 
       const isMatch = matchesVerified || matchesSuspicious || matchesSource || matchesNoSource || matchesDuplicates;
       
+      // Regra de segurança: Duplicadas ocultas a não ser que o filtro de duplicadas esteja ativo
       if (!activeFilters.includes('duplicates') && isDuplicate) return false;
 
       return isMatch;
     });
   };
 
+  // --- FILTER CONFIG (ATUALIZADA) ---
   const filterLabels = {
       'all': 'Todas',
       'verified': 'Verificadas',
       'source': 'Com Fonte',
-      'no_source': 'Sem Fonte',
+      'no_source': 'Sem Fonte', // NOVO LABEL
       'suspicious': 'Suspeitas',
       'duplicates': 'Duplicadas'
   };
@@ -510,10 +593,16 @@ export default function App() {
   const handleBatchImageUpload = (e) => {
       const files = Array.from(e.target.files);
       if (files.length === 0) return;
+
       const newImages = files.map(file => ({
           id: Math.random().toString(36).substr(2, 9),
-          file, name: file.name, preview: URL.createObjectURL(file), status: 'pending', errorMsg: ''
+          file,
+          name: file.name,
+          preview: URL.createObjectURL(file),
+          status: 'pending',
+          errorMsg: ''
       }));
+
       setBatchImages(prev => [...prev, ...newImages]);
       addBatchLog('info', `${files.length} imagens adicionadas à fila.`);
   };
@@ -526,41 +615,60 @@ export default function App() {
               const blob = items[i].getAsFile();
               newImages.push({
                   id: Math.random().toString(36).substr(2, 9),
-                  file: blob, name: `Colada_${Date.now()}_${i}.png`, preview: URL.createObjectURL(blob), status: 'pending', errorMsg: ''
+                  file: blob,
+                  name: `Colada_${new Date().getTime()}_${i}.png`,
+                  preview: URL.createObjectURL(blob),
+                  status: 'pending',
+                  errorMsg: ''
               });
           }
       }
       if (newImages.length > 0) {
           setBatchImages(prev => [...prev, ...newImages]);
-          addBatchLog('info', `${newImages.length} imagens coladas.`);
+          addBatchLog('info', `${newImages.length} imagens coladas (Ctrl+V) na fila.`);
       }
   };
 
-  const removeBatchImage = (id) => setBatchImages(prev => prev.filter(img => img.id !== id));
-  
+  const removeBatchImage = (id) => {
+      setBatchImages(prev => prev.filter(img => img.id !== id));
+  };
+
   const clearBatchQueue = () => {
       if (batchStatus === 'processing' || batchStatus === 'pausing') return;
-      setBatchImages([]); addBatchLog('info', 'Fila de imagens limpa.'); setBatchLogs([]);
+      setBatchImages([]);
+      addBatchLog('info', 'Fila de imagens limpa.');
+      setBatchLogs([]);
   };
 
   const toggleBatchProcessing = () => {
-      if (batchStatusRef.current === 'processing') {
-          setBatchStatus('pausing'); addBatchLog('warning', 'Solicitando pausa...');
-      } else if (batchStatusRef.current === 'paused' || batchStatusRef.current === 'idle') {
-          setBatchStatus('processing'); addBatchLog('info', 'Processando imagens...');
-          batchProcessorRef.current = false; setTimeout(() => processNextBatchImage(), 100);
+      const currentStatus = batchStatusRef.current;
+      
+      if (currentStatus === 'processing') {
+          // LÓGICA DE PAUSA SUAVE
+          setBatchStatus('pausing');
+          addBatchLog('warning', 'Solicitando pausa... Aguardando a imagem atual finalizar.');
+      } else if (currentStatus === 'paused' || currentStatus === 'idle') {
+          setBatchStatus('processing');
+          addBatchLog('info', 'Iniciando processamento de imagens...');
+          batchProcessorRef.current = false; // Reset lock
+          setTimeout(() => processNextBatchImage(), 100);
       }
   };
 
-  const fileToBase64 = (file) => new Promise((resolve, reject) => {
-      const reader = new FileReader(); reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = reject;
-  });
+  const fileToBase64 = (file) => {
+      return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = error => reject(error);
+      });
+  };
 
   const processNextBatchImage = async () => {
       if (batchProcessorRef.current) return;
-      if (batchStatusRef.current === 'pausing') { setBatchStatus('paused'); return; }
-      if (batchStatusRef.current !== 'processing') return;
+      const currentStatus = batchStatusRef.current;
+      if (currentStatus === 'pausing') { setBatchStatus('paused'); addBatchLog('warning', 'Processamento pausado com segurança.'); return; }
+      if (currentStatus !== 'processing') return;
 
       const queue = batchImagesRef.current;
       const nextImg = queue.find(img => img.status === 'pending');
@@ -569,7 +677,9 @@ export default function App() {
 
       batchProcessorRef.current = true;
       const ovr = overridesRef.current;
-      addBatchLog('info', `Processando: ${nextImg.name}...`);
+      const doDoubleCheck = doubleCheckRef.current; 
+      const doWebSearch = webSearchRef.current; 
+      addBatchLog('info', `Processando imagem: ${nextImg.name}...`);
 
       try {
           const base64Data = await fileToBase64(nextImg.file);
@@ -616,28 +726,33 @@ export default function App() {
           }));
 
           const batch = writeBatch(db);
-          
-          // PERMITIR DUPLICATAS NA FILA
-          let newQuestions = processedQuestions; 
+          // MUDANÇA: Permitir duplicatas
+          let newQuestionsForAudit = processedQuestions; 
 
-          if (newQuestions.length > 0 && doubleCheckRef.current) {
-              addBatchLog('info', `Auditando ${newQuestions.length} questões...`);
-              for (let i = 0; i < newQuestions.length; i++) {
-                   if(i>0) await new Promise(r=>setTimeout(r,150));
-                   try {
-                       const ver = await verifyQuestionWithAI(newQuestions[i]);
-                       newQuestions[i] = { ...newQuestions[i], verificationStatus: ver.status, verificationReason: ver.reason };
-                   } catch(e) { newQuestions[i].verificationStatus = 'unchecked'; }
+          if (newQuestionsForAudit.length > 0) {
+              if (doDoubleCheck) {
+                  addBatchLog('info', `Auditando ${newQuestionsForAudit.length} questões...`);
+                  for (let i = 0; i < newQuestionsForAudit.length; i++) {
+                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
+                      try {
+                          const verification = await verifyQuestionWithAI(newQuestionsForAudit[i]);
+                          newQuestionsForAudit[i] = { ...newQuestionsForAudit[i], verificationStatus: verification.status, verificationReason: verification.reason };
+                      } catch (err) {
+                          newQuestionsForAudit[i] = { ...newQuestionsForAudit[i], verificationStatus: 'unchecked' };
+                      }
+                  }
+              } else {
+                  newQuestionsForAudit.forEach((q, idx) => { newQuestionsForAudit[idx] = { ...q, verificationStatus: 'unchecked' }; });
               }
+
+              for (const q of newQuestionsForAudit) {
+                  const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+                  batch.set(doc(db, "draft_questions", docId), { ...q, createdAt: new Date().toISOString(), createdBy: user.email, sourceFile: nextImg.name, hasImage: true });
+              }
+              await batch.commit();
           }
 
-          newQuestions.forEach(q => {
-              const docId = q.hashId || doc(collection(db, "draft_questions")).id;
-              batch.set(doc(db, "draft_questions", docId), { ...q, createdAt: new Date().toISOString(), createdBy: user.email, sourceFile: nextImg.name, hasImage: true });
-          });
-          await batch.commit();
-
-          addBatchLog('success', `Sucesso em ${nextImg.name}: ${newQuestions.length} salvas.`);
+          addBatchLog('success', `Sucesso em ${nextImg.name}: ${newQuestionsForAudit.length} salvas.`);
           setBatchImages(prev => prev.filter(img => img.id !== nextImg.id));
           setTimeout(() => { batchProcessorRef.current = false; processNextBatchImage(); }, 1000);
 
@@ -655,22 +770,33 @@ export default function App() {
 
   // --- LOGIC: PDF HANDLING ---
   const handlePdfUpload = async (e) => {
-      const file = e.target.files[0]; if (!file || file.type !== 'application/pdf') return;
-      setPdfFile(file); setPdfStatus('reading'); setProcessingLogs([]); addLog('info', `Lendo: ${file.name}`);
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.type !== 'application/pdf') return showNotification('error', 'Por favor, envie um arquivo PDF.');
+      
+      setPdfFile(file);
+      setPdfStatus('reading');
+      setProcessingLogs([]);
+      addLog('info', `Iniciando leitura de: ${file.name}`);
 
       try {
           const pdfjs = await loadPdfJs();
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
           
+          addLog('info', `PDF carregado. Total: ${pdf.numPages} págs.`);
+          
           let startP = parseInt(pdfStartPage) || 1;
           let endP = parseInt(pdfEndPage) || pdf.numPages;
-          if (startP < 1) startP = 1; if (endP > pdf.numPages) endP = pdf.numPages;
+
+          if (startP < 1) startP = 1;
+          if (endP > pdf.numPages) endP = pdf.numPages;
+          if (startP > endP) { startP = 1; endP = pdf.numPages; showNotification('warning', 'Intervalo inválido. Usando PDF completo.'); }
 
           let chunks = [];
           let currentChunkText = "";
           let chunkStartPage = startP;
-          let lastPageContent = "";
+          let lastPageContent = ""; 
 
           for (let i = startP; i <= endP; i++) {
               const page = await pdf.getPage(i);
@@ -682,17 +808,23 @@ export default function App() {
               if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
                   let finalChunkText = currentChunkText;
                   if (i < endP) {
-                      const np = await pdf.getPage(i+1); const nc = await np.getTextContent();
-                      finalChunkText += `\n\n--- NEXT CTX ---\n${nc.items.map(i=>i.str).join(' ')}`;
+                      try {
+                          const nextPage = await pdf.getPage(i + 1);
+                          const nextContent = await nextPage.getTextContent();
+                          const nextText = nextContent.items.map(item => item.str).join(' ');
+                          finalChunkText += `\n\n--- CONTEXTO DA PRÓXIMA PÁGINA (${i+1}) ---\n${nextText}`;
+                      } catch (err) {}
                   }
-                  chunks.push({ id: `chunk_${chunkStartPage}_${i}`, pages: `${chunkStartPage}-${i}`, text: finalChunkText, status: 'pending', errorCount: 0 });
-                  currentChunkText = i < endP ? `\n--- PREV CTX ---\n${lastPageContent}` : "";
+                  chunks.push({ id: `chunk_${chunkStartPage}_${i}`, pages: `${chunkStartPage} a ${i}`, text: finalChunkText, status: 'pending', errorCount: 0 });
+                  currentChunkText = i < endP ? `\n--- CONTEXTO DA PÁGINA ANTERIOR (${i}) ---\n${lastPageContent}` : "";
                   chunkStartPage = i + 1;
               }
           }
 
-          setPdfChunks(chunks); setPdfStatus('ready');
-          
+          setPdfChunks(chunks);
+          setPdfStatus('ready');
+          addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
+
           if (lastSessionData && lastSessionData.fileName === file.name) {
               const nextIndex = lastSessionData.lastChunkIndex + 1;
               if (nextIndex < chunks.length) {
@@ -704,115 +836,177 @@ export default function App() {
                   addLog('success', 'Arquivo já finalizado anteriormente.');
               }
           } else {
-             if (user) setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), { fileName: file.name, lastChunkIndex: -1, timestamp: new Date().toISOString() });
+              if (user) await setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), { fileName: file.name, lastChunkIndex: -1, lastChunkPages: 'Início', timestamp: new Date().toISOString() });
           }
-      } catch (error) { setPdfStatus('error'); addLog('error', `Erro PDF: ${error.message}`); }
+
+      } catch (error) {
+          console.error(error);
+          setPdfStatus('error');
+          addLog('error', `Erro crítico ao ler PDF: ${error.message}`);
+      }
   };
 
-  const handleResetPdf = () => { if (pdfStatus === 'processing') return; setPdfFile(null); setPdfChunks([]); setPdfStatus('idle'); setCurrentChunkIndex(0); };
-  const handleRestartPdf = () => { if (!pdfFile || pdfStatus === 'processing') return; setPdfChunks(pdfChunks.map(c => ({...c, status: 'pending'}))); setCurrentChunkIndex(0); setPdfStatus('ready'); };
-  const handleJumpToChunk = (index) => { if(pdfStatus==='processing') return; setCurrentChunkIndex(index); setPdfChunks(p=>{const n=[...p]; n[index]={...n[index], status:'pending'}; return n;}); };
-  const togglePdfProcessing = () => {
-     if (pdfStatusRef.current === 'processing') { setPdfStatus('pausing'); addLog('warning', 'Pausando...'); }
-     else { setPdfStatus('processing'); processorRef.current = false; setTimeout(() => processNextChunk(), 100); }
+  const handleResetPdf = () => {
+      if (pdfStatus === 'processing' || pdfStatus === 'pausing') return; 
+      setPdfFile(null); setPdfChunks([]); setPdfStatus('idle'); setCurrentChunkIndex(0); setProcessingLogs([]); setConsecutiveErrors(0); setPdfStartPage(''); setPdfEndPage('');
+  };
+
+  const handleRestartPdf = () => {
+      if (!pdfFile || pdfStatus === 'processing' || pdfStatus === 'pausing') return;
+      const resetChunks = pdfChunks.map(c => ({ ...c, status: 'pending', errorCount: 0 }));
+      setPdfChunks(resetChunks); setCurrentChunkIndex(0); setPdfStatus('ready'); setProcessingLogs([]); setConsecutiveErrors(0);
+      if (user) setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), { fileName: pdfFile.name, lastChunkIndex: -1, lastChunkPages: 'Início', timestamp: new Date().toISOString() });
+      addLog('info', 'Processamento reiniciado do zero.');
+  };
+
+  const handleJumpToChunk = (index) => {
+      if (pdfStatus === 'processing' || pdfStatus === 'idle' || pdfStatus === 'pausing' || pdfStatus === 'reading') return;
+      setCurrentChunkIndex(index);
+      setPdfChunks(prev => { const newChunks = [...prev]; newChunks[index] = { ...newChunks[index], status: 'pending', errorCount: 0 }; return newChunks; });
   };
 
   const processNextChunk = async () => {
       const activeIndex = currentChunkIndexRef.current;
       if (processorRef.current || pdfStatusRef.current === 'completed') return;
-      if (activeIndex >= pdfChunksRef.current.length) { setPdfStatus('completed'); addLog('success', 'Finalizado!'); return; }
+      if (activeIndex >= pdfChunksRef.current.length) { setPdfStatus('completed'); addLog('success', 'Processamento Completo!'); return; }
 
       const chunk = pdfChunksRef.current[activeIndex];
       if (pdfStatusRef.current !== 'pausing') setPdfStatus('processing');
-      processorRef.current = true;
+      processorRef.current = true; 
       addLog('info', `Processando fatia ${chunk.pages}...`);
 
       try {
           const ovr = overridesRef.current;
-          const questions = await executeWithKeyRotation("Geração PDF", async (key) => {
-               const prompt = `Extraia questões médicas (MedMaps) deste texto.
-               - Instituição: ${ovr.overrideInst || "Detectar"}
-               - Ano: ${ovr.overrideYear || "Detectar"}
-               - Use JSON ESTRITO.`;
-               const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
-                   method: 'POST', headers: { 'Content-Type': 'application/json' },
-                   body: JSON.stringify({ contents: [{ parts: [{ text: prompt + "\nTEXTO:\n" + chunk.text }] }] })
-               });
-               const d = await res.json(); if(d.error) throw new Error(d.error.message);
-               return safeJsonParse(d.candidates?.[0]?.content?.parts?.[0]?.text || "");
+          const questions = await executeWithKeyRotation("Geração", async (key) => {
+              const systemPrompt = `
+                Você é um especialista em provas de Residência Médica (MedMaps).
+                Analise o texto extraído de um PDF.
+                CONTEXTO: Inst: ${ovr.overrideInst || "Detectar"}, Ano: ${ovr.overrideYear || "Detectar"}
+                LISTA CLASSIFICAÇÃO: ${JSON.stringify(ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap)}
+                Retorne JSON ESTRITO: [{ "institution": "...", "year": "", "area": "", "topic": "", "text": "...", "options": [...], "correctOptionId": "", "explanation": "" }]
+              `;
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt + "\n\nTEXTO PDF:\n" + chunk.text }] }] })
+              });
+              const data = await response.json(); if (data.error) throw new Error(data.error.message);
+              return safeJsonParse(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
           });
 
-          let processed = await Promise.all(questions.map(async (q) => {
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
               let finalInst = ovr.overrideInst || cleanInstitutionText(q.institution);
               let finalYear = ovr.overrideYear || q.year;
               let foundOnWeb = false;
               if (webSearchRef.current && (!finalInst || !finalYear)) {
                   try {
                       await new Promise(r => setTimeout(r, Math.random() * 2000));
-                      const sr = await searchQuestionSource(q.text);
-                      if (sr.institution) { finalInst = sr.institution; foundOnWeb = true; }
-                      if (sr.year) finalYear = sr.year;
-                  } catch(e){}
+                      const searchResult = await searchQuestionSource(q.text);
+                      if (searchResult.institution) { finalInst = searchResult.institution; foundOnWeb = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
+                  } catch (err) {}
               }
               const hashId = await generateQuestionHash(q.text);
-              let isDup = false; if(hashId) { const e = await getDoc(doc(db,"questions",hashId)); if(e.exists()) isDup=true; }
-              return { ...q, institution: finalInst, year: finalYear, area: ovr.overrideArea||q.area, topic: ovr.overrideTopic||q.topic, sourceFound: foundOnWeb, hashId, isDuplicate: isDup };
+              let isDuplicate = false;
+              if (hashId) { const existingDoc = await getDoc(doc(db, "questions", hashId)); if (existingDoc.exists()) isDuplicate = true; }
+              return { ...q, institution: finalInst, year: finalYear, area: ovr.overrideArea || q.area, topic: ovr.overrideTopic || q.topic, sourceFound: foundOnWeb, hashId, isDuplicate };
           }));
 
-          // PERMITIR DUPLICATAS (PDF)
-          const newQs = processed;
+          // MUDANÇA: Permitir duplicatas
+          const newQuestions = processedQuestions;
 
-          if (newQs.length > 0 && doubleCheckRef.current) {
-              addLog('info', `Auditando ${newQs.length} questões...`);
-              for(let i=0; i<newQs.length; i++) {
-                  if(i>0) await new Promise(r=>setTimeout(r,150));
-                  try { const v = await verifyQuestionWithAI(newQs[i]); newQs[i] = {...newQs[i], verificationStatus: v.status, verificationReason: v.reason}; }
-                  catch(e) { newQs[i].verificationStatus = 'unchecked'; }
+          if (newQuestions.length > 0) {
+              if (doubleCheckRef.current) {
+                  addLog('info', `Auditando ${newQuestions.length} questões...`);
+                  for (let i = 0; i < newQuestions.length; i++) {
+                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
+                      try {
+                          const verification = await verifyQuestionWithAI(newQuestions[i]);
+                          newQuestions[i] = { ...newQuestions[i], verificationStatus: verification.status, verificationReason: verification.reason };
+                      } catch (err) { newQuestions[i] = { ...newQuestions[i], verificationStatus: 'unchecked' }; }
+                  }
+              } else {
+                  newQuestions.forEach((q, idx) => { newQuestions[idx] = { ...q, verificationStatus: 'unchecked' }; });
               }
+
+              const batch = writeBatch(db);
+              newQuestions.forEach(q => {
+                  batch.set(doc(db, "draft_questions", q.hashId || doc(collection(db, "draft_questions")).id), {
+                      ...q, createdAt: new Date().toISOString(), createdBy: user.email, sourceFile: pdfFile.name, sourcePages: chunk.pages, hasImage: false
+                  });
+              });
+              await batch.commit();
           }
 
-          const batch = writeBatch(db);
-          newQs.forEach(q => {
-              batch.set(doc(db, "draft_questions", q.hashId || doc(collection(db,"draft_questions")).id), {
-                  ...q, createdAt: new Date().toISOString(), createdBy: user.email, sourceFile: pdfFile.name, sourcePages: chunk.pages
-              });
-          });
-          await batch.commit();
+          addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} questões salvas.`);
+          setPdfChunks(prev => { const newChunks = [...prev]; newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'success' }; return newChunks; });
+          setConsecutiveErrors(0); 
 
-          setPdfChunks(p => { const n = [...p]; n[activeIndex] = { ...n[activeIndex], status: 'success' }; return n; });
-          setConsecutiveErrors(0);
           if (user) setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), { fileName: pdfFile.name, lastChunkIndex: activeIndex, lastChunkPages: chunk.pages, timestamp: new Date().toISOString() });
 
           if (pdfStatusRef.current === 'pausing') { setPdfStatus('paused'); processorRef.current = false; return; }
-          setCurrentChunkIndex(p => p + 1); setTimeout(() => { processorRef.current = false; processNextChunk(); }, 500);
+          setCurrentChunkIndex(prev => prev + 1); setTimeout(() => { processorRef.current = false; processNextChunk(); }, 500); 
 
       } catch (error) {
-          console.error(error);
           const msg = error.message || "";
-          const retry = extractRetryTime(msg);
-          let delay = retry ? (retry*1000)+2000 : 3000;
-          if (msg.includes("Quota") || msg.includes("429")) { delay = 60000; addLog('warning', 'Cota cheia. 60s...'); }
-          
-          const newErr = chunk.errorCount + 1;
-          if (newErr >= 3) {
-              setPdfChunks(p => { const n = [...p]; n[activeIndex] = { ...n[activeIndex], status: 'error', errorCount: newErr }; return n; });
-              processorRef.current = false; setCurrentChunkIndex(p=>p+1); setTimeout(()=>processNextChunk(), 1000); return;
+          let delay = 3000;
+          if (msg.includes("Quota") || msg.includes("429")) { delay = 60000; addLog('warning', 'Cota esgotada. 60s...'); }
+          else {
+              const newErrorCount = chunk.errorCount + 1;
+              delay = 3000 * Math.pow(2, newErrorCount);
+              if (newErrorCount >= 3) {
+                  addLog('error', `Fatia ${chunk.pages} falhou 3x. Pulando.`);
+                  setPdfChunks(prev => { const n = [...prev]; n[activeIndex] = { ...n[activeIndex], status: 'error', errorCount: newErrorCount }; return n; });
+                  setConsecutiveErrors(0); processorRef.current = false; setCurrentChunkIndex(prev => prev + 1); setTimeout(() => processNextChunk(), 1000); return;
+              }
           }
-          setPdfChunks(p => { const n = [...p]; n[activeIndex] = { ...n[activeIndex], status: 'pending', errorCount: newErr }; return n; });
+          setPdfChunks(prev => { const n = [...prev]; n[activeIndex] = { ...n[activeIndex], status: 'pending' }; return n; });
           setTimeout(() => { processorRef.current = false; processNextChunk(); }, delay);
       }
   };
 
+  const togglePdfProcessing = () => {
+      const currentStatus = pdfStatusRef.current;
+      if (currentStatus === 'processing') { setPdfStatus('pausing'); addLog('warning', 'Solicitando pausa...'); }
+      else if (currentStatus === 'paused' || currentStatus === 'ready') { setPdfStatus('processing'); addLog('info', 'Processando...'); processorRef.current = false; setTimeout(() => processNextChunk(), 100); }
+  };
+
   // --- ACTIONS ---
+  const saveApiKeyFromModal = async () => {
+      const rawKeys = tempApiKeysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+      const uniqueKeys = [...new Set(rawKeys)];
+      if (uniqueKeys.length === 0) return showNotification('error', 'Adicione pelo menos uma chave.');
+      setIsSavingKey(true);
+      try {
+          setApiKeys(uniqueKeys); localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
+          await setDoc(doc(db, "settings", "global"), { geminiApiKeys: uniqueKeys, geminiApiKey: uniqueKeys[0], updatedAt: new Date().toISOString() }, { merge: true });
+          setShowApiKeyModal(false); showNotification('success', 'Chaves Salvas!');
+      } catch (error) { showNotification('error', 'Erro ao salvar.'); } finally { setIsSavingKey(false); }
+  };
+
+  const handleGetKey = () => { window.open('https://aistudio.google.com/app/api-keys', '_blank'); setShowTutorial(true); };
+  const handleModelChange = (modelName) => { setSelectedModel(modelName); localStorage.setItem('gemini_model', modelName); };
+  const showNotification = (type, text) => { setNotification({ type, text }); };
+  const closeNotification = () => { setNotification(null); };
+  const handleLogout = () => { signOut(auth); setParsedQuestions([]); setActiveTab('input'); };
+
+  const validateKeyAndFetchModels = async () => {
+      const currentKey = apiKeysRef.current[0]; 
+      if (!currentKey) return showNotification('error', 'Configure as chaves API primeiro.');
+      setIsValidatingKey(true);
+      try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${currentKey}`);
+          const data = await response.json();
+          if (data.models) { setAvailableModels(data.models.filter(m => m.name.includes("gemini"))); showNotification('success', 'Modelos atualizados!'); }
+      } catch (error) { showNotification('error', 'Erro ao validar chave.'); } finally { setIsValidatingKey(false); }
+  };
+
   const processWithAI = async () => {
-    if (!rawText.trim()) return showNotification('error', 'Cole o texto.');
+    if (activeTab === 'input' && !rawText.trim()) return showNotification('error', 'Cole o texto.');
     setIsProcessing(true);
     try {
         const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
         const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
-             const prompt = `Extraia questões médicas JSON ESTRITO.
-             - Instituição: ${ovr.overrideInst || "Detectar"}
-             - Ano: ${ovr.overrideYear || "Detectar"}`;
+             const prompt = `Extraia questões médicas JSON ESTRITO. Contexto: Inst: ${ovr.overrideInst}, Ano: ${ovr.overrideYear}.`;
              const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
                  method: 'POST', headers: { 'Content-Type': 'application/json' },
                  body: JSON.stringify({ contents: [{ parts: [{ text: prompt + "\nCONTEÚDO:\n" + rawText }] }] })
@@ -825,7 +1019,7 @@ export default function App() {
              let finalInst = ovr.overrideInst || cleanInstitutionText(q.institution);
              let finalYear = ovr.overrideYear || q.year;
              let foundOnWeb = false;
-             if (isWebSearchEnabled && (!finalInst || !finalYear)) {
+             if (isWebSearchEnabled) {
                  try {
                      await new Promise(r=>setTimeout(r, Math.random()*2000));
                      const s = await searchQuestionSource(q.text);
@@ -838,7 +1032,7 @@ export default function App() {
              return { ...q, institution: finalInst, year: finalYear, area: ovr.overrideArea||q.area, topic: ovr.overrideTopic||q.topic, sourceFound: foundOnWeb, hashId: hash, isDuplicate: isDup };
         }));
 
-        // PERMITIR DUPLICATAS (TEXTO)
+        // MUDANÇA: Permitir duplicatas
         const uniqueQs = finalQs;
 
         if (isDoubleCheckEnabled && uniqueQs.length > 0) {
@@ -853,7 +1047,6 @@ export default function App() {
         const batch = writeBatch(db);
         uniqueQs.forEach(q => batch.set(doc(db,"draft_questions",q.hashId || doc(collection(db,"draft_questions")).id), {...q, createdAt: new Date().toISOString(), createdBy: user.email}));
         await batch.commit();
-
         setRawText(''); setActiveTab('review'); showNotification('success', 'Enviado para fila!');
     } catch (error) { showNotification('error', error.message); } finally { setIsProcessing(false); }
   };
@@ -872,10 +1065,10 @@ export default function App() {
   
   const handleApproveFilteredClick = () => {
       const targetQuestions = getFilteredQuestions();
-      const count = targetQuestions.length; // Agora conta tudo, incluindo duplicatas
+      const count = targetQuestions.length; // Conta tudo
       if (count === 0) return showNotification('error', 'Nada para aprovar.');
       const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
-      setConfirmationModal({ isOpen: true, type: 'approve_filtered', title: `Aprovar ${count}?`, message: `Filtros: ${activeLabels} (Inclui atualizações de duplicadas)`, confirmText: 'Publicar/Atualizar', confirmColor: 'emerald' });
+      setConfirmationModal({ isOpen: true, type: 'approve_filtered', title: `Aprovar ${count}?`, message: `Filtros: ${activeLabels}`, confirmText: 'Publicar/Atualizar', confirmColor: 'emerald' });
   };
 
   const handleDiscardFilteredClick = () => {
@@ -886,17 +1079,14 @@ export default function App() {
 
   const executeConfirmationAction = async () => {
       const { type, data } = confirmationModal; setConfirmationModal({ ...confirmationModal, isOpen: false });
-      
-      // LIMPEZA EM MASSA
-      if (type === 'clear_institution' || type === 'clear_year') {
+      if (type === 'delete_one') { await deleteDoc(doc(db, "draft_questions", data.id)); showNotification('success', 'Excluído.'); return; }
+      if (type.startsWith('clear_')) {
           const field = type === 'clear_institution' ? 'institution' : 'year';
           const targetQuestions = getFilteredQuestions();
           const batch = writeBatch(db);
           targetQuestions.forEach(q => batch.update(doc(db,"draft_questions",q.id), {[field]: ''}));
           await batch.commit(); showNotification('success', 'Limpo.'); return;
       }
-
-      if (type === 'delete_one') { await deleteDoc(doc(db, "draft_questions", data.id)); showNotification('success', 'Excluído.'); return; }
 
       setIsBatchAction(true);
       const batch = writeBatch(db);
@@ -908,8 +1098,7 @@ export default function App() {
               targetQuestions.forEach(q => {
                   const { id, ...rest } = q;
                   if (q.area && q.topic && q.text) {
-                      // Se duplicada, vai atualizar. Se nova, vai criar.
-                      batch.set(doc(db,"questions",id), {...rest, createdAt: new Date().toISOString(), approvedBy: user.email});
+                      batch.set(doc(db,"questions",id), {...rest, updatedAt: new Date().toISOString(), approvedBy: user.email}); // Overwrite/Update
                       batch.delete(doc(db,"draft_questions",id)); c++;
                   }
               });
@@ -922,11 +1111,11 @@ export default function App() {
   };
 
   const approveQuestion = async (q) => {
-    // Duplicatas PERMITIDAS para atualização
+    // MUDANÇA: Permitir aprovar duplicatas (Update)
     if (!q.area || !q.topic) return showNotification('error', 'Preencha campos.');
     try {
        const { id, ...rest } = q;
-       await setDoc(doc(db, "questions", id), { ...rest, createdAt: new Date().toISOString(), approvedBy: user.email });
+       await setDoc(doc(db, "questions", id), { ...rest, updatedAt: new Date().toISOString(), approvedBy: user.email });
        await deleteDoc(doc(db, "draft_questions", id)); 
        showNotification('success', q.isDuplicate ? 'Atualizada com sucesso!' : 'Publicada!');
     } catch(e) { showNotification('error', e.message); }
@@ -1154,6 +1343,7 @@ export default function App() {
                                 <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm">
                                     <Trash2 size={16} /> Descartar {currentFilteredList.length}
                                 </button>
+                                
                                 <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0">
                                     {isBatchAction ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16} />} 
                                     Aprovar {currentFilteredList.length}
@@ -1169,11 +1359,15 @@ export default function App() {
                     currentFilteredList.map((q, idx) => (
                         <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                             
-                            {/* --- STATUS HEADER (NOVO) --- */}
+                            {/* --- STATUS HEADER (NOVA ESTÉTICA) --- */}
                             <div className="border-b border-gray-100 bg-gray-50/50 p-3 flex flex-wrap justify-end gap-2 items-center min-h-[40px]">
                                 {q.verificationStatus === 'verified' && <div className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 border border-emerald-200"><ShieldCheck size={12}/> Verificada</div>}
+                                
+                                {/* O AVISO DE SUSPEITA AGORA ESTÁ AQUI, SEGURO E SEM COBRIR NADA */}
                                 {q.verificationStatus === 'suspicious' && <div className="bg-red-100 text-red-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 border border-red-200" title={q.verificationReason}><ShieldAlert size={12}/> Suspeita: {q.verificationReason}</div>}
+                                
                                 {q.sourceFound && <div className="bg-teal-100 text-teal-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 border border-teal-200"><Globe size={12}/> Fonte Web</div>}
+                                
                                 {q.isDuplicate && <div className="bg-amber-100 text-amber-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 border border-amber-200 animate-pulse"><Copy size={12}/> Duplicada</div>}
                             </div>
 
