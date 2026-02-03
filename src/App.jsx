@@ -1,38 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  Map, Save, Trash2, Settings, CheckCircle, 
-  AlertCircle, FileText, Database, 
-  Loader2, Wand2, Cpu, RefreshCw, User, X,
-  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
-  AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
-  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter
+  Stethoscope, Scissors, Baby, HeartPulse, Activity, BookOpen, BarChart2, 
+  Settings, LogOut, Search, CheckCircle, Clock, Menu, X, Lock, Mail, 
+  ChevronRight, ArrowRight, AlertCircle, ArrowLeft, Play, Filter, CheckSquare, 
+  Square, Edit2, Check, Image as ImageIcon, RotateCcw, Home, List, Plus, 
+  ChevronDown, ChevronUp, FileText, PlayCircle, Eye, PauseCircle, Save, 
+  Database, User, Bell, Shield, Target, TrendingUp, Award, Info, XCircle, 
+  TrendingDown, HelpCircle, RefreshCw, Repeat, Trash2, AlertTriangle, Zap, 
+  CloudUpload, Key, Users, UserPlus, Calendar, PlusCircle, FilePlus, Map, Brain,
+  Flag, Copy, MessageSquarePlus, ChevronLeft, PanelLeftClose, PanelLeftOpen,
+  CreditCard, Smartphone, Link as LinkIcon, ExternalLink
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from "firebase/app";
+import { initializeApp, deleteApp } from "firebase/app";
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
+  getFirestore, collection, getDocs, doc, setDoc, addDoc, 
+  getDoc, onSnapshot, query, where, writeBatch, updateDoc, deleteDoc
 } from "firebase/firestore";
 import { 
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
+  signOut, onAuthStateChanged, updateProfile, updatePassword, 
+  reauthenticateWithCredential, EmailAuthProvider 
 } from "firebase/auth";
-
-// --- PDF.JS IMPORT (Dynamic CDN) ---
-const loadPdfJs = async () => {
-    if (window.pdfjsLib) return window.pdfjsLib;
-    
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-        script.onload = () => {
-            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            resolve(window.pdfjsLib);
-        };
-        script.onerror = reject;
-        document.head.appendChild(script);
-    });
-};
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -45,2399 +35,1586 @@ const firebaseConfig = {
   measurementId: "G-XNHXB5BCGF"
 };
 
+// Inicializa Firebase Principal
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// --- DADOS DE REFERÊNCIA ---
+// --- DADOS ESTÁTICOS DAS ÁREAS ---
 const areasBase = [
-  'Clínica Médica', 
-  'Cirurgia Geral', 
-  'Ginecologia e Obstetrícia', 
-  'Pediatria', 
-  'Preventiva'
+  { id: 'cirurgia', title: 'Cirurgia Geral', icon: Scissors, color: 'bg-emerald-50 text-emerald-600', borderColor: 'hover:border-emerald-200' },
+  { id: 'clinica', title: 'Clínica Médica', icon: Stethoscope, color: 'bg-blue-50 text-blue-600', borderColor: 'hover:border-blue-200' },
+  { id: 'go', title: 'Ginecologia e Obstetrícia', icon: HeartPulse, color: 'bg-rose-50 text-rose-600', borderColor: 'hover:border-rose-200' },
+  { id: 'pediatria', title: 'Pediatria', icon: Baby, color: 'bg-amber-50 text-amber-600', borderColor: 'hover:border-amber-200' },
+  { id: 'preventiva', title: 'Preventiva', icon: Shield, color: 'bg-violet-50 text-violet-600', borderColor: 'hover:border-violet-200' },
 ];
 
 const themesMap = {
-    'Clínica Médica': [
-        'Cardiologia', 'Dermatologia', 'Endocrinologia e Metabologia', 'Gastroenterologia', 'Hematologia', 'Hepatologia', 'Infectologia', 'Nefrologia', 'Neurologia', 'Pneumologia', 'Psiquiatria', 'Reumatologia'
-    ],
-    'Cirurgia Geral': [
-        'Abdome Agudo', 'Cirurgia Hepatobiliopancreática', 'Cirurgia Torácica e de Cabeça e Pescoço', 'Cirurgia Vascular', 'Cirurgia do Esôfago e Estômago', 'Coloproctologia', 'Hérnias e Parede Abdominal', 'Pré e Pós-Operatório', 'Queimaduras', 'Resposta Metabólica e Cicatrização', 'Trauma', 'Urologia'
-    ],
-    'Ginecologia e Obstetrícia': [
-        'Ciclo Menstrual e Anticoncepção', 'Climatério e Menopausa', 'Doenças Intercorrentes na Gestação', 'Infecções Congênitas e Gestacionais', 'Infecções Ginecológicas e ISTs', 'Mastologia', 'Obstetrícia Fisiológica e Pré-Natal', 'Oncologia Pélvica', 'Parto e Puerpério', 'Sangramentos da Gestação', 'Uroginecologia e Distopias', 'Vitalidade Fetal e Amniograma'
-    ],
-    'Pediatria': [
-        'Adolescência e Puberdade', 'Afecções Respiratórias', 'Aleitamento Materno e Nutrição', 'Cardiologia e Reumatologia Pediátrica', 'Crescimento e Desenvolvimento', 'Emergências e Acidentes', 'Gastroenterologia Pediátrica', 'Imunizações', 'Infectopediatria e Exantemáticas', 'Nefrologia Pediátrica', 'Neonatologia: Patologias', 'Neonatologia: Sala de Parto'
-    ],
-    'Preventiva': [
-        'Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética'
-    ]
+    'clinica': ['Cardiologia', 'Dermatologia', 'Endocrinologia e Metabologia', 'Gastroenterologia', 'Hematologia', 'Hepatologia', 'Infectologia', 'Nefrologia', 'Neurologia', 'Pneumologia', 'Psiquiatria', 'Reumatologia'],
+    'cirurgia': ['Abdome Agudo', 'Cirurgia Hepatobiliopancreática', 'Cirurgia Torácica e de Cabeça e Pescoço', 'Cirurgia Vascular', 'Cirurgia do Esôfago e Estômago', 'Coloproctologia', 'Hérnias e Parede Abdominal', 'Pré e Pós-Operatório', 'Queimaduras', 'Resposta Metabólica e Cicatrização', 'Trauma', 'Urologia'],
+    'go': ['Ciclo Menstrual e Anticoncepção', 'Climatério e Menopausa', 'Doenças Intercorrentes na Gestação', 'Infecções Congênitas e Gestacionais', 'Infecções Ginecológicas e ISTs', 'Mastologia', 'Obstetrícia Fisiológica e Pré-Natal', 'Oncologia Pélvica', 'Parto e Puerpério', 'Sangramentos da Gestação', 'Uroginecologia e Distopias', 'Vitalidade Fetal e Amniograma'],
+    'pediatria': ['Adolescência e Puberdade', 'Afecções Respiratórias', 'Aleitamento Materno e Nutrição', 'Cardiologia e Reumatologia Pediátrica', 'Crescimento e Desenvolvimento', 'Emergências e Acidentes', 'Gastroenterologia Pediátrica', 'Imunizações', 'Infectopediatria e Exantemáticas', 'Nefrologia Pediátrica', 'Neonatologia: Patologias', 'Neonatologia: Sala de Parto'],
+    'preventiva': ['Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética']
 };
 
-// --- HELPER: HASH ID GENERATOR (DEDUPLICATION) ---
-const generateQuestionHash = async (text) => {
-    if (!text) return null;
-    const normalized = text
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "");
-    
-    const msgBuffer = new TextEncoder().encode(normalized);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+const areaNameMap = {
+    'clinica': 'Clínica Médica',
+    'cirurgia': 'Cirurgia Geral',
+    'go': 'Ginecologia e Obstetrícia',
+    'pediatria': 'Pediatria',
+    'preventiva': 'Preventiva'
 };
 
-// --- HELPER: CLEAN INSTITUTION ---
-const cleanInstitutionText = (inst) => {
-    if (!inst) return "";
-    const lower = inst.toString().toLowerCase();
-    // Lista de termos que indicam "não informado" para serem limpos
-    if (
-        lower.includes("não informado") || 
-        lower.includes("nao informado") || 
-        lower.includes("detectar") ||
-        lower.includes("nao consta")
-    ) return "";
-    return inst;
+// --- HELPERS GLOBAIS ---
+const getAvailableQuestionCount = (allQuestions, areaTitle, topic = null, excludedIds = new Set()) => {
+  let filtered = allQuestions.filter(q => q.area === areaTitle);
+  if (topic) filtered = filtered.filter(q => q.topic === topic);
+  return filtered.filter(q => !excludedIds.has(q.id)).length;
 };
 
-// --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
-const extractRetryTime = (message) => {
-    const match = message.match(/retry in ([0-9\.]+)s/);
-    return match ? parseFloat(match[1]) : null;
+const getRealQuestionCount = (allQuestions, areaTitle, topic = null) => {
+  let filtered = allQuestions.filter(q => q.area === areaTitle);
+  if (topic) filtered = filtered.filter(q => q.topic === topic);
+  return filtered.length;
 };
 
-// --- HELPER: PARSER JSON BLINDADO (RECUPERAÇÃO ITERATIVA) ---
-// Tenta salvar o que for possível de um JSON cortado
-const safeJsonParse = (jsonString) => {
-    // 1. Limpeza básica
-    let clean = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-    clean = clean.replace(/[\u0000-\u0019]+/g, ""); 
+const getThemesForArea = (areaId, excludedIds = new Set(), allQuestions) => {
+  const list = themesMap[areaId] || [];
+  const areaName = areaNameMap[areaId];
+  return list.map((theme, index) => ({
+    id: index + 1,
+    name: theme,
+    count: getAvailableQuestionCount(allQuestions, areaName, theme, excludedIds),
+    total: getRealQuestionCount(allQuestions, areaName, theme)
+  }));
+};
 
-    // 2. Encontrar inicio do array
-    const startIndex = clean.indexOf('[');
-    if (startIndex === -1) {
-        // Tenta parsing direto caso não seja array
-        try { return JSON.parse(clean); } catch(e) { 
-            // Se falhar e não tiver array, tenta forçar como array vazio ou joga erro
-            throw new Error("Formato inválido: JSON não encontrado."); 
+const calculateDetailedStats = (simulations, allQuestions) => {
+  const stats = { totalQuestions: 0, totalCorrect: 0, byArea: {} };
+  areasBase.forEach(area => { stats.byArea[area.title] = { total: 0, correct: 0 }; });
+  stats.byArea['Geral'] = { total: 0, correct: 0 }; 
+
+  simulations.forEach(sim => {
+    if (sim.status === 'finished' && sim.answersData) {
+      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+      questions.forEach((q, idx) => {
+        const userAnswer = sim.answersData[idx];
+        if (userAnswer) {
+          const isCorrect = userAnswer === q.correctOptionId;
+          stats.totalQuestions++;
+          if (isCorrect) stats.totalCorrect++;
+          const areaKey = q.area || 'Geral';
+          if (!stats.byArea[areaKey]) stats.byArea[areaKey] = { total: 0, correct: 0 };
+          stats.byArea[areaKey].total++;
+          if (isCorrect) stats.byArea[areaKey].correct++;
         }
+      });
     }
-    clean = clean.substring(startIndex);
+  });
+  return stats;
+};
 
-    // 3. Tenta parse direto (Caminho Feliz)
-    try {
-        const parsed = JSON.parse(clean);
-        if (!Array.isArray(parsed) && typeof parsed === 'object') return [parsed];
-        return parsed;
-    } catch (e) {
-        console.warn("JSON quebrado detectado. Iniciando recuperação iterativa...", e.message);
-        
-        // 4. Estratégia de Recuperação Iterativa (Backtracking)
-        let currentString = clean;
-        let attempts = 0;
-        const maxAttempts = 50; // Evita loop infinito
+const getCorrectlyAnsweredIds = (simulations, allQuestions) => {
+  const ids = new Set();
+  simulations.forEach(sim => {
+    if (sim.status === 'finished' && sim.answersData) {
+      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+      questions.forEach((q, idx) => {
+        if (sim.answersData[idx] === q.correctOptionId) {
+          ids.add(q.id);
+        }
+      });
+    }
+  });
+  return ids;
+};
 
-        while (currentString.length > 2 && attempts < maxAttempts) {
-            attempts++;
-            
-            // Acha o último '}'
-            const lastClose = currentString.lastIndexOf('}');
-            
-            if (lastClose === -1) {
-                // Não tem mais objetos fechados, recuperação falhou total
-                console.error("Recuperação falhou: nenhum objeto válido encontrado.");
-                return []; // Retorna vazio para não travar o processo
-            }
-            
-            // Tenta fechar o array ali
-            const candidate = currentString.substring(0, lastClose + 1) + ']';
-            
+const calculateTopicPerformance = (simulations, areaTitle, allQuestions) => {
+  const topicStats = {};
+  simulations.forEach(sim => {
+    if (sim.status === 'finished' && sim.answersData) {
+      const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+      questions.forEach((q, idx) => {
+        if (q.area === areaTitle) {
+           const topic = q.topic;
+           const userAnswer = sim.answersData[idx];
+           const isCorrect = userAnswer === q.correctOptionId;
+           if (!topicStats[topic]) topicStats[topic] = { total: 0, correct: 0 };
+           if (userAnswer) {
+             topicStats[topic].total++;
+             if (isCorrect) topicStats[topic].correct++;
+           }
+        }
+      });
+    }
+  });
+  const topicsArray = Object.keys(topicStats).map(topic => {
+    const { total, correct } = topicStats[topic];
+    return { name: topic, total, correct, percentage: total === 0 ? 0 : Math.round((correct / total) * 100) };
+  });
+  const activeTopics = topicsArray.filter(t => t.total > 0);
+  activeTopics.sort((a, b) => a.percentage - b.percentage || b.total - a.total);
+  return activeTopics.slice(0, 3); 
+};
+
+const checkIsYesterday = (lastDateStr) => {
+    if (!lastDateStr) return false;
+    const parts = lastDateStr.split('/');
+    if (parts.length !== 3) return false;
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const year = parseInt(parts[2], 10);
+    const lastDate = new Date(year, month, day);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return lastDate.getDate() === yesterday.getDate() && lastDate.getMonth() === yesterday.getMonth() && lastDate.getFullYear() === yesterday.getFullYear();
+};
+
+// --- COMPONENTES UI HELPERS ---
+
+function CopyButton({ text, className }) {
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopy = (e) => {
+        e.stopPropagation();
+        const fallbackCopy = (txt) => {
+            const textArea = document.createElement("textarea");
+            textArea.value = txt;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
             try {
-                const result = JSON.parse(candidate);
-                console.log(`Recuperação com sucesso na tentativa ${attempts}! ${result.length} itens salvos de um JSON quebrado.`);
-                return result;
-            } catch (e2) {
-                currentString = currentString.substring(0, lastClose);
+                document.execCommand('copy');
+                setIsCopied(true);
+                setTimeout(() => setIsCopied(false), 2000);
+            } catch (err) {
+                console.error('Fallback copy failed', err);
             }
+            document.body.removeChild(textArea);
+        };
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    setIsCopied(true);
+                    setTimeout(() => setIsCopied(false), 2000);
+                })
+                .catch(() => fallbackCopy(text));
+        } else {
+            fallbackCopy(text);
         }
-        
-        // Se saiu do loop, falhou. Retorna array vazio para continuar o fluxo.
-        console.error("Falha total na recuperação do JSON após múltiplas tentativas.");
-        return [];
-    }
-};
+    };
 
-// --- COMPONENTE DE NOTIFICAÇÃO INTELIGENTE ---
-function NotificationToast({ notification, onClose, positionClass }) {
-  const [isHovered, setIsHovered] = useState(false);
-
-  useEffect(() => {
-    if (!notification || isHovered) return;
-    const timer = setTimeout(() => { onClose(); }, 6000);
-    return () => clearTimeout(timer);
-  }, [notification, isHovered, onClose]);
-
-  if (!notification) return null;
-
-  return (
-    <div 
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : notification.type === 'warning' ? 'bg-white border-amber-200 text-amber-700' : notification.type === 'info' ? 'bg-white border-blue-200 text-blue-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
-    >
-        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : notification.type === 'warning' ? 'bg-amber-100' : notification.type === 'info' ? 'bg-blue-100' : 'bg-emerald-100'}`}>
-            {notification.type === 'error' ? <AlertCircle size={20} /> : notification.type === 'warning' ? <AlertTriangle size={20} /> : notification.type === 'info' ? <Info size={20}/> : <CheckCircle size={20} />}
-        </div>
-        <div className="flex-1">
-            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Erro' : notification.type === 'warning' ? 'Atenção' : notification.type === 'info' ? 'Info' : 'Sucesso'}</p>
-            <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
-        </div>
-        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
-            <X size={18}/>
+    return (
+        <button 
+            onClick={handleCopy} 
+            className={`hover:text-blue-600 transition-colors flex items-center gap-1 ${className}`} 
+            title="Copiar"
+        >
+            {isCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+            {isCopied && <span className="text-[10px] text-emerald-600 font-bold ml-1">Copiado!</span>}
         </button>
+    );
+}
+
+// --- TOAST NOTIFICATIONS ---
+function ToastContainer({ toasts, removeToast }) {
+    return (
+        <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
+            {toasts.map(toast => (
+                <div 
+                    key={toast.id} 
+                    className={`
+                        pointer-events-auto flex items-center gap-3 p-4 rounded-xl shadow-xl border w-80 animate-in slide-in-from-right-full fade-in duration-300
+                        ${toast.type === 'success' ? 'bg-white border-emerald-100 text-emerald-800' : 
+                          toast.type === 'error' ? 'bg-white border-red-100 text-red-800' : 
+                          'bg-white border-blue-100 text-blue-800'}
+                    `}
+                >
+                    <div className={`
+                        p-2 rounded-full flex-shrink-0
+                        ${toast.type === 'success' ? 'bg-emerald-100 text-emerald-600' : 
+                          toast.type === 'error' ? 'bg-red-100 text-red-600' : 
+                          'bg-blue-100 text-blue-600'}
+                    `}>
+                        {toast.type === 'success' ? <Check size={20} /> : 
+                         toast.type === 'error' ? <AlertTriangle size={20} /> : 
+                         <Info size={20} />}
+                    </div>
+                    <div className="flex-1">
+                        <h4 className="font-bold text-sm">{toast.title}</h4>
+                        <p className="text-xs opacity-90 mt-0.5">{toast.message}</p>
+                    </div>
+                    <button onClick={() => removeToast(toast.id)} className="text-gray-400 hover:text-gray-600">
+                        <X size={16} />
+                    </button>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// --- MODAIS GLOBAIS ---
+function ReportModal({ isOpen, onClose, questionId, type, userId, addToast }) {
+    const [suggestedInstitution, setSuggestedInstitution] = useState('');
+    const [suggestedYear, setSuggestedYear] = useState('');
+    const [errorCategory, setErrorCategory] = useState('');
+    const [details, setDetails] = useState(''); 
+    const [isSending, setIsSending] = useState(false);
+
+    // Validação de estado
+    const isValid = type === 'error' 
+        ? !!errorCategory // Erro: precisa ter categoria
+        : (!!suggestedInstitution.trim() || !!suggestedYear.trim()); // Sugestão: pelo menos um dos campos
+
+    useEffect(() => {
+        if(isOpen) {
+            setSuggestedInstitution('');
+            setSuggestedYear('');
+            setErrorCategory('');
+            setDetails('');
+            setIsSending(false);
+        }
+    }, [isOpen]);
+
+    if (!isOpen) return null;
+
+    const errorOptions = [
+        "Enunciado incorreto/confuso",
+        "Alternativas com erro",
+        "Gabarito errado",
+        "Área errada",
+        "Tema errado",
+        "Instituição errada",
+        "Ano errado",
+        "Questão repetida",
+        "Outro"
+    ];
+
+    const handleSubmit = async () => {
+        if (!isValid) return;
+
+        setIsSending(true);
+        try {
+            const reportData = {
+                questionId,
+                userId: userId || 'anonymous',
+                type,
+                status: 'pending',
+                createdAt: new Date().toISOString()
+            };
+
+            if (type === 'suggestion') {
+                reportData.category = 'suggestion_update';
+                reportData.suggestedInstitution = suggestedInstitution;
+                reportData.suggestedYear = suggestedYear;
+                reportData.details = `Sugestão: Banca [${suggestedInstitution}] | Ano [${suggestedYear}]`;
+            } else {
+                reportData.category = errorCategory;
+                reportData.details = details;
+            }
+            
+            await addDoc(collection(db, "reports"), reportData);
+            
+            addToast('Recebido!', 'Sua colaboração foi enviada para análise.', 'success');
+            onClose();
+        } catch (error) {
+            console.error(error);
+            addToast('Erro', 'Não foi possível enviar o reporte.', 'error');
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        {type === 'error' ? <><AlertTriangle size={20} className="text-red-500"/> Reportar Erro</> : <><Edit2 size={20} className="text-blue-500"/> Sugerir Edição</>}
+                    </h3>
+                    <button onClick={onClose}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                </div>
+
+                {type === 'suggestion' ? (
+                    <div className="space-y-4 mb-6">
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-sm text-blue-800">
+                                Preencha a Banca <strong>E/OU</strong> o Ano desta questão.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Banca / Prova</label>
+                            <input 
+                                type="text"
+                                value={suggestedInstitution}
+                                onChange={e => setSuggestedInstitution(e.target.value)}
+                                placeholder="Ex: USP, ENARE, SURCE..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ano</label>
+                            <input 
+                                type="text"
+                                value={suggestedYear}
+                                onChange={e => setSuggestedYear(e.target.value)}
+                                placeholder="Ex: 2023, 2024, 2023/1..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    // --- MODO ERRO ---
+                    <>
+                        <div className="space-y-3 mb-4">
+                            <p className="text-sm text-gray-500">Qual o problema com esta questão?</p>
+                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                {errorOptions.map(opt => (
+                                    <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+                                        <input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" />
+                                        <span className="text-sm font-medium">{opt}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                Detalhes (Opcional)
+                            </label>
+                            <textarea 
+                                value={details} 
+                                onChange={e => setDetails(e.target.value)}
+                                placeholder="Descreva melhor o erro encontrado..."
+                                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                rows={3}
+                            />
+                        </div>
+                    </>
+                )}
+
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
+                    <button 
+                        onClick={handleSubmit} 
+                        disabled={isSending || !isValid} 
+                        className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 
+                            ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}
+                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}
+                    >
+                        {isSending ? 'Enviando...' : 'Enviar'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ExitConfirmationModal({ onClose, onConfirmExit, onSaveAndExit }) {
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+                <div className="text-center mb-6">
+                    <div className="bg-orange-100 p-4 rounded-full text-orange-600 inline-flex mb-4">
+                        <AlertCircle size={36} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-2">Simulado em Andamento!</h3>
+                    <p className="text-slate-500 text-sm leading-relaxed">
+                        Se você sair agora sem salvar, <strong>seu progresso será perdido</strong>. O que deseja fazer?
+                    </p>
+                </div>
+                <div className="flex flex-col gap-3">
+                    <button 
+                        onClick={onSaveAndExit} 
+                        className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Save size={18} /> Salvar e Sair
+                    </button>
+                    <button 
+                        onClick={onConfirmExit} 
+                        className="w-full py-3.5 rounded-xl border border-red-200 text-red-600 font-bold hover:bg-red-50 transition-colors"
+                    >
+                        Sair sem Salvar
+                    </button>
+                    <button 
+                        onClick={onClose} 
+                        className="w-full py-3.5 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors"
+                    >
+                        Continuar no Simulado
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function NotificationModal({ title, message, onClose, onConfirm, type = 'info', confirmText = "Entendido", cancelText = "Cancelar", isDangerous = false }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+        <div className="flex flex-col items-center text-center">
+          <div className={`p-3 rounded-full mb-4 ${type === 'error' || isDangerous ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
+             {type === 'error' || isDangerous ? <AlertTriangle size={32} /> : <Info size={32} />}
+          </div>
+          <h3 className="text-xl font-bold text-slate-900 mb-2">{title}</h3>
+          <p className="text-slate-500 mb-6 text-sm leading-relaxed">{message}</p>
+          {onConfirm ? (
+             <div className="flex gap-3 w-full">
+                <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">{cancelText}</button>
+                <button onClick={() => { onConfirm(); onClose(); }} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors ${isDangerous ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}>{confirmText}</button>
+             </div>
+          ) : (
+            <button onClick={onClose} className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-colors">{confirmText}</button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
-  
-  // Gestão de Chaves API (Múltiplas)
-  const [apiKeys, setApiKeys] = useState(() => JSON.parse(localStorage.getItem('gemini_api_keys') || '[]'));
-  
-  // Modelos - ATUALIZADO PARA PRO PADRÃO
-  const [availableModels, setAvailableModels] = useState([
-      { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (Padrão)' },
-      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }
-  ]);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-pro');
-  
-  // Estados UI Básicos
-  const [rawText, setRawText] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isBatchAction, setIsBatchAction] = useState(false); 
-  const [isSavingKey, setIsSavingKey] = useState(false);
-  const [parsedQuestions, setParsedQuestions] = useState([]);
-  const [activeTab, setActiveTab] = useState('input');
-  const [notification, setNotification] = useState(null);
-  const [isValidatingKey, setIsValidatingKey] = useState(false);
-  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
-  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
-  
-  // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
-  const [activeFilters, setActiveFilters] = useState(['all']); // Array em vez de string
-
-  // Override States (Pré-definições)
-  const [overrideInst, setOverrideInst] = useState('');
-  const [overrideYear, setOverrideYear] = useState('');
-  const [overrideArea, setOverrideArea] = useState('');
-  const [overrideTopic, setOverrideTopic] = useState('');
-
-  // Modais
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [tempApiKeysText, setTempApiKeysText] = useState('');
-  const [showTutorial, setShowTutorial] = useState(false);
-  
-  const [confirmationModal, setConfirmationModal] = useState({
-      isOpen: false, type: null, data: null, title: '', message: '', confirmText: '', confirmColor: ''
-  });
-  
-  // Login Inputs
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-
-  // --- BATCH IMAGE STATES ---
-  const [batchImages, setBatchImages] = useState([]); // { id, file, preview, status: 'pending'|'success'|'error', errorMsg }
-  const [batchStatus, setBatchStatus] = useState('idle'); // idle, processing, pausing, paused
-  const [batchLogs, setBatchLogs] = useState([]); // SEPARADO: Logs de imagens
-
-  // --- PDF PROCESSING STATES ---
-  const [pdfFile, setPdfFile] = useState(null);
-  const [pdfStatus, setPdfStatus] = useState('idle'); // idle, reading, ready, processing, pausing, paused, error, completed
-  const [pdfChunks, setPdfChunks] = useState([]); 
-  const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
-  const [processingLogs, setProcessingLogs] = useState([]);
-  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
-  
-  // PDF Range Inputs
-  const [pdfStartPage, setPdfStartPage] = useState('');
-  const [pdfEndPage, setPdfEndPage] = useState('');
-
-  // --- SESSION STATE (ÚLTIMO PDF) - AGORA VEM DO DB ---
-  const [lastSessionData, setLastSessionData] = useState(null);
-
-  const processorRef = useRef(null); 
-  const batchProcessorRef = useRef(null);
-  
-  // --- REFS ---
-  const pdfStatusRef = useRef(pdfStatus);
-  const pdfChunksRef = useRef(pdfChunks);
-  const batchImagesRef = useRef(batchImages);
-  const batchStatusRef = useRef(batchStatus);
-  const apiKeysRef = useRef(apiKeys);
-  const keyRotationIndex = useRef(0);
-  const doubleCheckRef = useRef(isDoubleCheckEnabled); 
-  const webSearchRef = useRef(isWebSearchEnabled); // Ref para o novo toggle
-  const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
-  const currentChunkIndexRef = useRef(currentChunkIndex); // REF PARA O INDEX
-
-  const CHUNK_SIZE = 10; 
-
-  // --- AUTH CHECK ---
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-        if (u) {
-            try {
-                const userDocRef = doc(db, "users", u.uid);
-                const userDoc = await getDoc(userDocRef);
-                if (userDoc.exists() && userDoc.data().role === 'admin') {
-                    setUser(u);
-                } else {
-                    await signOut(auth);
-                    setUser(null);
-                    showNotification('error', 'Acesso negado: Usuário não é administrador.');
-                }
-            } catch (error) {
-                console.error("Erro ao verificar role:", error);
-                await signOut(auth);
-                setUser(null);
-            }
-        } else {
-            setUser(null);
-        }
-        setIsLoadingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // --- SYNC REFS ---
-  useEffect(() => { pdfStatusRef.current = pdfStatus; }, [pdfStatus]);
-  useEffect(() => { pdfChunksRef.current = pdfChunks; }, [pdfChunks]);
-  useEffect(() => { batchImagesRef.current = batchImages; }, [batchImages]);
-  useEffect(() => { batchStatusRef.current = batchStatus; }, [batchStatus]);
-  useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
-  useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
-  useEffect(() => { webSearchRef.current = isWebSearchEnabled; }, [isWebSearchEnabled]);
-  useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
-  
-  // SYNC REF DO INDEX
-  useEffect(() => { currentChunkIndexRef.current = currentChunkIndex; }, [currentChunkIndex]);
-
-  // --- SYNC CHAVES API (GLOBAL SETTINGS) ---
-  useEffect(() => {
-      if (!user) return;
-      const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
-          if (docSnap.exists()) {
-              const data = docSnap.data();
-              let newKeys = [];
-              if (data.geminiApiKeys && Array.isArray(data.geminiApiKeys)) {
-                  newKeys = data.geminiApiKeys;
-              } else if (data.geminiApiKey) {
-                  newKeys = [data.geminiApiKey];
-              }
-
-              // Normaliza chaves e remove duplicatas no carregamento também
-              const uniqueKeys = [...new Set(newKeys.filter(k => k && k.trim().length > 0))];
-
-              if (JSON.stringify(uniqueKeys) !== JSON.stringify(apiKeysRef.current)) {
-                  setApiKeys(uniqueKeys);
-                  localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
-              }
-          }
-      }, (error) => console.error("Erro ao sincronizar chaves:", error));
-      return () => unsubscribe();
-  }, [user]);
-
-  // --- SYNC RASCUNHOS ---
-  useEffect(() => {
-      if (!user) { setParsedQuestions([]); return; }
-      const q = query(collection(db, "draft_questions"), orderBy("createdAt", "desc"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-          const drafts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, status: 'draft' }));
-          setParsedQuestions(drafts);
-      });
-      return () => unsubscribe();
-  }, [user]);
-
-  // --- SYNC PROGRESSO DO PDF (POR USUÁRIO) ---
-  useEffect(() => {
-      if (!user) {
-          setLastSessionData(null);
-          return;
-      }
-      // Escuta mudanças em tempo real no documento de progresso do usuário
-      const unsubscribe = onSnapshot(doc(db, "users", user.uid, "progress", "pdf_session"), (docSnap) => {
-          if (docSnap.exists()) {
-              setLastSessionData(docSnap.data());
-          } else {
-              setLastSessionData(null);
-          }
-      });
-      return () => unsubscribe();
-  }, [user]);
-
-  // --- ROTATION HELPER ---
-  const executeWithKeyRotation = async (operationName, requestFn) => {
-      const keys = apiKeysRef.current;
-      if (!keys || keys.length === 0) throw new Error("Nenhuma chave API configurada.");
-
-      let lastError = null;
-      const startIndex = keyRotationIndex.current;
-
-      for (let i = 0; i < keys.length; i++) {
-          const currentIndex = (startIndex + i) % keys.length;
-          const currentKey = keys[currentIndex];
-          
-          keyRotationIndex.current = (currentIndex + 1) % keys.length;
-
-          try {
-              return await requestFn(currentKey);
-          } catch (error) {
-              const msg = error.message || "";
-              const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429");
-              
-              if (isQuotaError) {
-                  const logFn = operationName.includes("Imagem") ? addBatchLog : addLog;
-                  logFn('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
-                  lastError = error;
-                  continue; 
-              } else {
-                  throw error; 
-              }
-          }
-      }
-      throw lastError || new Error("Todas as chaves falharam.");
-  };
-
-  // --- NOVO: FUNÇÃO DE PESQUISA GOOGLE (BANCAS) ---
-  const searchQuestionSource = async (questionText) => {
-      return executeWithKeyRotation("Pesquisa Web", async (key) => {
-          const systemPrompt = `Você é um verificador de questões de residência médica.
-          Sua missão: Identificar a origem da questão usando a Pesquisa Google.
-          
-          CRITÉRIOS DE ESCOLHA:
-          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal sobre simulados).
-
-          REGRAS DE FORMATAÇÃO DE NOME (CRÍTICO):
-          - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
-          - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
-          - Exemplo Bom: "BA - SUS Bahia"
-          - Exemplo Bom: "SP - USP São Paulo"
-          - Exemplo Bom: "Nacional - ENARE"
-
-          SAÍDA OBRIGATÓRIA (JSON):
-          {
-            "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
-            "year": "Ano (apenas números, ou vazio se não achar)"
-          }
-          `;
-
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${key}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: `QUESTÃO PARA IDENTIFICAR:\n${questionText}` }] }],
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                tools: [{ google_search: {} }] 
-              })
-            }
-          );
-
-          if (!response.ok) throw new Error("Erro na API Search");
-          
-          const data = await response.json();
-          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
-          // Tenta limpar e parsear
-          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          try {
-              return JSON.parse(jsonString);
-          } catch(e) {
-              // Fallback se não vier JSON: Tenta extrair linhas
-              console.warn("Search não retornou JSON, tentando extrair texto:", jsonString);
-              return { institution: "", year: "" };
-          }
-      });
-  };
-
-  // --- LOGIC: VERIFICATION AGENT (DOUBLE CHECK) ---
-  const verifyQuestionWithAI = async (questionData) => {
-      return executeWithKeyRotation("Auditoria", async (key) => {
-          const verifyPrompt = `
-            Você é um Auditor Sênior de Questões Médicas.
-            Analise a questão abaixo gerada por uma IA.
-            
-            QUESTÃO:
-            Enunciado: ${questionData.text}
-            Alternativas: ${JSON.stringify(questionData.options)}
-            Gabarito Indicado: ${questionData.correctOptionId}
-            Comentário Gerado: ${questionData.explanation}
-            
-            TAREFA:
-            Verifique se a questão é medicamente correta, se o gabarito faz sentido e se não há alucinações graves.
-            
-            Retorne APENAS um JSON:
-            {
-                "isValid": boolean (true se aceitável, false se tiver erro grave/alucinação),
-                "reason": "Explicação curta se for false"
-            }
-          `;
-
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: verifyPrompt }] }] })
-          });
-          
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-
-          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          return safeJsonParse(jsonString); // Usa o parser blindado
-      }).then(result => {
-          return {
-              status: result.isValid ? 'verified' : 'suspicious',
-              reason: result.reason || (result.isValid ? "Verificado por IA" : "Inconsistência detectada")
-          };
-      });
-  };
-
-  // --- COMMON: LOGS ---
-  const addLog = (type, message) => {
-      const time = new Date().toLocaleTimeString();
-      setProcessingLogs(prev => [{ type, message, time }, ...prev].slice(0, 50)); 
-  };
-  
-  // --- BATCH LOGS (SEPARADO) ---
-  const addBatchLog = (type, message) => {
-      const time = new Date().toLocaleTimeString();
-      setBatchLogs(prev => [{ type, message, time }, ...prev].slice(0, 50));
-  };
-
-  // --- MUDANÇA 2: FUNÇÃO DE TOGGLE DO FILTRO ---
-  const toggleFilter = (filterKey) => {
-      setActiveFilters(prev => {
-          if (filterKey === 'all') return ['all'];
-          let newFilters = prev.filter(f => f !== 'all');
-          
-          if (newFilters.includes(filterKey)) {
-              newFilters = newFilters.filter(f => f !== filterKey);
-          } else {
-              newFilters.push(filterKey);
-          }
-          
-          if (newFilters.length === 0) return ['all'];
-          return newFilters;
-      });
-  };
-
-  // --- MUDANÇA 3: FILTRO COM LÓGICA 'OR' (SOMA) ---
-  const getFilteredQuestions = () => {
-    if (activeFilters.includes('all')) return parsedQuestions;
-    
-    return parsedQuestions.filter(q => {
-      // Verifica condições ativas
-      const matchesVerified = activeFilters.includes('verified') && q.verificationStatus === 'verified';
-      const matchesSuspicious = activeFilters.includes('suspicious') && q.verificationStatus === 'suspicious';
-      const matchesSource = activeFilters.includes('source') && q.sourceFound;
-      const matchesNoSource = activeFilters.includes('no_source') && !q.sourceFound; // NOVA
-      const matchesDuplicates = activeFilters.includes('duplicates') && q.isDuplicate;
-
-      // Se bater em QUALQUER um, passa (Lógica OR)
-      const isMatch = matchesVerified || matchesSuspicious || matchesSource || matchesNoSource || matchesDuplicates;
-      
-      // Mas se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde
-      if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
-
-      return isMatch;
-    });
-  };
-
-  // --- FILTER CONFIG (ATUALIZADA) ---
-  const filterLabels = {
-      'all': 'Todas',
-      'verified': 'Verificadas',
-      'source': 'Com Fonte',
-      'no_source': 'Sem Fonte', // NOVO LABEL
-      'suspicious': 'Suspeitas',
-      'duplicates': 'Duplicadas'
-  };
-
-  // --- LOGIC: BATCH IMAGE PROCESSING ---
-  const handleBatchImageUpload = (e) => {
-      const files = Array.from(e.target.files);
-      if (files.length === 0) return;
-
-      const newImages = files.map(file => ({
-          id: Math.random().toString(36).substr(2, 9),
-          file,
-          name: file.name,
-          preview: URL.createObjectURL(file),
-          status: 'pending',
-          errorMsg: ''
-      }));
-
-      setBatchImages(prev => [...prev, ...newImages]);
-      addBatchLog('info', `${files.length} imagens adicionadas à fila.`);
-  };
-
-  const handleBatchPaste = (e) => {
-      const items = e.clipboardData.items;
-      const newImages = [];
-      for (let i = 0; i < items.length; i++) {
-          if (items[i].type.indexOf("image") !== -1) {
-              const blob = items[i].getAsFile();
-              newImages.push({
-                  id: Math.random().toString(36).substr(2, 9),
-                  file: blob,
-                  name: `Colada_${new Date().getTime()}_${i}.png`,
-                  preview: URL.createObjectURL(blob),
-                  status: 'pending',
-                  errorMsg: ''
-              });
-          }
-      }
-      if (newImages.length > 0) {
-          setBatchImages(prev => [...prev, ...newImages]);
-          addBatchLog('info', `${newImages.length} imagens coladas (Ctrl+V) na fila.`);
-      }
-  };
-
-  const removeBatchImage = (id) => {
-      setBatchImages(prev => prev.filter(img => img.id !== id));
-  };
-
-  const clearBatchQueue = () => {
-      if (batchStatus === 'processing' || batchStatus === 'pausing') return;
-      setBatchImages([]);
-      addBatchLog('info', 'Fila de imagens limpa.');
-      setBatchLogs([]);
-  };
-
-  const toggleBatchProcessing = () => {
-      const currentStatus = batchStatusRef.current;
-      
-      if (currentStatus === 'processing') {
-          // LÓGICA DE PAUSA SUAVE
-          setBatchStatus('pausing');
-          addBatchLog('warning', 'Solicitando pausa... Aguardando a imagem atual finalizar.');
-      } else if (currentStatus === 'paused' || currentStatus === 'idle') {
-          setBatchStatus('processing');
-          addBatchLog('info', 'Iniciando processamento de imagens...');
-          batchProcessorRef.current = false; // Reset lock
-          setTimeout(() => processNextBatchImage(), 100);
-      }
-  };
-
-  const fileToBase64 = (file) => {
-      return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result.split(',')[1]);
-          reader.onerror = error => reject(error);
-      });
-  };
-
-  const processNextBatchImage = async () => {
-      // Verifica Bloqueio
-      if (batchProcessorRef.current) return;
-
-      // Verifica Status e Pausa Suave
-      const currentStatus = batchStatusRef.current;
-      
-      // Se estava pausando, agora efetiva a pausa
-      if (currentStatus === 'pausing') {
-          setBatchStatus('paused');
-          addBatchLog('warning', 'Processamento pausado com segurança.');
-          return;
-      }
-
-      if (currentStatus !== 'processing') return;
-
-      // Encontra a próxima pendente
-      const queue = batchImagesRef.current;
-      const nextImg = queue.find(img => img.status === 'pending');
-
-      if (!nextImg) {
-          setBatchStatus('idle');
-          addBatchLog('success', 'Fila de imagens finalizada!');
-          showNotification('success', 'Todas as imagens foram processadas.');
-          return;
-      }
-
-      batchProcessorRef.current = true; // Lock
-      const ovr = overridesRef.current;
-      const doDoubleCheck = doubleCheckRef.current; 
-      const doWebSearch = webSearchRef.current; // Ler status do Web Search
-      addBatchLog('info', `Processando imagem: ${nextImg.name}...`);
-
-      try {
-          // 1. Converter Base64
-          const base64Data = await fileToBase64(nextImg.file);
-          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
-
-          // 2. Chamar IA (Geração)
-          const questions = await executeWithKeyRotation("Imagem Batch", async (key) => {
-              const systemPrompt = `
-                Você é um especialista em banco de dados médicos (MedMaps).
-                Analise esta imagem (print de questão médica).
-                Extraia questões no formato JSON ESTRITO.
-                
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar da imagem)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar da imagem)"}
-
-                REGRAS:
-                1. Retorne APENAS o JSON (sem markdown).
-                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão usando a lista abaixo.
-                   - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
-                3. GABARITO E COMENTÁRIO: 
-                   - Tente encontrar o gabarito visual na imagem. Se não houver, RESOLVA a questão.
-                   - Gere sempre um campo "explanation".
-                
-                Formato Saída:
-                [
-                  {
-                    "institution": "String", "year": Number|String, "area": "String", "topic": "String",
-                    "text": "String", "options": [{"id": "a", "text": "String"}],
-                    "correctOptionId": "char", "explanation": "String"
-                  }
-                ]
-              `;
-
-              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                      contents: [{
-                          parts: [
-                              { text: systemPrompt },
-                              { inline_data: { mime_type: nextImg.file.type, data: base64Data } }
-                          ]
-                      }]
-                  })
-              });
-
-              const data = await response.json();
-              if (data.error) throw new Error(data.error.message);
-
-              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              return safeJsonParse(jsonString); // Usa o parser seguro
-          });
-
-          // 3. Pós-Processamento e Pesquisa Web (NOVO)
-          let processedQuestions = await Promise.all(questions.map(async (q) => {
-              let finalInst = q.institution;
-              let finalYear = q.year;
-              let foundOnWeb = false;
-
-              // CONDICIONAL: Só busca se faltar dados E a busca estiver ligada
-              const isMissingData = !finalInst || !finalYear;
-
-              // 1. Pesquisa Web (Se habilitado e necessário)
-              if (doWebSearch && isMissingData) {
-                  try {
-                      // Pequeno delay para distribuir a carga (não fazer 10 requests simultâneos exatos)
-                      await new Promise(r => setTimeout(r, Math.random() * 2000));
-                      const searchResult = await searchQuestionSource(q.text);
-                      
-                      // Só sobrescreve se a busca retornar algo válido (não apaga dados existentes)
-                      if (searchResult.institution) {
-                          finalInst = searchResult.institution;
-                          foundOnWeb = true;
-                      }
-                      if (searchResult.year) finalYear = searchResult.year;
-                  } catch (err) {
-                      console.warn("Falha ao pesquisar questão no Google:", err.message);
-                  }
-              }
-
-              // 2. Overrides (Têm prioridade máxima)
-              if (ovr.overrideInst) finalInst = ovr.overrideInst;
-              if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-              // 3. Limpeza
-              finalInst = cleanInstitutionText(finalInst);
-
-              const finalQ = {
-                  ...q,
-                  institution: finalInst,
-                  year: finalYear,
-                  area: ovr.overrideArea || q.area,
-                  topic: ovr.overrideTopic || q.topic,
-                  sourceFound: foundOnWeb // Flag para a UI
-              };
-
-              // 4. Gera Hash (ID)
-              const hashId = await generateQuestionHash(finalQ.text);
-              
-              // 5. Verifica Duplicata
-              let isDuplicate = false;
-              if (hashId) {
-                  const existingDoc = await getDoc(doc(db, "questions", hashId));
-                  if (existingDoc.exists()) isDuplicate = true;
-              }
-
-              return { ...finalQ, hashId, isDuplicate };
-          }));
-
-          const batch = writeBatch(db);
-          let savedCount = 0;
-          let newQuestionsForAudit = processedQuestions.filter(q => !q.isDuplicate);
-
-          // 4. Auditoria IA (Double Check)
-          if (newQuestionsForAudit.length > 0) {
-              if (doDoubleCheck) {
-                  addBatchLog('info', `Auditando ${newQuestionsForAudit.length} questões (Double Check)...`);
-                  
-                  for (let i = 0; i < newQuestionsForAudit.length; i++) {
-                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
-                      try {
-                          const verification = await verifyQuestionWithAI(newQuestionsForAudit[i]);
-                          newQuestionsForAudit[i] = { 
-                              ...newQuestionsForAudit[i], 
-                              verificationStatus: verification.status, 
-                              verificationReason: verification.reason 
-                          };
-                      } catch (err) {
-                          newQuestionsForAudit[i] = { ...newQuestionsForAudit[i], verificationStatus: 'unchecked' };
-                      }
-                  }
-              } else {
-                  newQuestionsForAudit.forEach((q, idx) => {
-                      newQuestionsForAudit[idx] = { ...q, verificationStatus: 'unchecked' };
-                  });
-              }
-
-              // 5. Salvar no Firestore
-              for (const q of newQuestionsForAudit) {
-                  const docId = q.hashId || doc(collection(db, "draft_questions")).id;
-                  const docRef = doc(db, "draft_questions", docId);
-                  batch.set(docRef, {
-                      ...q,
-                      institution: q.institution || "", 
-                      year: q.year || "",
-                      createdAt: new Date().toISOString(),
-                      createdBy: user.email,
-                      sourceFile: nextImg.name,
-                      hasImage: true 
-                  });
-                  savedCount++;
-              }
-              await batch.commit();
-          }
-
-          addBatchLog('success', `Sucesso em ${nextImg.name}: ${savedCount} questões salvas.`);
-          setBatchImages(prev => prev.filter(img => img.id !== nextImg.id));
-
-          setTimeout(() => {
-              batchProcessorRef.current = false;
-              processNextBatchImage();
-          }, 1000);
-
-      } catch (error) {
-          console.error(error);
-          const errorMessage = error.message || "Erro desconhecido";
-          
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
-              addBatchLog('warning', `Cota excedida. Aguardando 10s...`);
-              setTimeout(() => {
-                  batchProcessorRef.current = false;
-                  processNextBatchImage(); // Tenta a mesma imagem de novo
-              }, 10000);
-          } else {
-              addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
-              setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
-              
-              setTimeout(() => {
-                  batchProcessorRef.current = false;
-                  processNextBatchImage();
-              }, 1000);
-          }
-      }
-  };
-
-  // --- LOGIC: PDF HANDLING (ATUALIZADO COM DOUBLE OVERLAP) ---
-  const handlePdfUpload = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.type !== 'application/pdf') return showNotification('error', 'Por favor, envie um arquivo PDF.');
-      
-      setPdfFile(file);
-      setPdfStatus('reading');
-      setProcessingLogs([]);
-      addLog('info', `Iniciando leitura de: ${file.name}`);
-
-      try {
-          const pdfjs = await loadPdfJs();
-          const arrayBuffer = await file.arrayBuffer();
-          const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-          
-          addLog('info', `PDF carregado. Total: ${pdf.numPages} págs.`);
-          
-          // Lógica de Range de Páginas
-          let startP = parseInt(pdfStartPage) || 1;
-          let endP = parseInt(pdfEndPage) || pdf.numPages;
-
-          if (startP < 1) startP = 1;
-          if (endP > pdf.numPages) endP = pdf.numPages;
-          if (startP > endP) {
-               startP = 1; 
-               endP = pdf.numPages;
-               showNotification('warning', 'Intervalo inválido. Usando PDF completo.');
-          } else {
-               if (startP !== 1 || endP !== pdf.numPages) {
-                   addLog('info', `Recortando páginas: ${startP} até ${endP}`);
-               }
-          }
-
-          let chunks = [];
-          let currentChunkText = "";
-          let chunkStartPage = startP;
-          let lastPageContent = ""; // Variável para segurar o contexto da página anterior
-
-          for (let i = startP; i <= endP; i++) {
-              const page = await pdf.getPage(i);
-              const content = await page.getTextContent();
-              const text = content.items.map(item => item.str).join(' ');
-              
-              lastPageContent = text; // Guarda para ser o "passado" da próxima fatia
-
-              const pageTextFormatted = `\n--- PÁGINA ${i} ---\n${text}`;
-              currentChunkText += pageTextFormatted;
-
-              // Verifica se é hora de fatiar OU se é a última página selecionada
-              if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
-                  
-                  let finalChunkText = currentChunkText;
-
-                  // --- OLHAR PARA O FUTURO (NEXT PAGE CONTEXT) ---
-                  // Se não for a última página do intervalo selecionado, espia a próxima
-                  if (i < endP) {
-                      try {
-                          const nextPage = await pdf.getPage(i + 1);
-                          const nextContent = await nextPage.getTextContent();
-                          const nextText = nextContent.items.map(item => item.str).join(' ');
-                          finalChunkText += `\n\n--- CONTEXTO DA PRÓXIMA PÁGINA (${i+1}) ---\n${nextText}`;
-                      } catch (err) {
-                          console.warn("Não foi possível buscar o contexto da próxima página:", err);
-                      }
-                  }
-
-                  chunks.push({
-                      id: `chunk_${chunkStartPage}_${i}`,
-                      pages: `${chunkStartPage} a ${i}`,
-                      text: finalChunkText, // Usa o texto com o futuro anexado
-                      status: 'pending',
-                      errorCount: 0
-                  });
-                  
-                  // --- PREPARAR A PRÓXIMA FATIA (PREVIOUS PAGE CONTEXT) ---
-                  if (i < endP) {
-                      currentChunkText = `\n--- CONTEXTO DA PÁGINA ANTERIOR (${i}) ---\n${lastPageContent}`;
-                  } else {
-                      currentChunkText = "";
-                  }
-                  
-                  chunkStartPage = i + 1;
-              }
-          }
-
-          setPdfChunks(chunks);
-          setPdfStatus('ready');
-          addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
-
-          // --- LOGICA DE RESTAURAÇÃO DE PROGRESSO (VIA DB) ---
-          // Verifica se o lastSessionData (vindo do DB) bate com o arquivo atual
-          if (lastSessionData && lastSessionData.fileName === file.name) {
-              const lastIdx = lastSessionData.lastChunkIndex;
-              const nextIndex = lastIdx + 1; // PULA PARA A PRÓXIMA FATIA APÓS A SUCESSO
-
-              if (nextIndex < chunks.length) {
-                  setCurrentChunkIndex(nextIndex);
-                  
-                  // --- VISUAL FEEDBACK: MARCA AS FATIAS ANTERIORES COMO RESTAURADAS ---
-                  for(let i = 0; i < nextIndex; i++) {
-                      chunks[i].status = 'restored';
-                  }
-
-                  addLog('info', `Sessão encontrada no DB! Agulha movida para a fatia ${chunks[nextIndex].pages}.`);
-                  showNotification('info', `Retomando ${file.name} a partir da fatia ${chunks[nextIndex].pages}.`);
-              } else {
-                  // Se já acabou
-                  setCurrentChunkIndex(chunks.length - 1);
-                  // Marca TUDO como restaurado
-                  chunks.forEach(c => c.status = 'restored');
-                  
-                  addLog('success', `Este arquivo já foi finalizado na última sessão.`);
-                  showNotification('success', 'Arquivo já finalizado anteriormente.');
-              }
-          } else {
-              // ARQUIVO NOVO -> RESETA O DB PARA O NOVO ARQUIVO
-              const newSession = {
-                  fileName: file.name,
-                  lastChunkIndex: -1, // Nada processado ainda
-                  lastChunkPages: 'Início',
-                  timestamp: new Date().toISOString()
-              };
-              
-              if (user) {
-                  try {
-                      await setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), newSession);
-                      addLog('info', 'Novo arquivo detectado. Progresso resetado no banco.');
-                  } catch (e) {
-                      console.error("Erro ao salvar inicio de sessão:", e);
-                  }
-              }
-          }
-
-      } catch (error) {
-          console.error(error);
-          setPdfStatus('error');
-          addLog('error', `Erro crítico ao ler PDF: ${error.message}`);
-          showNotification('error', 'Erro ao ler PDF.');
-      }
-  };
-
-  const handleResetPdf = () => {
-      if (pdfStatus === 'processing' || pdfStatus === 'pausing') return; 
-      setPdfFile(null);
-      setPdfChunks([]);
-      setPdfStatus('idle');
-      setCurrentChunkIndex(0);
-      setProcessingLogs([]);
-      setConsecutiveErrors(0);
-      setPdfStartPage('');
-      setPdfEndPage('');
-  };
-
-  const handleRestartPdf = () => {
-      if (!pdfFile || pdfStatus === 'processing' || pdfStatus === 'pausing') return;
-      const resetChunks = pdfChunks.map(c => ({ ...c, status: 'pending', errorCount: 0 }));
-      setPdfChunks(resetChunks);
-      setCurrentChunkIndex(0);
-      setPdfStatus('ready');
-      setProcessingLogs([]);
-      setConsecutiveErrors(0);
-      
-      // Reseta progresso no DB para este arquivo
-      const resetSession = {
-          fileName: pdfFile.name,
-          lastChunkIndex: -1,
-          lastChunkPages: 'Início',
-          timestamp: new Date().toISOString()
-      };
-      
-      if (user) {
-          setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), resetSession)
-            .catch(e => console.error("Erro ao resetar sessão:", e));
-      }
-      
-      addLog('info', 'Processamento reiniciado do zero.');
-  };
-
-  // --- NOVA LÓGICA DE NAVEGAÇÃO ("SEEK") ---
-  const handleJumpToChunk = (index) => {
-      if (pdfStatus === 'processing' || pdfStatus === 'idle' || pdfStatus === 'pausing' || pdfStatus === 'reading') return;
-      
-      const chunk = pdfChunks[index];
-      addLog('info', `Agulha movida para fatia ${chunk.pages} (Aguardando Início)...`);
-      
-      // 1. Move a agulha para o índice clicado
-      setCurrentChunkIndex(index);
-
-      // 2. Força o status da fatia clicada para 'pending' (para reprocessar se quiser)
-      //    Isso permite "tocar" o vídeo a partir daqui.
-      setPdfChunks(prev => {
-          const newChunks = [...prev];
-          // Reseta APENAS a fatia atual para garantir que ela rode
-          newChunks[index] = { ...newChunks[index], status: 'pending', errorCount: 0 };
-          return newChunks;
-      });
-  };
-
-  const processNextChunk = async () => {
-      const currentStatus = pdfStatusRef.current;
-      const currentChunks = pdfChunksRef.current;
-      const doDoubleCheck = doubleCheckRef.current;
-      const doWebSearch = webSearchRef.current; // LER CHAVE WEB SEARCH
-      const ovr = overridesRef.current; 
-      const currentFile = pdfFile; // Pega referência atual do arquivo
-      // USA O REF PARA EVITAR CLOSURE STALE
-      const activeIndex = currentChunkIndexRef.current;
-
-      if (processorRef.current) return; 
-      // Se estiver pausado ou erro e a função for chamada (ex: retry), ok.
-      // Se estiver 'completed', para.
-      if (currentStatus === 'completed') return;
-      
-      // --- LÓGICA DE VÍDEO PLAYER (LINEAR) ---
-      // Não busca mais o "próximo pendente". Confia na agulha (activeIndex).
-      
-      if (activeIndex >= currentChunks.length) {
-           setPdfStatus('completed');
-           addLog('success', 'Processamento Completo!');
-           showNotification('success', 'Todas as partes selecionadas foram processadas.');
-           return;
-      }
-
-      const chunk = currentChunks[activeIndex];
-
-      // Se não estiver 'pausing', garante que está 'processing'
-      if (currentStatus !== 'pausing' && currentStatus !== 'processing') setPdfStatus('processing');
-      
-      processorRef.current = true; 
-
-      // --- COMPORTAMENTO DE PLAYER: SEMPRE PROCESSA O QUE ESTIVER NA AGULHA ---
-      // Mesmo se já foi "success" ou "restored", se a agulha está lá, processa de novo.
-      addLog('info', `Processando fatia ${chunk.pages}...`);
-
-      try {
-          // --- CONSTRUÇÃO INTELIGENTE DO MAPA DE TEMAS E PROMPT ---
-          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
-
-          // USANDO ROTAÇÃO DE CHAVES PARA A GERAÇÃO PRINCIPAL
-          const questions = await executeWithKeyRotation("Geração", async (key) => {
-              const systemPrompt = `
-                Você é um especialista em provas de Residência Médica (MedMaps).
-                Analise o texto extraído de um PDF.
-                
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
-                SUA MISSÃO:
-                1. Identificar questões (Enunciado + Alternativas).
-                
-                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
-                   - É CRUCIAL que a classificação esteja correta.
-                   - LISTA DE CLASSIFICAÇÃO VÁLIDA:
-                   ${JSON.stringify(activeThemesMap)}
-
-                3. GABARITO E COMENTÁRIO:
-                   - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
-                   - Gere sempre um campo "explanation".
-                
-                4. DADOS DE CABEÇALHO:
-                   - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
-                   - Procure pelo nome do HOSPITAL ou BANCA.
-                   - Se não encontrar, deixe "".
-
-                OBSERVAÇÃO SOBRE CONTEXTO:
-                - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
-                - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
-                - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
-                
-                Retorne JSON ESTRITO:
-                [{ 
-                    "institution": "String", "year": Number|"", "area": "String", "topic": "String", 
-                    "text": "String", "options": [{"id": "a", "text": "..."}], 
-                    "correctOptionId": "char", "explanation": "String" 
-                }]
-              `;
-
-              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: systemPrompt + "\n\nTEXTO DO PDF:\n" + chunk.text }] }]
-                })
-              });
-
-              const data = await response.json();
-              if (data.error) throw new Error(data.error.message);
-
-              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              return safeJsonParse(jsonString); // Usa o parser blindado
-          });
-
-          // --- PÓS-PROCESSAMENTO (PESQUISA + LIMPEZA + AUDITORIA) ---
-          let processedQuestions = await Promise.all(questions.map(async (q) => {
-              let finalInst = q.institution;
-              let finalYear = q.year;
-              let foundOnWeb = false;
-
-              // CONDICIONAL: Só busca se faltar dados E a busca estiver ligada
-              const isMissingData = !finalInst || !finalYear;
-
-              // 1. Pesquisa Web (Se habilitado e necessário)
-              if (doWebSearch && isMissingData) {
-                  try {
-                      // Pequeno delay para distribuir a carga (não fazer 10 requests simultâneos exatos)
-                      await new Promise(r => setTimeout(r, Math.random() * 2000));
-                      const searchResult = await searchQuestionSource(q.text);
-                      
-                      // Só sobrescreve se a busca retornar algo válido (não apaga dados existentes)
-                      if (searchResult.institution) {
-                          finalInst = searchResult.institution;
-                          foundOnWeb = true;
-                      }
-                      if (searchResult.year) finalYear = searchResult.year;
-                  } catch (err) {
-                      console.warn("Falha ao pesquisar questão no Google:", err.message);
-                  }
-              }
-
-              // 2. Overrides (Têm prioridade máxima)
-              if (ovr.overrideInst) finalInst = ovr.overrideInst;
-              if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-              // 3. Limpeza
-              finalInst = cleanInstitutionText(finalInst);
-
-              const finalQ = {
-                  ...q,
-                  institution: finalInst, 
-                  year: finalYear,
-                  area: ovr.overrideArea || q.area,
-                  topic: ovr.overrideTopic || q.topic,
-                  sourceFound: foundOnWeb // Flag para a UI
-              };
-
-              // 4. Gera Hash (ID)
-              const hashId = await generateQuestionHash(finalQ.text);
-              
-              // 5. Verifica Duplicata
-              let isDuplicate = false;
-              if (hashId) {
-                  const existingDoc = await getDoc(doc(db, "questions", hashId));
-                  if (existingDoc.exists()) {
-                      isDuplicate = true;
-                  }
-              }
-
-              return { ...finalQ, hashId, isDuplicate };
-          }));
-
-          // --- LOGICA DOUBLE CHECK SEQUENCIAL ---
-          const newQuestions = processedQuestions.filter(q => !q.isDuplicate);
-          const duplicateCount = processedQuestions.length - newQuestions.length;
-
-          if (newQuestions.length > 0) {
-              if (doDoubleCheck) {
-                  addLog('info', `Auditando ${newQuestions.length} questões (Double Check)...`);
-                  
-                  for (let i = 0; i < newQuestions.length; i++) {
-                      if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
-                      
-                      try {
-                          const verification = await verifyQuestionWithAI(newQuestions[i]);
-                          newQuestions[i] = { 
-                              ...newQuestions[i], 
-                              verificationStatus: verification.status, 
-                              verificationReason: verification.reason 
-                          };
-                      } catch (err) {
-                          const msg = err.message || "";
-                          if (msg.includes("Quota exceeded") || msg.includes("429")) {
-                              throw err; 
-                          }
-                          console.error("Falha na auditoria individual:", err);
-                          newQuestions[i] = { 
-                              ...newQuestions[i], 
-                              verificationStatus: 'unchecked', 
-                              verificationReason: 'Falha na auditoria (Erro genérico)' 
-                          };
-                      }
-                  }
-              } else {
-                  // Mapeia sem verificação
-                  newQuestions.forEach((q, idx) => {
-                      newQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
-                  });
-              }
-
-              const batch = writeBatch(db);
-              newQuestions.forEach(q => {
-                  const docId = q.hashId || doc(collection(db, "draft_questions")).id;
-                  const docRef = doc(db, "draft_questions", docId);
-                  
-                  batch.set(docRef, {
-                      ...q,
-                      institution: q.institution || "", 
-                      year: q.year || "",
-                      createdAt: new Date().toISOString(),
-                      createdBy: user.email,
-                      sourceFile: pdfFile.name,
-                      sourcePages: chunk.pages,
-                      hasImage: false
-                  });
-              });
-              await batch.commit();
-          }
-
-          addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} novas, ${duplicateCount} duplicatas descartadas.`);
-          setPdfChunks(prev => {
-              const newChunks = [...prev];
-              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'success' };
-              return newChunks;
-          });
-          setConsecutiveErrors(0); 
-
-          // --- SALVA O ÚLTIMO PROGRESSO NO DB (SOBRESCREVENDO SEMPRE) ---
-          if (currentFile && currentFile.name && user) {
-              const sessionData = {
-                  fileName: currentFile.name,
-                  lastChunkIndex: activeIndex, // Salva o índice que acabou de ser sucesso
-                  lastChunkPages: chunk.pages,
-                  timestamp: new Date().toISOString()
-              };
-              setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), sessionData)
-                .catch(err => console.error("Erro ao salvar progresso no DB:", err));
-          }
-
-          // --- VERIFICAÇÃO DE PAUSA NO FINAL DO CICLO ---
-          if (pdfStatusRef.current === 'pausing') {
-              setPdfStatus('paused');
-              addLog('warning', 'Pausa solicitada. Ciclo atual concluído e salvo.');
-              processorRef.current = false;
-              return; // PARA A RECURSÃO AQUI
-          }
-
-          // Se estiver pausado ou idle por outro motivo
-          if (pdfStatusRef.current === 'paused' || pdfStatusRef.current === 'idle') {
-              processorRef.current = false;
-              return;
-          }
-
-          // MOVER A AGULHA E CONTINUAR
-          setCurrentChunkIndex(prev => prev + 1);
-          setTimeout(() => {
-              processorRef.current = false; 
-              processNextChunk(); 
-          }, 500); 
-
-      } catch (error) {
-          console.error(error);
-          const errorMessage = error.message || "";
-          const retrySeconds = extractRetryTime(errorMessage);
-          
-          let delay = 3000;
-
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
-              if (retrySeconds) {
-                  delay = (retrySeconds * 1000) + 2000; 
-                  addLog('warning', `Todas as chaves esgotadas. Aguardando ${Math.ceil(retrySeconds)}s...`);
-              } else {
-                  delay = 60000; 
-                  addLog('warning', `Todas as chaves esgotadas. Aguardando 60s...`);
-              }
-          } else if (errorMessage.includes("API key expired")) {
-              setPdfStatus('paused');
-              addLog('error', `ERRO CRÍTICO: Chaves API Inválidas! Pausado.`);
-              showNotification('error', 'Chaves API Inválidas.');
-              processorRef.current = false;
-              return; 
-          } else {
-              const newErrorCount = chunk.errorCount + 1;
-              delay = 3000 * Math.pow(2, newErrorCount);
-              
-              if (newErrorCount >= 3) {
-                  addLog('error', `Fatia ${chunk.pages} marcada com ERRO APÓS 3 TENTATIVAS.`);
-                  setPdfChunks(prev => {
-                      const newChunks = [...prev];
-                      newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'error', errorCount: newErrorCount };
-                      return newChunks;
-                  });
-                  setConsecutiveErrors(0);
-                  processorRef.current = false;
-                  
-                  // Tenta a próxima fatia mesmo com erro nesta?
-                  // O usuário pediu comportamento linear. Se falhar 3x, marca erro e avança.
-                  setCurrentChunkIndex(prev => prev + 1);
-                  setTimeout(() => processNextChunk(), 1000); 
-                  return;
-              }
-          }
-
-          const newConsecutiveErrors = consecutiveErrors + 1;
-          setConsecutiveErrors(newConsecutiveErrors);
-
-          if (newConsecutiveErrors >= 10) { 
-              setPdfStatus('paused'); 
-              addLog('error', 'PAUSADO: Muitos erros consecutivos.');
-              processorRef.current = false;
-              return; 
-          }
-
-          // Se deu erro, mas o usuário pediu pausa, vamos respeitar a pausa
-          if (pdfStatusRef.current === 'pausing') {
-              setPdfStatus('paused');
-              addLog('warning', 'Pausa solicitada durante erro. Sistema pausado.');
-              processorRef.current = false;
-              return;
-          }
-
-          setPdfChunks(prev => {
-              const newChunks = [...prev];
-              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'pending' };
-              return newChunks;
-          });
-
-          // Tenta a MESMA fatia de novo (retry)
-          setTimeout(() => {
-              processorRef.current = false;
-              processNextChunk();
-          }, delay);
-      }
-  };
-
-  const togglePdfProcessing = () => {
-      const currentStatus = pdfStatusRef.current;
-      if (currentStatus === 'processing') {
-          // EM VEZ DE PAUSED DIRETO, VAI PARA PAUSING
-          setPdfStatus('pausing');
-          addLog('warning', 'Solicitando pausa... Aguardando conclusão da fatia atual.');
-      } else if (currentStatus === 'paused' || currentStatus === 'ready') {
-          // ADICIONADO 'ready' PARA O BOTÃO INICIAR FUNCIONAR
-          setPdfStatus('processing');
-          addLog('info', currentStatus === 'ready' ? 'Iniciando processamento...' : 'Retomando...');
-          processorRef.current = false; 
-          setTimeout(() => processNextChunk(), 100);
-      }
-  };
-
-  // --- HELPER FUNCTIONS ---
-  const saveApiKeyFromModal = async () => {
-      const rawKeys = tempApiKeysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
-      const uniqueKeys = [...new Set(rawKeys)];
-
-      if (uniqueKeys.length === 0) return showNotification('error', 'Adicione pelo menos uma chave.');
-      
-      setIsSavingKey(true);
-      try {
-          setApiKeys(uniqueKeys);
-          localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
-          apiKeysRef.current = uniqueKeys;
-          keyRotationIndex.current = 0; 
-
-          await setDoc(doc(db, "settings", "global"), {
-              geminiApiKeys: uniqueKeys, 
-              geminiApiKey: uniqueKeys[0], 
-              updatedBy: user.email,
-              updatedAt: new Date().toISOString()
-          }, { merge: true });
-          
-          setShowApiKeyModal(false);
-          setShowTutorial(false);
-          showNotification('success', `${uniqueKeys.length} Chaves API Salvas!`);
-          
-          if (pdfStatus === 'paused') addLog('success', 'Novas chaves detectadas! Clique em "Continuar".');
-
-      } catch (error) {
-          showNotification('error', 'Erro ao salvar: ' + error.message);
-      } finally {
-          setIsSavingKey(false);
-      }
-  };
-
-  const handleGetKey = () => { window.open('https://aistudio.google.com/app/api-keys', '_blank'); setShowTutorial(true); };
-  const handleModelChange = (modelName) => { setSelectedModel(modelName); localStorage.setItem('gemini_model', modelName); };
-  const showNotification = (type, text) => { setNotification({ type, text }); };
-  const closeNotification = () => { setNotification(null); };
-  const handleLogout = () => { signOut(auth); setParsedQuestions([]); setActiveTab('input'); };
-
-  // --- IMAGEM ÚNICA (AGORA REDUNDANTE MAS NECESSÁRIA PARA O TAB INPUT)
-  // Mas como removemos a tab, podemos remover esses handlers ou adaptar se quiseres manter texto
-  
-  const validateKeyAndFetchModels = async () => {
-      const currentKey = apiKeysRef.current[0]; 
-      if (!currentKey) return showNotification('error', 'Configure as chaves API primeiro.');
-      setIsValidatingKey(true);
-      try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${currentKey}`);
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          if (!data.models) throw new Error("Sem acesso a modelos.");
-          const genModels = data.models.filter(m => m.supportedGenerationMethods?.includes("generateContent") && (m.name.includes("gemini")));
-          if (genModels.length > 0) {
-              setAvailableModels(genModels);
-              showNotification('success', `${genModels.length} modelos liberados!`);
-          } else {
-              showNotification('error', 'Chave válida mas sem modelos.');
-          }
-      } catch (error) {
-          showNotification('error', `Erro na chave principal: ${error.message}`);
-      } finally {
-          setIsValidatingKey(false);
-      }
-  };
-
-  // --- PROCESSAMENTO IA (Texto Único) ---
-  const processWithAI = async () => {
-    if (activeTab === 'input' && !rawText.trim()) return showNotification('error', 'Cole o texto.');
-    
-    setIsProcessing(true);
-
-    const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
-    const doWebSearch = isWebSearchEnabled;
-
-    try {
-        const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
-
-        const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
-            const systemPrompt = `
-              Você é um especialista em banco de dados médicos (MedMaps).
-              Extraia questões no formato JSON ESTRITO.
-              
-              CONTEXTO (Informacional):
-              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
-              REGRAS:
-              1. Retorne APENAS o JSON (sem markdown).
-              2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                 - Classifique CADA questão usando a lista abaixo.
-                 - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
-              3. GABARITO E COMENTÁRIO: 
-                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
-                 - Gere sempre um campo "explanation".
-              4. DADOS DE CABEÇALHO:
-                 - IGNORE nomes de cursos preparatórios no campo "institution".
-              
-              Formato Saída:
-              [
-                {
-                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
-                  "text": "String", "options": [{"id": "a", "text": "String"}],
-                  "correctOptionId": "char", "explanation": "String"
-                }
-              ]
-            `;
-
-            let contentsPayload = [{ parts: [{ text: systemPrompt + "\n\nCONTEÚDO:\n" + rawText }] }];
-            
-            const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: contentsPayload })
-            });
-
-            const data = await response.json();
-            if (data.error) throw new Error(data.error.message);
-
-            let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            return safeJsonParse(jsonString); // Uses safe parser
-        });
-
-        // Pós-processamento e Auditoria
-        let finalQuestions = await Promise.all(questions.map(async (q) => {
-            let finalInst = q.institution;
-            let finalYear = q.year;
-            let foundOnWeb = false;
-
-            // 1. Pesquisa Web
-            if (doWebSearch) {
-                try {
-                    await new Promise(r => setTimeout(r, Math.random() * 2000));
-                    const searchResult = await searchQuestionSource(q.text);
-                    if (searchResult.institution) {
-                        finalInst = searchResult.institution;
-                        foundOnWeb = true;
-                    }
-                    if (searchResult.year) finalYear = searchResult.year;
-                } catch (err) {
-                    console.warn("Falha na pesquisa web:", err);
-                }
-            }
-
-            // 2. Overrides
-            if (ovr.overrideInst) finalInst = ovr.overrideInst;
-            if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-            // 3. Clean
-            finalInst = cleanInstitutionText(finalInst);
-            
-            const finalQ = {
-                ...q,
-                institution: finalInst,
-                year: finalYear,
-                area: ovr.overrideArea || q.area,
-                topic: ovr.overrideTopic || q.topic,
-                sourceFound: foundOnWeb
-            };
-
-            // 4. Hash Check
-            const hashId = await generateQuestionHash(finalQ.text);
-            let isDuplicate = false;
-            if (hashId) {
-                const existingDoc = await getDoc(doc(db, "questions", hashId));
-                if (existingDoc.exists()) isDuplicate = true;
-            }
-
-            return { ...finalQ, hashId, isDuplicate };
-        }));
-
-        // FILTRA DUPLICATAS ANTES DO DOUBLE CHECK
-        const uniqueQuestions = finalQuestions.filter(q => !q.isDuplicate);
-        const duplicateCount = finalQuestions.length - uniqueQuestions.length;
-
-        if (isDoubleCheckEnabled && uniqueQuestions.length > 0) {
-            showNotification('success', 'Iniciando Auditoria IA nas questões novas...');
-            for (let i = 0; i < uniqueQuestions.length; i++) {
-                // OTIMIZAÇÃO: Delay reduzido para 200ms
-                if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
-                try {
-                    const verification = await verifyQuestionWithAI(uniqueQuestions[i]);
-                    uniqueQuestions[i] = { 
-                        ...uniqueQuestions[i], 
-                        verificationStatus: verification.status, 
-                        verificationReason: verification.reason 
-                    };
-                } catch (err) {
-                    console.error("Erro auditoria unica:", err);
-                    uniqueQuestions[i] = { ...uniqueQuestions[i], verificationStatus: 'unchecked' };
-                }
-            }
-        } else {
-            uniqueQuestions.forEach((q, idx) => {
-                 uniqueQuestions[idx] = { ...q, verificationStatus: 'unchecked', verificationReason: '' };
-            });
-        }
-
-        let savedCount = 0;
-        const batch = writeBatch(db);
-        
-        for (const q of uniqueQuestions) {
-            // USA HASH COMO ID
-            const docId = q.hashId || doc(collection(db, "draft_questions")).id;
-            const docRef = doc(db, "draft_questions", docId);
-            
-            batch.set(docRef, {
-                ...q,
-                institution: q.institution || "", 
-                year: q.year || "",
-                createdAt: new Date().toISOString(),
-                createdBy: user.email,
-                hasImage: false
-            });
-            savedCount++;
-        }
-        
-        if (savedCount > 0) await batch.commit();
-
-        setRawText('');
-        setActiveTab('review');
-        
-        // NOTIFICAÇÕES MELHORADAS
-        if (savedCount === 0 && duplicateCount > 0) {
-            showNotification('warning', `Todas as ${duplicateCount} questões eram duplicatas e foram descartadas.`);
-        } else if (duplicateCount > 0) {
-            showNotification('success', `${savedCount} enviadas. ${duplicateCount} duplicatas descartadas.`);
-        } else {
-            showNotification('success', `${savedCount} questões enviadas para fila!`);
-        }
-
-    } catch (error) {
-        console.error(error);
-        showNotification('error', 'Erro: ' + error.message);
-    } finally {
-        setIsProcessing(false);
-    }
-  };
-
-  // --- BULK METADATA CLEANING ---
-  const clearAllField = (field) => {
-      // Aplica a TODOS os itens filtrados ou a lista completa? 
-      // Por consistência com a nova lógica, aplica aos filtrados.
-      const targetQuestions = getFilteredQuestions();
-      if (targetQuestions.length === 0) return;
-      
-      // SUBSTITUIÇÃO DO WINDOW CONFIRM PELO MODAL
-      setConfirmationModal({
-          isOpen: true,
-          type: field === 'institution' ? 'clear_institution' : 'clear_year',
-          data: null,
-          title: `Limpar ${field === 'institution' ? 'Instituições' : 'Anos'}?`,
-          message: `Deseja limpar o campo "${field === 'institution' ? 'Instituição' : 'Ano'}" de ${targetQuestions.length} questões exibidas?`,
-          confirmText: 'Sim, Limpar',
-          confirmColor: 'red'
-      });
-  };
-
-  // --- FUNÇÕES DE MODAL DE CONFIRMAÇÃO ---
-  const handleDiscardOneClick = (q) => {
-      setConfirmationModal({
-          isOpen: true,
-          type: 'delete_one',
-          data: q,
-          title: 'Excluir Rascunho?',
-          message: 'Tem certeza que deseja excluir esta questão?',
-          confirmText: 'Sim, Excluir',
-          confirmColor: 'red'
-      });
-  };
-
-  const handleApproveFilteredClick = () => {
-      const targetQuestions = getFilteredQuestions();
-      if (targetQuestions.length === 0) return;
-      
-      // Verifica se tem alguma duplicata na lista filtrada
-      const hasDuplicates = targetQuestions.some(q => q.isDuplicate);
-      if (hasDuplicates && !activeFilters.includes('duplicates')) {
-          showNotification('warning', 'Algumas duplicatas serão ignoradas automaticamente.');
-      }
-
-      const count = targetQuestions.filter(q => !q.isDuplicate).length;
-      if (count === 0 && !activeFilters.includes('duplicates')) {
-           return showNotification('error', 'Nenhuma questão válida para aprovar (todas são duplicatas).');
-      }
-
-      // --- MUDANÇA 4: LABEL DINÂMICO PARA O MODAL ---
-      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
-
-      setConfirmationModal({
-          isOpen: true,
-          type: 'approve_filtered',
-          data: null,
-          title: `Aprovar ${count} Questões?`,
-          message: `Você está prestes a publicar ${count} questões dos filtros: ${activeLabels}.`,
-          confirmText: 'Sim, Publicar',
-          confirmColor: 'emerald'
-      });
-  };
-
-  const handleDiscardFilteredClick = () => {
-      const targetQuestions = getFilteredQuestions();
-      if (targetQuestions.length === 0) return;
-
-      // --- MUDANÇA 5: LABEL DINÂMICO PARA O MODAL ---
-      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
-
-      setConfirmationModal({
-          isOpen: true,
-          type: 'delete_filtered',
-          data: null,
-          title: `Excluir ${targetQuestions.length} Questões?`,
-          message: `Isso excluirá permanentemente as questões dos filtros: ${activeLabels}.`,
-          confirmText: 'Sim, Excluir',
-          confirmColor: 'red'
-      });
-  };
-
-  const executeConfirmationAction = async () => {
-      const { type, data } = confirmationModal;
-      setConfirmationModal({ ...confirmationModal, isOpen: false }); 
-
-      // --- LOGICA PARA LIMPEZA DE CAMPOS (NOVO - FILTRADO) ---
-      if (type === 'clear_institution' || type === 'clear_year') {
-          const field = type === 'clear_institution' ? 'institution' : 'year';
-          const targetQuestions = getFilteredQuestions();
-          
-          // Atualiza localmente (apenas os filtrados)
-          const updated = parsedQuestions.map(q => {
-              // Se a questão está no filtro, limpa. Se não, mantem.
-              if (targetQuestions.some(t => t.id === q.id)) {
-                  return { ...q, [field]: '' };
-              }
-              return q;
-          });
-          setParsedQuestions(updated);
-
-          const batch = writeBatch(db);
-          targetQuestions.forEach(q => {
-              const docRef = doc(db, "draft_questions", q.id);
-              batch.update(docRef, { [field]: '' });
-          });
-          batch.commit().then(() => {
-              showNotification('success', `Campo ${field === 'institution' ? 'Instituição' : 'Ano'} limpo em ${targetQuestions.length} questões.`);
-          }).catch(err => {
-              console.error(err);
-              showNotification('error', 'Erro ao salvar limpeza no banco.');
-          });
-          return;
-      }
-
-      if (type === 'delete_one') {
-          if (!data || !data.id) return;
-          try { await deleteDoc(doc(db, "draft_questions", data.id)); showNotification('success', 'Excluído.'); } catch (e) { showNotification('error', e.message); }
-      } 
-      else if (type === 'approve_filtered') {
-          setIsBatchAction(true);
-          let count = 0;
-          const targetQuestions = getFilteredQuestions();
-
-          try {
-              for (const q of targetQuestions) {
-                  if (q.isDuplicate) continue; 
-
-                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
-                  if (q.area && q.topic && q.text) {
-                     await setDoc(doc(db, "questions", id), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
-                     await deleteDoc(doc(db, "draft_questions", id));
-                     count++;
-                  }
-              }
-              showNotification('success', `${count} questões publicadas!`);
-          } catch (e) { showNotification('error', e.message); } finally { setIsBatchAction(false); }
-      }
-      else if (type === 'delete_filtered') {
-          setIsBatchAction(true);
-          const targetQuestions = getFilteredQuestions();
-          try {
-              const batch = writeBatch(db);
-              targetQuestions.forEach(q => batch.delete(doc(db, "draft_questions", q.id)));
-              await batch.commit();
-              showNotification('success', 'Fila limpa.');
-          } catch (e) { showNotification('error', e.message); } finally { setIsBatchAction(false); }
-      }
-  };
-
-  const approveQuestion = async (q) => {
-    if (q.isDuplicate) {
-        return showNotification('error', 'Esta questão já existe no banco de dados (Duplicata).');
-    }
-    if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
-      return showNotification('error', 'Preencha os campos obrigatórios.');
-    }
-    try {
-      const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
-      // Garante o ID
-      await setDoc(doc(db, "questions", id), {
-        ...finalData,
-        createdAt: new Date().toISOString(),
-        approvedBy: user.email,
-        hasImage: false
-      });
-      await deleteDoc(doc(db, "draft_questions", id));
-      showNotification('success', 'Publicada!');
-    } catch (error) {
-      showNotification('error', 'Erro: ' + error.message);
-    }
-  };
-
-  const updateQuestionField = (idx, field, val) => {
-      const newQ = [...parsedQuestions];
-      newQ[idx][field] = val;
-      setParsedQuestions(newQ);
-  };
-  const updateOptionText = (qIdx, optIdx, val) => {
-      const newQ = [...parsedQuestions];
-      newQ[qIdx].options[optIdx].text = val;
-      setParsedQuestions(newQ);
-  };
-
-  const currentFilteredList = getFilteredQuestions();
-
-  // --- RENDER LOGIN ---
-  if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
-  
-  if (!user) return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-        <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-300">
-          <div className="flex items-center gap-3 mb-6 justify-center">
-             <div className="bg-blue-600 p-3 rounded-xl shadow-lg shadow-blue-900/20"><Brain className="text-white" size={32} /></div>
-             <h1 className="text-2xl font-bold text-slate-800">MedImporter Admin</h1>
-          </div>
-          <p className="text-slate-500 text-center mb-6">Acesso restrito a administradores.</p>
-          <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', err.message)); }} className="space-y-4">
-            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none transition-all"/>
-            <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none transition-all"/>
-            <button className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2"><Lock size={18} /> Acessar Sistema</button>
-          </form>
+function GoalModal({ currentGoal, onSave, onClose }) {
+  const [goal, setGoal] = useState(currentGoal);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+        <div className="text-center mb-6">
+          <div className="bg-blue-100 p-3 rounded-full text-blue-600 inline-flex mb-4"><Target size={32} /></div>
+          <h3 className="text-xl font-bold text-slate-900 mb-2">Meta Diária</h3>
+          <p className="text-slate-500 text-sm">Quantas questões você quer resolver hoje?</p>
         </div>
-        <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed bottom-4 right-4" />
+        <div className="flex justify-center mb-8">
+            <div className="relative">
+                <input type="number" min="1" max="200" value={goal} onChange={(e) => setGoal(Number(e.target.value))} className="w-32 px-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-3xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800" />
+                <span className="absolute -right-8 top-1/2 -translate-y-1/2 text-gray-400 font-medium">/dia</span>
+            </div>
+        </div>
+        <div className="flex gap-3 w-full">
+            <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancelar</button>
+            <button onClick={() => onSave(goal)} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors">Salvar Meta</button>
+        </div>
       </div>
+    </div>
   );
+}
+
+function ChangePasswordModal({ onClose, onSave, isLoading }) {
+  const [currentPass, setCurrentPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = () => {
+      setError('');
+      if (!currentPass) return setError('Digite sua senha atual.');
+      if (newPass.length < 6) return setError('A nova senha deve ter no mínimo 6 caracteres.');
+      if (newPass !== confirmPass) return setError('As novas senhas não coincidem.');
+      onSave(currentPass, newPass);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-slate-800 pb-20">
-      
-      {/* HEADER */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={() => window.location.href = '/'} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Voltar para o App Principal"><ArrowLeft size={24} /></button>
-            <div className="flex items-center gap-2"><Brain className="text-blue-600" size={28} /><h1 className="text-xl font-bold text-slate-800">MedImporter</h1></div>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+        <div className="flex items-center gap-3 mb-6"><div className="bg-orange-100 p-3 rounded-full text-orange-600"><Key size={24} /></div><h3 className="text-xl font-bold text-slate-900">Alterar Senha</h3></div>
+        {error && <p className="text-sm text-red-600 mb-4 bg-red-50 p-3 rounded-lg font-medium">{error}</p>}
+        <div className="space-y-4 mb-8">
+            <div><label className="block text-sm font-bold text-slate-700 mb-1">Senha Atual</label><input type="password" value={currentPass} onChange={e => setCurrentPass(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="••••••••" /></div>
+            <div><label className="block text-sm font-bold text-slate-700 mb-1">Nova Senha</label><input type="password" value={newPass} onChange={e => setNewPass(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Mínimo 6 caracteres" /></div>
+            <div><label className="block text-sm font-bold text-slate-700 mb-1">Confirmar Nova Senha</label><input type="password" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="••••••••" /></div>
+        </div>
+        <div className="flex gap-3"><button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition-colors">Cancelar</button><button onClick={handleSubmit} disabled={isLoading} className="flex-1 py-3 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 disabled:opacity-50 transition-colors shadow-lg shadow-slate-200">{isLoading ? 'Salvando...' : 'Alterar Senha'}</button></div>
+      </div>
+    </div>
+  );
+}
+
+// --- APP COMPONENT ---
+export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [globalLoginError, setGlobalLoginError] = useState('');
+  const [renewalLink, setRenewalLink] = useState('');
+
+  // Fetch renewal link on load
+  useEffect(() => {
+    const fetchConfig = async () => {
+        try {
+            const configDoc = await getDoc(doc(db, "config", "general"));
+            if (configDoc.exists() && configDoc.data().renewalLink) {
+                setRenewalLink(configDoc.data().renewalLink);
+            }
+        } catch (error) {
+            console.error("Erro ao carregar configurações:", error);
+        }
+    };
+    fetchConfig();
+  }, []);
+
+  useEffect(() => {
+    let unsubscribeDoc = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      unsubscribeDoc(); // Limpa listener anterior se houver
+
+      if (user) {
+        // setIsLoading(true); // Opcional: mostrar loading enquanto busca dados atualizados
+        const docRef = doc(db, "users", user.uid);
+        
+        unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const userData = docSnap.data();
+                
+                // Verificação de Assinatura
+                if (userData.role !== 'admin') {
+                    const subDate = userData.subscriptionUntil ? new Date(userData.subscriptionUntil) : null;
+                    const now = new Date();
+                    if (!subDate || subDate < now) {
+                        signOut(auth);
+                        setGlobalLoginError("Sua matrícula venceu, contate um administrador para efetivar novamente.");
+                        setCurrentUser(null);
+                        setIsLoading(false);
+                        return;
+                    }
+                }
+                
+                setGlobalLoginError(''); 
+                // Atualiza o estado com dados do Auth + Firestore em tempo real
+                setCurrentUser({ ...user, ...userData }); 
+            } else {
+                signOut(auth);
+                setGlobalLoginError("Conta não encontrada. Contate o suporte.");
+                setCurrentUser(null);
+            }
+            setIsLoading(false);
+        }, (error) => {
+            console.error("Erro ao buscar perfil:", error);
+            setGlobalLoginError("Erro ao verificar conta.");
+            setCurrentUser(null);
+            setIsLoading(false);
+        });
+      } else {
+        setCurrentUser(null);
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+        unsubscribeAuth();
+        unsubscribeDoc();
+    };
+  }, []);
+
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
+
+  return <>{currentUser ? <Dashboard user={currentUser} onLogout={() => signOut(auth)} /> : <LoginPage globalError={globalLoginError} renewalLink={renewalLink} />}</>;
+}
+
+function LoginPage({ globalError, renewalLink }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (globalError) setError(globalError);
+  }, [globalError]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError('');
+    try {
+        await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+        console.error(err);
+        if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+            setError("E-mail ou senha incorretos.");
+        } else {
+            setError("Erro ao fazer login. Tente novamente.");
+        }
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4 font-sans text-slate-800">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col md:flex-row min-h-[600px]">
+        <div className="hidden md:flex md:w-1/2 bg-gradient-to-br from-blue-700 to-blue-900 p-12 flex-col justify-between text-white relative">
+          <div className="relative z-10">
+            <div className="flex items-center gap-3 mb-10"><div className="bg-white/10 p-2 rounded-lg backdrop-blur-md border border-white/20"><Map size={32} className="text-white" /></div><h1 className="text-3xl font-bold tracking-tight">MedMaps</h1></div>
+            <h2 className="text-4xl font-bold mb-6 leading-tight">Sua aprovação na residência começa aqui.</h2>
+            <p className="text-blue-100 text-lg font-light leading-relaxed">Acesso exclusivo ao banco de questões mais barato do mercado!</p>
           </div>
+        </div>
+        <div className="w-full md:w-1/2 p-10 md:p-16 flex flex-col justify-center bg-white">
+          <div className="mb-10"><h2 className="text-3xl font-bold text-slate-900 mb-3">Login</h2><p className="text-slate-500 text-lg">Insira suas credenciais de acesso.</p></div>
           
-          <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
-            
-            {/* TOGGLE WEB SEARCH */}
-            <div 
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isWebSearchEnabled ? 'bg-teal-50 border-teal-200 text-teal-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
-                onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
-                title="A IA vai pesquisar no Google a origem de cada questão"
-            >
-                {isWebSearchEnabled ? <ToggleRight size={24} className="text-teal-600"/> : <ToggleLeft size={24}/>}
-                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
-                    {isWebSearchEnabled ? <Globe size={16}/> : null}
-                    Busca Web (Bancas)
-                </span>
-            </div>
-
-            {/* TOGGLE DOUBLE CHECK */}
-            <div 
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isDoubleCheckEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
-                onClick={() => setIsDoubleCheckEnabled(!isDoubleCheckEnabled)}
-                title="A IA vai auditar cada questão gerada (Double Check)"
-            >
-                {isDoubleCheckEnabled ? <ToggleRight size={24} className="text-indigo-600"/> : <ToggleLeft size={24}/>}
-                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
-                    {isDoubleCheckEnabled ? <ShieldCheck size={16}/> : null}
-                    Auditoria IA {isDoubleCheckEnabled ? 'ON' : 'OFF'}
-                </span>
-            </div>
-
-            <button onClick={() => { 
-                setTempApiKeysText(apiKeys.join('\n')); 
-                setShowApiKeyModal(true); 
-                setShowTutorial(false); 
-            }} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-2 text-sm font-medium"><Settings size={18} /><span className="hidden md:inline">API</span></button>
-            
-            <div className="relative group flex-1 md:flex-none w-full md:w-auto flex items-center gap-2">
-                <div className="relative">
-                    <Cpu size={16} className="absolute left-3 top-3 text-gray-500" />
-                    <select value={selectedModel} onChange={(e) => handleModelChange(e.target.value)} className="w-full md:w-56 pl-9 pr-3 py-2 text-sm bg-gray-100 border-none rounded-lg font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none">
-                        {availableModels.map(model => (<option key={model.name} value={model.name}>{model.displayName || model.name}</option>))}
-                    </select>
-                </div>
-                <button onClick={validateKeyAndFetchModels} disabled={isValidatingKey || apiKeys.length === 0} className="p-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50" title="Sincronizar Modelos">
-                    {isValidatingKey ? <Loader2 size={18} className="animate-spin"/> : <RefreshCw size={18} />}
-                </button>
-            </div>
-            <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Sair"><LogOut size={20} /></button>
-          </div>
-        </div>
-      </header>
-
-      {/* NOTIFICATION */}
-      <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed top-24 right-4" />
-
-      {/* API KEY MODAL */}
-      {showApiKeyModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-y-auto">
-                  <button onClick={() => setShowApiKeyModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
-                  <h2 className="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2"><Settings size={20} className="text-blue-600"/> Configurar API Gemini</h2>
-                  <div className="mb-4">
-                      <label className="block text-sm font-bold text-gray-600 mb-2">Chaves da API (Uma por linha)</label>
-                      <div className="flex flex-col gap-2">
-                        <textarea 
-                            value={tempApiKeysText} 
-                            onChange={e => setTempApiKeysText(e.target.value)} 
-                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm h-32 resize-y" 
-                            placeholder="AIza...&#10;AIza...&#10;AIza..."
-                        />
-                        <button onClick={handleGetKey} className="self-end px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl hover:bg-indigo-100 font-bold whitespace-nowrap flex items-center gap-2 transition-colors text-sm"><Key size={16} /> Gerar Nova Chave</button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-2 flex items-center gap-1"><Layers size={14}/> Dica: Adicione múltiplas chaves para evitar limites de uso (Erro 429). O sistema fará o rodízio automático.</p>
+          {error && (
+              <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r flex flex-col gap-2">
+                  <div className="flex items-center gap-3">
+                      <AlertCircle className="text-red-500" size={20} />
+                      <p className="text-sm text-red-700 font-medium">{error}</p>
                   </div>
-                  {showTutorial && (
-                      <div className="mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100 animate-in slide-in-from-top-2">
-                          <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><ExternalLink size={16}/> Como gerar chaves extras:</h3>
-                          <ol className="text-sm text-blue-800/80 space-y-1.5 list-decimal list-inside">
-                              <li>Clique em "Gerar Nova Chave" para abrir o Google AI Studio.</li>
-                              <li>Clique em "Create API key".</li>
-                              <li>Escolha <strong>"Create API key in new project"</strong>.</li>
-                              <li>Copie a chave e cole uma em cada linha acima.</li>
-                              <li>Repita para criar quantos projetos quiser (cada projeto tem sua cota).</li>
-                          </ol>
-                      </div>
+                  {/* Link de renovação se for erro de vencimento */}
+                  {renewalLink && (error.includes('venceu') || error.includes('matrícula')) && (
+                      <a 
+                          href={renewalLink} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="ml-8 text-sm font-bold text-red-700 hover:text-red-900 underline flex items-center gap-1"
+                      >
+                          Renovar assinatura agora <ExternalLink size={12} />
+                      </a>
                   )}
-                  <div className="flex justify-end gap-3 mt-auto pt-2">
-                      <button onClick={() => setShowApiKeyModal(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold">Cancelar</button>
-                      <button onClick={saveApiKeyFromModal} disabled={isSavingKey} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSavingKey ? <Loader2 size={16} className="animate-spin" /> : null} Salvar Chaves</button>
-                  </div>
               </div>
-          </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div><label className="block text-sm font-semibold text-slate-700 mb-2">E-mail</label><div className="relative group"><Mail className="absolute left-4 top-3.5 text-gray-400 w-5 h-5 group-focus-within:text-blue-600 transition-colors" /><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com" className="pl-12 w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800" /></div></div>
+            <div><div className="flex justify-between items-center mb-2"><label className="block text-sm font-semibold text-slate-700">Senha</label></div><div className="relative group"><Lock className="absolute left-4 top-3.5 text-gray-400 w-5 h-5 group-focus-within:text-blue-600 transition-colors" /><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="pl-12 w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800" /></div></div>
+            <button type="submit" disabled={isLoading} className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transform active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed mt-4">{isLoading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <span>Entrar</span>}</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- DASHBOARD ---
+function Dashboard({ user, onLogout }) {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [currentView, setCurrentView] = useState('home');
+  const [selectedArea, setSelectedArea] = useState(null);
+  const [activeExamData, setActiveExamData] = useState(null);
+  const [selectedSimulationId, setSelectedSimulationId] = useState(null); 
+  const [notification, setNotification] = useState(null);
+  const [dailyGoal, setDailyGoal] = useState(user.dailyGoal || 50);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  
+  // States para Sidebar, Navegação Segura e Toasts
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isExitModalOpen, setIsExitModalOpen] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  
+  // Ref para guardar o estado atual do simulado
+  const examStateRef = useRef(null);
+
+  const [allQuestions, setAllQuestions] = useState([]);
+  const [mySimulations, setMySimulations] = useState([]);
+  const [lastExamResults, setLastExamResults] = useState(null);
+  const [userStats, setUserStats] = useState({ questionsToday: 0, correctAnswers: 0, totalAnswers: 0, streak: 0 });
+
+  // --- TOAST FUNCTION ---
+  const addToast = (title, message, type = 'info') => {
+      const id = Date.now();
+      setToasts(prev => [...prev, { id, title, message, type }]);
+      setTimeout(() => {
+          setToasts(prev => prev.filter(t => t.id !== id));
+      }, 3000); // 3 segundos
+  };
+
+  const removeToast = (id) => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  useEffect(() => {
+    const q = query(collection(db, "questions"));
+    const unsubQ = onSnapshot(q, (snapshot) => setAllQuestions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
+    return () => unsubQ();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const qSims = query(collection(db, `users/${user.uid}/simulations`));
+    const unsubSims = onSnapshot(qSims, (snapshot) => {
+       const sims = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+       sims.sort((a,b) => b.id - a.id); 
+       setMySimulations(sims);
+    });
+    
+    const docStats = doc(db, "users", user.uid, "stats", "main");
+    const unsubStats = onSnapshot(docStats, (docSnap) => {
+        if(docSnap.exists()) {
+            const data = docSnap.data();
+            const today = new Date().toLocaleDateString('pt-BR');
+            if (data.lastStudyDate !== today) {
+                setUserStats({ ...data, questionsToday: 0 });
+            } else {
+                setUserStats(data);
+            }
+        }
+    });
+    return () => { unsubSims(); unsubStats(); };
+  }, [user]);
+
+  const realStats = useMemo(() => calculateDetailedStats(mySimulations, allQuestions), [mySimulations, allQuestions]);
+  const excludedIds = useMemo(() => getCorrectlyAnsweredIds(mySimulations, allQuestions), [mySimulations, allQuestions]);
+  const accuracy = realStats.totalQuestions > 0 ? Math.round((realStats.totalCorrect / realStats.totalQuestions) * 100) : 0;
+  const streak = userStats.streak || 0;
+
+  const dynamicAreas = useMemo(() => {
+    return areasBase.map(area => {
+      const totalDB = getRealQuestionCount(allQuestions, area.title);
+      const uniqueCompleted = allQuestions.filter(q => q.area === area.title && excludedIds.has(q.id)).length;
+      const progress = totalDB > 0 ? Math.round((uniqueCompleted / totalDB) * 100) : 0;
+      return { ...area, count: `${getAvailableQuestionCount(allQuestions, area.title, null, excludedIds)} Questões`, progress };
+    });
+  }, [allQuestions, excludedIds]);
+
+  const handleViewSwitch = (newView) => {
+      if (currentView === 'question_mode' && newView !== 'question_mode') {
+          setPendingNavigation(newView);
+          setIsExitModalOpen(true);
+      } else {
+          setCurrentView(newView);
+          if (newView !== 'question_mode') {
+             examStateRef.current = null;
+          }
+      }
+  };
+
+  const confirmExitWithoutSaving = () => {
+      setIsExitModalOpen(false);
+      if (pendingNavigation) {
+          setCurrentView(pendingNavigation);
+          setPendingNavigation(null);
+          examStateRef.current = null;
+      }
+  };
+
+  const handleSaveAndExitFromModal = async () => {
+      setIsExitModalOpen(false);
+      if (examStateRef.current && pendingNavigation) {
+          const { questions, answers, index, id } = examStateRef.current;
+          await handleExamPause(questions, answers, index, id);
+          setCurrentView(pendingNavigation);
+          setPendingNavigation(null);
+          examStateRef.current = null;
+      } else {
+          confirmExitWithoutSaving();
+      }
+  };
+
+  const handleUpdateProgress = (questions, answers, index, id) => {
+      examStateRef.current = { questions, answers, index, id };
+  };
+
+  const handleSaveGoal = async (newGoal) => {
+    setDailyGoal(newGoal);
+    setIsGoalModalOpen(false);
+    if (user && user.uid) {
+        try {
+            const userRef = doc(db, "users", user.uid);
+            await setDoc(userRef, { dailyGoal: newGoal }, { merge: true });
+        } catch (error) {
+            console.error("Erro ao salvar meta:", error);
+        }
+    }
+  };
+
+  const handleLaunchExam = (filters = {}, limit = 5, allowRepeats = false) => {
+    const currentExcludedIds = allowRepeats ? new Set() : excludedIds;
+    let availableQuestions = allQuestions.filter(q => {
+      if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
+      if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
+      if (currentExcludedIds.has(q.id)) return false;
+      return true;
+    });
+
+    if (availableQuestions.length === 0) {
+      setNotification({ title: "Ops!", message: "Não há questões disponíveis com esses filtros. Tente habilitar 'Incluir respondidas'.", type: "info" });
+      return;
+    }
+
+    const count = limit || 5;
+    const shuffled = [...availableQuestions].sort(() => 0.5 - Math.random()).slice(0, count);
+
+    setActiveExamData({ questionsData: shuffled, answersData: {}, currentIndex: 0, id: Date.now() });
+    handleViewSwitch('question_mode');
+  };
+
+  const handleExamPause = async (questions, answers, currentIndex, originId = null) => {
+    const answeredCount = Object.keys(answers).length;
+    if(user) {
+        const simId = String(originId || Date.now());
+        const simData = { 
+            id: Number(simId), 
+            date: new Date().toLocaleDateString('pt-BR'), 
+            title: selectedArea ? `Simulado ${selectedArea.title}` : 'Simulado Misto',
+            type: selectedArea ? 'Área Específica' : 'Misto', 
+            status: 'open', 
+            total: questions.length, 
+            correct: 0, 
+            progress: answeredCount, 
+            areas: selectedArea ? [selectedArea.title] : ['Misto'], 
+            questionIds: questions.map(q => q.id), 
+            answersData: answers,
+            lastIndex: currentIndex
+        };
+        await setDoc(doc(db, `users/${user.uid}/simulations`, simId), simData);
+        // Toast ao invés de Modal de Sucesso
+        addToast('Progresso Salvo', 'Você pode continuar depois em "Meus Simulados".', 'success');
+        setCurrentView('home'); 
+        examStateRef.current = null;
+    }
+  };
+
+  const handleExamFinish = async (results, questions, answers, originId = null) => {
+    const answeredCount = Object.keys(answers).length;
+    const simId = String(originId || Date.now());
+    setLastExamResults({ id: Number(simId), total: questions.length, correct: results.correct, answered: answeredCount });
+
+    if(user) {
+        const simData = { 
+            id: Number(simId), 
+            date: new Date().toLocaleDateString('pt-BR'), 
+            title: selectedArea ? `Simulado ${selectedArea.title}` : 'Simulado Misto',
+            type: selectedArea ? 'Área Específica' : 'Misto', 
+            status: 'finished', 
+            total: questions.length, 
+            correct: results.correct, 
+            progress: answeredCount, 
+            areas: selectedArea ? [selectedArea.title] : ['Misto'], 
+            questionIds: questions.map(q => q.id), 
+            answersData: answers 
+        };
+        await setDoc(doc(db, `users/${user.uid}/simulations`, simId), simData);
+
+        const today = new Date().toLocaleDateString('pt-BR');
+        const lastDate = userStats.lastStudyDate;
+        let newStreak = userStats.streak || 0;
+        let newQuestionsToday = userStats.questionsToday || 0;
+
+        if (lastDate !== today) newQuestionsToday = 0;
+        newQuestionsToday += answeredCount;
+
+        if (lastDate !== today) {
+            if (checkIsYesterday(lastDate)) newStreak += 1;
+            else newStreak = 1;
+        }
+
+        const newStats = {
+            questionsToday: newQuestionsToday,
+            totalAnswers: (userStats.totalAnswers || 0) + answeredCount,
+            correctAnswers: (userStats.correctAnswers || 0) + results.correct,
+            streak: newStreak,
+            lastStudyDate: today 
+        };
+        await setDoc(doc(db, "users", user.uid, "stats", "main"), newStats, { merge: true });
+    }
+    setCurrentView('simulation_summary');
+    examStateRef.current = null;
+  };
+
+  const handleDeleteSimulation = async (simId) => {
+    if (!user) return;
+    try {
+        await deleteDoc(doc(db, `users/${user.uid}/simulations`, String(simId)));
+        addToast('Excluído', 'Simulado removido com sucesso.', 'success');
+    } catch (error) {
+        console.error("Erro ao excluir simulado:", error);
+        addToast('Erro', 'Não foi possível excluir o simulado.', 'error');
+    }
+  };
+
+  const handleResumeExam = (simId) => {
+    const sim = mySimulations.find(s => s.id === simId);
+    if (!sim) return;
+    let questions = [];
+    if (sim.questionsData) {
+        questions = sim.questionsData; 
+    } else if (sim.questionIds) {
+        questions = sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean);
+    }
+    if (questions.length === 0) {
+        addToast('Erro', 'Não foi possível carregar as questões. Tente novamente.', 'error');
+        return;
+    }
+    setActiveExamData({ questionsData: questions, answersData: sim.answersData || {}, currentIndex: sim.lastIndex || 0, id: sim.id });
+    handleViewSwitch('question_mode');
+  };
+
+  const handleResetQuestions = async () => {
+     if(!user) return;
+     const q = query(collection(db, `users/${user.uid}/simulations`));
+     const snapshot = await getDocs(q);
+     const batch = writeBatch(db);
+     snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+     await batch.commit();
+     await setDoc(doc(db, "users", user.uid, "stats", "main"), { totalAnswers: 0, correctAnswers: 0 }, { merge: true });
+     addToast('Resetado', 'Histórico de questões resetado.', 'success');
+  };
+
+  const handleResetHistory = async () => {
+    if(!user) return;
+    const q = query(collection(db, `users/${user.uid}/simulations`));
+    const snapshot = await getDocs(q);
+    const batch = writeBatch(db);
+    snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    await setDoc(doc(db, "users", user.uid, "stats", "main"), { questionsToday: 0, correctAnswers: 0, totalAnswers: 0, streak: 0, lastStudyDate: null });
+    addToast('Apagado', 'Todo o histórico foi apagado.', 'success');
+  };
+
+  const getSimulationForReview = () => {
+      const sim = mySimulations.find(s => s.id === selectedSimulationId);
+      if(!sim) return null;
+      if(!sim.questionsData && sim.questionIds) {
+          return { ...sim, questionsData: sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) };
+      }
+      return sim;
+  };
+
+  const renderContent = () => {
+    switch (currentView) {
+      case 'home': return <HomeView user={user} userStats={userStats} dailyGoal={dailyGoal} accuracy={accuracy} streak={streak} dynamicAreas={dynamicAreas} setIsGoalModalOpen={setIsGoalModalOpen} setSelectedArea={setSelectedArea} setCurrentView={handleViewSwitch} realStats={realStats} />;
+      case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => handleViewSwitch('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); handleViewSwitch('review_mode'); }} onDelete={handleDeleteSimulation} />;
+      case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => handleViewSwitch('my_simulations')} user={user} addToast={addToast} />;
+      case 'general_exam_setup': return <GeneralExamSetupView onBack={() => handleViewSwitch('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => handleViewSwitch('home')} onStartTraining={() => handleViewSwitch('topic_selection')} />;
+      case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => handleViewSwitch('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} user={user} onExit={() => handleViewSwitch('home')} onFinish={handleExamFinish} onPause={handleExamPause} onUpdateProgress={handleUpdateProgress} addToast={addToast} />;
+      case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => handleViewSwitch('home')} onNewExam={() => handleViewSwitch('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); handleViewSwitch('review_mode'); }} />;
+      case 'settings': return <SettingsView user={user} onBack={() => handleViewSwitch('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} addToast={addToast} />;
+      case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => handleViewSwitch('home')} />;
+      case 'add_question': return <AddQuestionView onBack={() => handleViewSwitch('home')} addToast={addToast} />;
+      default: return <div>Erro: View não encontrada</div>;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex font-sans text-slate-800 relative">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      {isGoalModalOpen && <GoalModal currentGoal={dailyGoal} onSave={handleSaveGoal} onClose={() => setIsGoalModalOpen(false)} />}
+      {notification && <NotificationModal title={notification.title} message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
+      
+      {/* MODAL DE SAÍDA SEGURA */}
+      {isExitModalOpen && (
+          <ExitConfirmationModal 
+              onClose={() => setIsExitModalOpen(false)} 
+              onConfirmExit={confirmExitWithoutSaving}
+              onSaveAndExit={handleSaveAndExitFromModal}
+          />
       )}
 
-      {/* CONFIRMATION MODAL */}
-      {confirmationModal.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative animate-in zoom-in-95 duration-200">
-                  <div className="flex flex-col items-center text-center">
-                    <div className={`p-3 rounded-full mb-4 ${confirmationModal.confirmColor === 'red' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}><AlertTriangle size={32} /></div>
-                    <h2 className="text-xl font-bold mb-2 text-slate-800">{confirmationModal.title}</h2>
-                    <p className="text-gray-600 mb-6 text-sm">{confirmationModal.message}</p>
-                    <div className="flex gap-3 w-full">
-                        <button onClick={() => setConfirmationModal({ ...confirmationModal, isOpen: false })} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancelar</button>
-                        <button onClick={executeConfirmationAction} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors ${confirmationModal.confirmColor === 'red' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'}`}>{confirmationModal.confirmText}</button>
-                    </div>
-                  </div>
-              </div>
-          </div>
-      )}
+      <Sidebar 
+          currentView={currentView} 
+          setCurrentView={handleViewSwitch} 
+          onLogout={onLogout} 
+          user={user} 
+          collapsed={isSidebarCollapsed}
+          toggleCollapsed={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+      />
+      <MobileHeader isMobileMenuOpen={isMobileMenuOpen} setIsMobileMenuOpen={setIsMobileMenuOpen} />
+      {isMobileMenuOpen && <MobileMenu currentView={currentView} setCurrentView={handleViewSwitch} onLogout={onLogout} user={user} setIsMobileMenuOpen={setIsMobileMenuOpen} />}
+      
+      <main className={`flex-1 p-6 pt-24 md:pt-6 transition-all duration-300 ${isSidebarCollapsed ? 'md:ml-20' : 'md:ml-64'}`}>
+        {renderContent()}
+      </main>
+    </div>
+  );
+}
 
-      <main className="max-w-7xl mx-auto p-4 md:p-6">
-        <div className="flex justify-center mb-8">
-            <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex overflow-x-auto max-w-full">
-                <button onClick={() => setActiveTab('input')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'input' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><FileText size={18} /> Texto</button>
-                <button onClick={() => setActiveTab('batch_images')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'batch_images' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Files size={18} /> Imagens (Lote)</button>
-                <button onClick={() => setActiveTab('pdf')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'pdf' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Database size={18} /> PDF Massivo</button>
-                <button onClick={() => setActiveTab('review')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <CloudLightning size={18} /> Fila de Aprovação 
-                    {parsedQuestions.length > 0 && <span className="ml-2 bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">{parsedQuestions.length}</span>}
+// --- SUB-COMPONENTES UI (Sidebar, etc) ---
+function Sidebar({ currentView, setCurrentView, onLogout, user, collapsed, toggleCollapsed }) {
+    return (
+        <aside className={`hidden md:flex flex-col bg-white border-r border-gray-200 h-screen fixed z-20 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
+            <div className={`p-6 border-b border-gray-100 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
+                {!collapsed && (
+                    <h1 className="text-2xl font-bold text-blue-700 flex items-center gap-2 overflow-hidden whitespace-nowrap">
+                        <Map className="w-8 h-8" /> MedMaps
+                    </h1>
+                )}
+                {collapsed && <Map className="w-8 h-8 text-blue-700" />}
+            </div>
+
+            <nav className="flex-1 p-4 space-y-2">
+                <SidebarItem icon={BookOpen} label="Banco de Questões" active={['home', 'area_hub', 'topic_selection'].includes(currentView)} onClick={() => setCurrentView('home')} collapsed={collapsed} />
+                <SidebarItem icon={CheckCircle} label="Meus Simulados" active={['my_simulations', 'general_exam_setup', 'review_mode'].includes(currentView)} onClick={() => setCurrentView('my_simulations')} collapsed={collapsed} />
+                <SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => setCurrentView('performance')} collapsed={collapsed} />
+                {user.role === 'admin' && (
+                    <>
+                        <div className={`mt-4 mb-2 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider ${collapsed ? 'text-center' : ''}`}>
+                            {collapsed ? 'ADM' : 'Administração'}
+                        </div>
+                        <SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => setCurrentView('add_question')} collapsed={collapsed} />
+                        <SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} collapsed={collapsed} />
+                        <SidebarItem icon={Database} label="MedManager" onClick={() => { if(window) window.location.href = '/manager.html'; }} collapsed={collapsed} />
+                    </>
+                )}
+            </nav>
+
+            <div className="p-4 border-t border-gray-100 space-y-2">
+                 <button 
+                    onClick={toggleCollapsed}
+                    className={`flex items-center gap-3 px-4 py-3 w-full text-left text-gray-500 hover:bg-gray-100 rounded-lg transition-colors ${collapsed ? 'justify-center' : ''}`}
+                    title={collapsed ? "Expandir Menu" : "Recolher Menu"}
+                >
+                    {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+                    {!collapsed && <span className="font-medium">Recolher</span>}
+                </button>
+
+                <SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => setCurrentView('settings')} collapsed={collapsed} />
+                <button 
+                    onClick={onLogout} 
+                    className={`flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors mt-2 ${collapsed ? 'justify-center' : ''}`}
+                    title="Sair"
+                >
+                    <LogOut size={20} /> 
+                    {!collapsed && <span className="font-medium">Sair</span>}
                 </button>
             </div>
+        </aside>
+    )
+}
+
+function MobileHeader({ isMobileMenuOpen, setIsMobileMenuOpen }) { return (<div className="md:hidden fixed top-0 w-full bg-white z-50 border-b border-gray-200 p-4 flex justify-between items-center shadow-sm"><h1 className="text-xl font-bold text-blue-700 flex items-center gap-2"><Map className="w-6 h-6" />MedMaps</h1><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 hover:bg-gray-100 rounded-lg">{isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}</button></div>); }
+function MobileMenu({ currentView, setCurrentView, onLogout, user, setIsMobileMenuOpen }) { return (<div className="md:hidden fixed inset-0 z-40 bg-white pt-24 px-6 overflow-y-auto animate-in slide-in-from-top-10 duration-200"><nav className="flex flex-col space-y-2"><SidebarItem icon={BookOpen} label="Banco de Questões" active={['home', 'area_hub', 'topic_selection'].includes(currentView)} onClick={() => { setCurrentView('home'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={CheckCircle} label="Meus Simulados" active={['my_simulations', 'general_exam_setup', 'review_mode'].includes(currentView)} onClick={() => { setCurrentView('my_simulations'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={BarChart2} label="Desempenho" active={currentView === 'performance'} onClick={() => { setCurrentView('performance'); setIsMobileMenuOpen(false); }} />{user.role === 'admin' && (<><SidebarItem icon={PlusCircle} label="Adicionar Questões" active={currentView === 'add_question'} onClick={() => { setCurrentView('add_question'); setIsMobileMenuOpen(false); }} /><SidebarItem icon={Brain} label="MedImport AI" onClick={() => window.location.href = '/import.html'} /><SidebarItem icon={Database} label="MedManager" onClick={() => { if(window) window.location.href = '/manager.html'; }} /></>)}<div className="h-px bg-gray-100 my-4"></div><SidebarItem icon={Settings} label="Configurações" active={currentView === 'settings'} onClick={() => { setCurrentView('settings'); setIsMobileMenuOpen(false); }} /><button onClick={onLogout} className="flex items-center gap-3 px-4 py-3 w-full text-left text-gray-600 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"><LogOut size={20} /> <span className="font-medium">Sair</span></button></nav></div>); }
+
+function SidebarItem({ icon: Icon, label, active = false, onClick, collapsed = false }) { 
+    return (
+        <button 
+            onClick={onClick} 
+            className={`flex items-center gap-3 px-4 py-3 w-full text-left rounded-lg transition-all 
+                ${active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}
+                ${collapsed ? 'justify-center' : ''}
+            `}
+            title={collapsed ? label : undefined}
+        >
+            <Icon size={20} className={active ? 'text-blue-700' : 'text-gray-400'} />
+            {!collapsed && <span className="whitespace-nowrap">{label}</span>}
+        </button>
+    ); 
+}
+function StatCard({ title, value, target, sub, color, bg, icon, onClick, editable }) { return (<div onClick={onClick} className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between hover:shadow-md transition-all ${onClick ? 'cursor-pointer hover:border-blue-300 group' : ''}`}><div><p className="text-sm font-medium text-gray-500 mb-1 flex items-center gap-2">{title}{editable && <Edit2 size={12} className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400" />}</p><div className="flex items-baseline gap-2"><h3 className="text-2xl font-bold text-slate-900">{value}</h3>{target && <span className="text-sm text-gray-400 font-medium">{target}</span>}</div>{sub && <p className={`text-xs font-medium mt-1 ${color}`}>{sub}</p>}</div><div className={`p-3 rounded-xl ${bg} ${color}`}>{icon}</div></div>); }
+function AreaCard({ area, onClick }) { return (<div onClick={onClick} className={`group bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden hover:border-blue-300`}><div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity transform group-hover:scale-110`}><area.icon size={100} className={area.color.split(' ')[1]} /></div><div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 ${area.color}`}><area.icon size={28} /></div><h4 className="text-lg font-bold text-slate-900 mb-1 group-hover:text-blue-700 transition-colors">{area.title}</h4><p className="text-sm text-slate-500 mb-4">{area.count}</p><div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden"><div className={`h-1.5 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.progress}%` }} ></div></div><p className="text-xs text-slate-400 mt-2 text-right">{area.progress}% Concluído</p></div>); }
+
+// --- VIEWS DETALHADAS ---
+function HomeView({ user, userStats, dailyGoal, accuracy, streak, dynamicAreas, setIsGoalModalOpen, setSelectedArea, setCurrentView, realStats }) {
+    return (
+        <>
+            <header className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500"><div><h2 className="text-2xl font-bold text-slate-900">Olá, {user.name}! 👋</h2><p className="text-slate-500">Vamos praticar hoje? Escolha uma área para começar.</p></div></header>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10 animate-in fade-in slide-in-from-bottom-6 duration-700">
+              <StatCard title="Questões Hoje" value={userStats.questionsToday || 0} target={`/ ${dailyGoal}`} color="text-blue-600" bg="bg-blue-50" icon={<CheckCircle size={24} />} onClick={() => setIsGoalModalOpen(true)} editable={true} />
+              <StatCard title="Taxa de Acerto" value={`${accuracy}%`} sub={realStats.totalQuestions > 0 ? `${realStats.totalCorrect}/${realStats.totalQuestions} Acertos` : "Sem dados"} color="text-emerald-600" bg="bg-emerald-50" icon={<BarChart2 size={24} />} />
+              <StatCard title="Sequência" value={`${streak} Dia${streak !== 1 ? 's' : ''}`} sub="Continue assim!" color="text-orange-600" bg="bg-orange-50" icon={<Activity size={24} />} />
+            </div>
+            <section className="animate-in fade-in slide-in-from-bottom-8 duration-700"><div className="flex items-center justify-between mb-6"><h3 className="text-xl font-bold text-slate-800">Grandes Áreas</h3></div><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-8">{dynamicAreas.map((area) => (<AreaCard key={area.id} area={area} onClick={() => { setSelectedArea(area); setCurrentView('area_hub'); }} />))}</div></section>
+        </>
+    )
+}
+
+function AreaHubView({ area, stats, worstTopics, onBack, onStartTraining }) {
+    if (!area) return null;
+    const percentage = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0;
+    return (
+      <div className="animate-in fade-in slide-in-from-right-8 duration-500">
+        <button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 mb-6 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar para o início</button>
+        <div className="bg-white rounded-2xl p-8 border border-gray-100 shadow-sm mb-8 relative overflow-hidden"><div className={`absolute top-0 right-0 p-8 opacity-10 ${area.color.split(' ')[1]}`}><area.icon size={200} /></div><div className="relative z-10"><div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-6 ${area.color}`}><area.icon size={32} /></div><h1 className="text-3xl font-bold text-slate-900 mb-2">{area.title}</h1><p className="text-slate-500 text-lg max-w-2xl">Domine os principais conceitos de {area.title} com nosso banco de {area.count} atualizado.</p><div className="flex flex-wrap gap-4 mt-8"><button onClick={onStartTraining} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl font-bold flex items-center gap-3 transition-all shadow-lg shadow-blue-200 transform hover:-translate-y-1"><Play size={24} fill="currentColor" /> Iniciar Treinamento</button></div></div></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold mb-4 flex items-center gap-2"><BarChart2 size={20} className="text-emerald-500" /> Seu Desempenho</h3>{stats.total > 0 ? (<div className="text-center py-8"><div className="text-4xl font-bold text-slate-800 mb-2">{percentage}%</div><p className="text-gray-500">de acertos em {stats.total} questões</p><div className="w-full bg-gray-100 rounded-full h-3 mt-4 overflow-hidden"><div className="bg-emerald-500 h-full rounded-full" style={{ width: `${percentage}%` }}></div></div></div>) : (<div className="h-40 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400 border border-dashed border-gray-200">Faça questões para ver seu gráfico</div>)}</div><div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm"><h3 className="text-lg font-bold mb-4 flex items-center gap-2"><TrendingDown size={20} className="text-red-500" /> Seus Piores Temas</h3><ul className="space-y-3">{worstTopics.length > 0 ? (worstTopics.map((theme) => (<li key={theme.name} className="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-100"><div><span className="text-slate-800 font-medium block">{theme.name}</span><span className="text-xs text-red-600 font-semibold">{theme.correct} de {theme.total} acertos</span></div><span className="text-sm font-bold text-red-700">{theme.percentage}%</span></li>))) : (<div className="h-40 bg-gray-50 rounded-xl flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-200 text-center p-4"><p>Sem dados suficientes.</p><span className="text-xs mt-1">Complete simulados para descobrir seus pontos fracos.</span></div>)}</ul></div></div>
+      </div>
+    );
+}
+
+function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, allQuestions }) {
+    const [expandedArea, setExpandedArea] = useState(null);
+    const [selectedTopics, setSelectedTopics] = useState([]); 
+    const [desiredQuestions, setDesiredQuestions] = useState(10);
+    const [allowRepeats, setAllowRepeats] = useState(false);
+    const toggleArea = (areaId) => setExpandedArea(expandedArea === areaId ? null : areaId);
+    const toggleTopic = (areaId, topicName) => { const id = `${areaId}-${topicName}`; setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]); };
+    const allTopicIds = useMemo(() => { const ids = []; areasBase.forEach(area => { const list = themesMap[area.id] || []; list.forEach(theme => ids.push(`${area.id}-${theme}`)); }); return ids; }, []);
+    const toggleSelectAll = () => { if (selectedTopics.length === allTopicIds.length) { setSelectedTopics([]); } else { setSelectedTopics(allTopicIds); } };
+    const maxAvailable = useMemo(() => { let total = 0; selectedTopics.forEach(item => { const parts = item.split('-'); const areaId = parts[0]; const topicName = parts.slice(1).join('-'); const areaTitle = areaNameMap[areaId]; const totalInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName).length; const availableInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName && !excludedIds.has(q.id)).length; total += allowRepeats ? totalInDb : availableInDb; }); return total; }, [selectedTopics, allowRepeats, allQuestions, excludedIds]);
+    
+    // LIMITAÇÃO PARA 100 QUESTÕES
+    const MAX_QUESTIONS_LIMIT = 100;
+    const effectiveMax = Math.min(maxAvailable, MAX_QUESTIONS_LIMIT);
+
+    useEffect(() => { 
+        // Ajusta o desiredQuestions se o novo maxAvailable for menor que o atual
+        setDesiredQuestions(prev => Math.min(prev, effectiveMax));
+    }, [effectiveMax]);
+
+    const handleStart = () => { const topicsList = selectedTopics.map(t => { const parts = t.split('-'); return parts.slice(1).join('-'); }); onLaunchExam(topicsList, desiredQuestions, allowRepeats); }
+    
+    return (
+      <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
+        <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
+        <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
+        <div className="mb-6 flex justify-end"><button onClick={toggleSelectAll} className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">{selectedTopics.length === allTopicIds.length ? (<><Square size={18} /> Desmarcar Tudo</>) : (<><CheckSquare size={18} /> Selecionar Tudo</>)}</button></div>
+        <div className="space-y-4 mb-10">{areasBase.map(area => { const themes = getThemesForArea(area.id, excludedIds, allQuestions); const isExpanded = expandedArea === area.id; const selectedCount = themes.filter(t => selectedTopics.includes(`${area.id}-${t.name}`)).length; const areaTopicIds = themes.map(t => `${area.id}-${t.name}`); const isAreaFullySelected = areaTopicIds.length > 0 && areaTopicIds.every(id => selectedTopics.includes(id)); const handleAreaToggle = (e) => { e.stopPropagation(); if (isAreaFullySelected) { setSelectedTopics(prev => prev.filter(id => !areaTopicIds.includes(id))); } else { setSelectedTopics(prev => { const newSet = new Set([...prev, ...areaTopicIds]); return Array.from(newSet); }); } }; return (<div key={area.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm"><div onClick={() => toggleArea(area.id)} className={`p-5 cursor-pointer flex items-center justify-between hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-100' : ''}`}><div className="flex items-center gap-4"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={24} /></div><div><h3 className="font-bold text-slate-900">{area.title}</h3><p className="text-xs text-gray-500">{selectedCount} temas selecionados</p></div></div><div className="flex items-center gap-3"><button onClick={handleAreaToggle} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors z-10 ${isAreaFullySelected ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{isAreaFullySelected ? 'Todos' : 'Selecionar'}</button>{isExpanded ? <ChevronUp className="text-gray-400" /> : <ChevronDown className="text-gray-400" />}</div></div>{isExpanded && (<div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-2 bg-white animate-in slide-in-from-top-2">{themes.map((theme, i) => { const uniqueId = `${area.id}-${theme.name}`; const isSelected = selectedTopics.includes(uniqueId); const count = allowRepeats ? theme.total : theme.count; return (<div key={i} onClick={() => toggleTopic(area.id, theme.name)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${isSelected ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'}`}><div className={isSelected ? 'text-blue-600' : 'text-gray-300'}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div><div className="flex flex-col"><span className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-slate-600'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} disponíveis</span></div></div>); })}</div>)}</div>); })}</div>
+        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
+      </div>
+    );
+}
+
+function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuestions }) {
+    const themes = useMemo(() => { return getThemesForArea(area.id, excludedIds, allQuestions); }, [area, allQuestions, excludedIds]);
+    const [selectedTopics, setSelectedTopics] = useState([]);
+    const [desiredQuestions, setDesiredQuestions] = useState(5);
+    const [allowRepeats, setAllowRepeats] = useState(false);
+    const toggleTopic = (id) => setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+    const selectAll = () => selectedTopics.length === themes.length ? setSelectedTopics([]) : setSelectedTopics(themes.map(t => t.id));
+    const maxAvailable = useMemo(() => { let sum = 0; themes.forEach(t => { if(selectedTopics.includes(t.id)) sum += allowRepeats ? t.total : t.count; }); return sum; }, [selectedTopics, themes, allowRepeats]);
+    
+    // LIMITAÇÃO PARA 100 QUESTÕES
+    const MAX_QUESTIONS_LIMIT = 100;
+    const effectiveMax = Math.min(maxAvailable, MAX_QUESTIONS_LIMIT);
+
+    useEffect(() => { 
+        // Ajusta o desiredQuestions se o novo maxAvailable for menor que o atual
+        setDesiredQuestions(prev => Math.min(prev, effectiveMax));
+    }, [effectiveMax]);
+
+    const handleStart = () => { const selectedNames = themes.filter(t => selectedTopics.includes(t.id)).map(t => t.name); onLaunchExam(selectedNames, desiredQuestions, allowRepeats); };
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
+            <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
+            <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
+             <div className="mb-6 flex justify-end"><button onClick={selectAll} className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">{selectedTopics.length === themes.length ? (<><Square size={18} /> Desmarcar Todos</>) : (<><CheckSquare size={18} /> Selecionar Todos</>)}</button></div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8"><div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100"><div className="divide-y divide-gray-100">{themes.slice(0, Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div><div className="divide-y divide-gray-100">{themes.slice(Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div></div></div>
+            <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
+        </div>
+    );
+}
+function TopicItem({ theme, isSelected, onToggle, count }) { return (<div onClick={onToggle} className={`p-4 flex items-center justify-between cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}><div className="flex items-center gap-4"><div className={`transition-colors ${isSelected ? 'text-blue-600' : 'text-gray-300'}`}>{isSelected ? <CheckSquare size={24} fill="currentColor" className="text-blue-200" /> : <Square size={24} />}</div><div className="flex flex-col"><span className={`text-sm font-semibold ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} questões disponíveis</span></div></div></div>); }
+
+function ReviewExamView({ simulation, onBack, allQuestions, user, addToast }) { 
+    if (!simulation) return <div>Carregando...</div>;
+    const questions = simulation.questionsData || (simulation.questionIds ? simulation.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+    const userAnswers = simulation.answersData || {};
+
+    const [reportModalConfig, setReportModalConfig] = useState({ isOpen: false, type: 'error', questionId: null });
+
+    const openReportModal = (questionId, type) => {
+        setReportModalConfig({ isOpen: true, type, questionId });
+    };
+
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
+          {reportModalConfig.isOpen && (
+              <ReportModal isOpen={true} onClose={() => setReportModalConfig({ ...reportModalConfig, isOpen: false })} questionId={reportModalConfig.questionId} userId={user?.uid} type={reportModalConfig.type} addToast={addToast} />
+          )}
+          <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar para Meus Simulados</button><div className="text-right"><span className="text-sm font-bold text-slate-500 bg-gray-100 px-3 py-1 rounded-full">Revisão: {simulation.title}</span></div></div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8 flex justify-between items-center"><div><h2 className="text-2xl font-bold text-slate-900">Resumo do Desempenho</h2><p className="text-slate-500">Data: {simulation.date}</p></div><div className="text-right"><div className="text-3xl font-bold text-blue-600">{simulation.correct}/{simulation.total}</div><div className="text-sm font-medium text-gray-400">Acertos</div></div></div>
+          <div className="space-y-6">{questions.map((q, index) => { 
+              const userAnswer = userAnswers[index]; 
+              const isCorrect = userAnswer === q.correctOptionId; 
+              return (
+                <div key={q.id} className={`bg-white rounded-2xl border overflow-hidden ${isCorrect ? 'border-emerald-200' : 'border-red-200'}`}>
+                    <div className={`p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isCorrect ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                        <div className="flex items-center gap-2"><h3 className={`font-bold flex items-center gap-2 ${isCorrect ? 'text-emerald-800' : 'text-red-800'}`}>{isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />} Questão {index + 1}</h3><span className="text-sm font-medium opacity-70">{q.topic}</span></div>
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2 text-[10px] md:text-xs text-gray-500 bg-white/50 px-2 py-1 rounded-lg border border-black/5 font-bold uppercase tracking-wider"><span>ID</span><CopyButton text={q.id} className="text-gray-400 hover:text-blue-600" /></div>
+                             <button onClick={() => openReportModal(q.id, 'suggestion')} className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-100 rounded-lg transition-colors" title="Sugerir Edição"><Edit2 size={16} /></button>
+                            <button onClick={() => openReportModal(q.id, 'error')} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-100 rounded-lg transition-colors" title="Reportar Erro"><AlertTriangle size={16} /></button>
+                        </div>
+                    </div>
+                    <div className="p-6">
+                        <p className="text-slate-800 mb-4">{q.text}</p>
+                        <div className="space-y-2 mb-4">{q.options.map(opt => { let optClass = "p-3 rounded-lg border border-gray-100 text-gray-600"; if (opt.id === q.correctOptionId) optClass = "p-3 rounded-lg border border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"; else if (opt.id === userAnswer && !isCorrect) optClass = "p-3 rounded-lg border border-red-500 bg-red-50 text-red-800 font-bold"; return (<div key={opt.id} className={optClass}><span className="uppercase mr-2">{opt.id})</span> {opt.text}</div>); })}</div>
+                        <div className="bg-gray-50 p-4 rounded-xl text-sm text-slate-600"><span className="font-bold block mb-1">Comentário:</span>{q.explanation}</div>
+                    </div>
+                </div>
+              ); 
+          })}</div>
+        </div>
+    );
+}
+
+function MySimulationsView({ simulations, onCreateNew, onResume, onViewResults, onDelete }) {
+    const [activeTab, setActiveTab] = useState('finished');
+    const [simToDelete, setSimToDelete] = useState(null);
+    const openSims = simulations.filter(s => s.status === 'open');
+    const finishedSims = simulations.filter(s => s.status === 'finished');
+    const confirmDelete = () => { if(simToDelete && onDelete) { onDelete(simToDelete.id); setSimToDelete(null); } };
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto">
+          {simToDelete && (<NotificationModal title="Excluir Simulado?" message="Todo o progresso será perdido." type="error" isDangerous={true} confirmText="Sim, Excluir" cancelText="Cancelar" onClose={() => setSimToDelete(null)} onConfirm={confirmDelete} />)}
+          <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4"><div><h1 className="text-3xl font-bold text-slate-900 mb-2">Meus Simulados</h1><p className="text-slate-500">Gerencie seus treinos e acompanhe seu histórico.</p></div><button onClick={onCreateNew} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-200 transition-all"><Plus size={20} /> Novo Simulado</button></div>
+          <div className="flex border-b border-gray-200 mb-6"><button onClick={() => setActiveTab('open')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'open' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Em Andamento ({openSims.length}){activeTab === 'open' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button><button onClick={() => setActiveTab('finished')} className={`pb-3 px-6 font-medium text-sm transition-colors relative ${activeTab === 'finished' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Concluídos ({finishedSims.length}){activeTab === 'finished' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600 rounded-t-full"></div>}</button></div>
+          <div className="space-y-4">
+            {activeTab === 'open' ? (openSims.length > 0 ? (openSims.map(sim => (<div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between gap-4"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center"><Clock size={24} /></div><div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div></div><div className="flex items-center gap-4 md:gap-6"><div className="text-right hidden md:block"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Progresso</p><p className="font-bold text-slate-700">{sim.progress} / {sim.total}</p></div><button onClick={() => onResume(sim.id)} className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors">Continuar <ArrowRight size={16} /></button><button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={20} /></button></div></div>))) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200">Nenhum simulado em aberto</div>) : (finishedSims.length > 0 ? (finishedSims.map(sim => (<div key={sim.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-4 w-full md:w-auto"><div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center"><CheckCircle size={24} /></div><div><h3 className="font-bold text-slate-900">{sim.title}</h3><div className="flex items-center gap-2 text-sm text-gray-500"><span>{sim.date}</span><span>•</span><span>{sim.type}</span></div></div></div><div className="flex items-center gap-4 md:gap-6 w-full md:w-auto justify-between md:justify-end"><div className="text-right md:mr-4"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Nota</p><p className="font-bold text-emerald-600">{sim.correct} / {sim.total} ({Math.round((sim.correct/sim.total)*100)}%)</p></div><div className="flex gap-2"><button onClick={() => onViewResults(sim.id)} className="bg-white border border-gray-200 hover:bg-gray-50 text-slate-600 px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-colors"><Eye size={18} /> Detalhes</button><button onClick={() => setSimToDelete(sim)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-gray-200"><Trash2 size={20} /></button></div></div></div>))) : <div className="text-center py-16 bg-gray-50 rounded-2xl border border-dashed border-gray-200">Nenhum simulado concluído</div>)}
+          </div>
+        </div>
+    );
+}
+
+function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
+  if (!results) return null;
+  const totalQuestions = results.total;
+  const answeredCount = results.answered;
+  const correctCount = results.correct;
+  const wrongCount = answeredCount - correctCount;
+  const unansweredCount = totalQuestions - answeredCount;
+  const percentage = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+  let message = "Bom começo!"; let colorClass = "text-blue-600";
+  if (percentage >= 80) { message = "Excelente Desempenho!"; colorClass = "text-emerald-600"; } 
+  else if (percentage < 50 && answeredCount > 0) { message = "Vamos reforçar os estudos?"; colorClass = "text-orange-600"; }
+  else if (answeredCount === 0) { message = "Nenhuma questão respondida."; colorClass = "text-gray-500"; }
+
+  return (
+    <div className="max-w-3xl mx-auto pt-10 animate-in fade-in slide-in-from-bottom-8 duration-500">
+      <div className="bg-white rounded-3xl shadow-xl p-8 md:p-12 text-center border border-gray-100">
+        <div className="inline-flex p-4 rounded-full bg-gray-50 mb-6"><Activity size={48} className={colorClass} /></div>
+        <h2 className="text-3xl font-bold text-slate-900 mb-2">Simulado Finalizado</h2>
+        <p className="text-slate-500 text-lg mb-8">{message}</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
+            <div className="p-4 bg-gray-50 rounded-2xl"><div className="text-sm text-gray-500 mb-1 font-bold">Total</div><div className="text-2xl font-bold text-slate-800">{totalQuestions}</div></div>
+            <div className="p-4 bg-emerald-50 rounded-2xl"><div className="text-sm text-emerald-600 mb-1 font-bold">Acertos</div><div className="text-2xl font-bold text-emerald-700">{correctCount}</div></div>
+            <div className="p-4 bg-red-50 rounded-2xl"><div className="text-sm text-red-600 mb-1 font-bold">Erros</div><div className="text-2xl font-bold text-red-700">{wrongCount}</div></div>
+            <div className="p-4 bg-yellow-50 rounded-2xl"><div className="text-sm text-yellow-600 mb-1 font-bold">Nulas</div><div className="text-2xl font-bold text-yellow-700">{unansweredCount}</div></div>
+        </div>
+        <div className="w-full bg-gray-100 rounded-full h-4 mb-2 overflow-hidden"><div className={`h-4 rounded-full transition-all duration-1000 ${percentage >= 80 ? 'bg-emerald-500' : percentage >= 50 ? 'bg-blue-500' : 'bg-orange-500'}`} style={{ width: `${percentage}%` }}></div></div>
+        <p className="text-sm text-gray-400 font-medium mb-10 text-right">Aproveitamento (Respondidas): {percentage}%</p>
+        <div className="flex flex-col md:flex-row gap-4 justify-center">
+            <button onClick={onHome} className="px-8 py-3.5 rounded-xl font-bold text-slate-600 bg-gray-100 hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"><Home size={20} /> Voltar ao Início</button>
+            <button onClick={onReview} className="px-8 py-3.5 rounded-xl font-bold text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors flex items-center justify-center gap-2"><List size={20} /> Revisar Questões</button>
+            <button onClick={onNewExam} className="px-8 py-3.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Play size={20} fill="currentColor" /> Novo Simulado</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PerformanceView({ detailedStats, onBack }) {
+    const { totalQuestions, totalCorrect, byArea } = detailedStats;
+    const globalPercentage = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto">
+             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold text-slate-900">Desempenho Detalhado</h1></div>
+             <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 mb-8 text-center"><h2 className="text-lg font-semibold text-slate-600 mb-2">Aproveitamento Geral</h2><div className="text-5xl font-bold text-blue-600 mb-2">{globalPercentage}%</div><p className="text-gray-400">{totalCorrect} acertos de {totalQuestions} questões</p></div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{areasBase.map(area => { const stats = byArea[area.title] || { total: 0, correct: 0 }; const percentage = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0; return (<div key={area.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm"><div className="flex items-center gap-3 mb-3"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={20} /></div><h3 className="font-bold text-slate-800">{area.title}</h3></div><div className="flex items-center justify-between mb-2"><span className="text-2xl font-bold text-slate-700">{percentage}%</span><span className="text-xs text-gray-400">{stats.correct}/{stats.total}</span></div><div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden"><div className={`h-2 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${percentage}%` }} ></div></div></div>) })}</div>
+        </div>
+    )
+}
+
+function SettingsView({ user, onBack, onResetQuestions, onResetHistory, addToast }) {
+  const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null });
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const openModal = (type) => setModalConfig({ isOpen: true, type });
+  const handleConfirm = () => { if (modalConfig.type === 'questions') onResetQuestions(); else if (modalConfig.type === 'history') onResetHistory(); setModalConfig({ ...modalConfig, isOpen: false }); };
+  const [name, setName] = useState(user.name || '');
+  const [whatsapp, setWhatsapp] = useState(user.whatsapp || ''); 
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // States para Link de Renovação
+  const [adminRenewalLink, setAdminRenewalLink] = useState('');
+  const [activeRenewalLink, setActiveRenewalLink] = useState('');
+  const [isAdminSaving, setIsAdminSaving] = useState(false);
+
+  const subDate = user.subscriptionUntil ? new Date(user.subscriptionUntil) : null;
+  const daysLeft = subDate ? Math.ceil((subDate - new Date()) / (1000 * 60 * 60 * 24)) : 0;
+  const formattedDate = subDate ? subDate.toLocaleDateString('pt-BR') : 'N/A';
+  const isExpired = subDate && new Date() > subDate;
+
+  // Carregar o link de renovação do Firestore
+  useEffect(() => {
+    const fetchRenewalLink = async () => {
+        try {
+            const configDoc = await getDoc(doc(db, "config", "general"));
+            if (configDoc.exists() && configDoc.data().renewalLink) {
+                const link = configDoc.data().renewalLink;
+                setActiveRenewalLink(link);
+                if (user.role === 'admin') setAdminRenewalLink(link);
+            }
+        } catch (error) {
+            console.error("Erro ao buscar link de renovação:", error);
+        }
+    };
+    fetchRenewalLink();
+  }, [user.role]);
+
+  const handleSaveProfile = async () => {
+    setIsSaving(true);
+    try {
+        if(auth.currentUser) {
+            await updateProfile(auth.currentUser, { displayName: name });
+            await setDoc(doc(db, "users", user.uid), { name: name, whatsapp: whatsapp }, { merge: true });
+            // Agora usa o addToast ao invés de state local
+            addToast('Sucesso', 'Perfil atualizado com sucesso!', 'success');
+        }
+    } catch (error) { 
+        console.error(error); 
+        addToast('Erro', 'Erro ao atualizar perfil.', 'error');
+    } finally { 
+        setIsSaving(false); 
+    }
+  };
+
+  const handleSavePassword = async (currentPassword, newPassword) => {
+      setIsSaving(true);
+      try {
+          if (auth.currentUser) {
+              const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
+              await reauthenticateWithCredential(auth.currentUser, credential);
+              await updatePassword(auth.currentUser, newPassword);
+              addToast('Sucesso', 'Senha alterada com sucesso!', 'success');
+              setIsPasswordModalOpen(false); 
+          }
+      } catch (error) { 
+          console.error(error); 
+          addToast('Erro', 'Erro ao alterar senha. Verifique a senha atual.', 'error');
+      } finally { 
+          setIsSaving(false); 
+      }
+  };
+
+  const handleSaveAdminLink = async () => {
+    setIsAdminSaving(true);
+    try {
+        await setDoc(doc(db, "config", "general"), { renewalLink: adminRenewalLink }, { merge: true });
+        setActiveRenewalLink(adminRenewalLink);
+        addToast('Sucesso', 'Link de renovação atualizado.', 'success');
+    } catch (error) {
+        console.error(error);
+        addToast('Erro', 'Erro ao atualizar link.', 'error');
+    } finally {
+        setIsAdminSaving(false);
+    }
+  };
+
+  return (
+    <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10">
+      <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2"/> Voltar</button><h1 className="text-3xl font-bold text-slate-900">Configurações</h1></div>
+      {modalConfig.isOpen && (<NotificationModal title={modalConfig.type === 'questions' ? "Resetar Questões?" : "Apagar Tudo?"} message={modalConfig.type === 'questions' ? "Todas as questões voltarão a ser 'novas'. Seu histórico de acertos será apagado, mas sua sequência de dias (streak) será mantida." : "CUIDADO: Isso apagará TODO o seu histórico, incluindo sua sequência de dias (streak)."} isDangerous={true} confirmText={modalConfig.type === 'questions' ? "Sim, Resetar Questões" : "Sim, Apagar Tudo"} type="error" onClose={() => setModalConfig({ ...modalConfig, isOpen: false })} onConfirm={handleConfirm} />)}
+      {isPasswordModalOpen && (<ChangePasswordModal onClose={() => setIsPasswordModalOpen(false)} onSave={handleSavePassword} isLoading={isSaving} />)}
+      
+      <div className="space-y-6">
+        
+        {/* CARTÃO DE ASSINATURA */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm relative overflow-hidden">
+            <div className={`absolute top-0 right-0 p-4 opacity-10 ${isExpired ? 'text-red-500' : 'text-emerald-500'}`}><CreditCard size={120} /></div>
+            <div className="flex items-center gap-4 mb-6 relative z-10"><div className={`p-3 rounded-full ${isExpired ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}><Calendar size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Minha Assinatura</h2><p className="text-slate-500 text-sm">Detalhes do seu plano atual</p></div></div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10 mb-4">
+                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Status</p><div className={`text-lg font-bold flex items-center gap-2 ${isExpired ? 'text-red-600' : 'text-emerald-600'}`}>{isExpired ? <XCircle size={20} /> : <CheckCircle size={20} />}{isExpired ? 'Expirada' : 'Ativa'}</div></div>
+                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Vencimento</p><p className="text-lg font-bold text-slate-700">{formattedDate}</p></div>
+                <div className="p-4 bg-gray-50 rounded-xl border border-gray-100"><p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Tempo Restante</p><p className={`text-lg font-bold ${daysLeft < 5 ? 'text-orange-600' : 'text-slate-700'}`}>{daysLeft > 0 ? `${daysLeft} dias` : '0 dias'}</p></div>
+            </div>
+            
+            {/* BOTÃO DE RENOVAÇÃO PARA ALUNO */}
+            {activeRenewalLink && (
+                <div className="relative z-10 text-right">
+                    <button 
+                        onClick={() => window.open(activeRenewalLink, '_blank')}
+                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-lg shadow-emerald-200 transition-colors flex items-center justify-center gap-2 md:inline-flex w-full md:w-auto"
+                    >
+                        Renovar Assinatura Agora <ExternalLink size={16} />
+                    </button>
+                </div>
+            )}
         </div>
 
-        {/* OVERRIDES SECTION */}
-        {(activeTab === 'input' || activeTab === 'pdf' || activeTab === 'batch_images') && (
-            <div className="max-w-4xl mx-auto mb-6 animate-in slide-in-from-top-4">
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
-                        <Filter size={16} className="text-gray-500"/>
-                        <span className="text-sm font-bold text-slate-700">Filtros de Pré-definição (Forçar Dados)</span>
-                        <span className="text-xs text-gray-400 font-normal ml-auto">Opcional • Se preenchido, a IA será obrigada a usar</span>
+        {/* PAINEL DE ADMINISTRAÇÃO DO SISTEMA */}
+        {user.role === 'admin' && (
+            <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 shadow-xl">
+                <div className="flex items-center gap-4 mb-6">
+                    <div className="bg-slate-800 p-3 rounded-full text-blue-400"><Database size={24} /></div>
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Administração do Sistema</h2>
+                        <p className="text-slate-400 text-sm">Configurações globais da plataforma</p>
                     </div>
-                    <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instituição</label>
-                            <input value={overrideInst} onChange={e=>setOverrideInst(e.target.value)} placeholder="Ex: ENARE" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ano</label>
-                            <input type="number" value={overrideYear} onChange={e=>setOverrideYear(e.target.value)} placeholder="Ex: 2026" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Área Forçada</label>
-                            <select value={overrideArea} onChange={e=>{setOverrideArea(e.target.value); setOverrideTopic('');}} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
-                                <option value="">Automático (IA)</option>
-                                {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tópico Forçado</label>
-                            <select value={overrideTopic} onChange={e=>setOverrideTopic(e.target.value)} disabled={!overrideArea} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white disabled:bg-gray-50 disabled:text-gray-400">
-                                <option value="">Automático (IA)</option>
-                                {(themesMap[overrideArea] || []).map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                        </div>
-                    </div>
-                    {(overrideInst || overrideYear || overrideArea) && (
-                        <div className="bg-blue-50 px-4 py-2 border-t border-blue-100 flex justify-between items-center">
-                            <span className="text-xs text-blue-700 font-medium">As próximas questões serão geradas com esses dados fixos.</span>
-                            <button onClick={()=>{setOverrideInst('');setOverrideYear('');setOverrideArea('');setOverrideTopic('');}} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center gap-1"><Eraser size={12}/> Limpar Filtros</button>
-                        </div>
-                    )}
                 </div>
-            </div>
-        )}
-
-        {/* INPUT TABS (TEXTO ÚNICO) */}
-        {activeTab === 'input' && (
-            <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                    <label className="block text-lg font-bold text-slate-800 mb-2">
-                        Cole suas questões (Texto)
+                <div>
+                    <label className="block text-sm font-semibold text-slate-300 mb-2 flex items-center gap-2">
+                        Link de Renovação de Assinatura
+                        <span className="text-xs font-normal text-slate-500">(Este link aparecerá para os alunos)</span>
                     </label>
-                    <p className="text-sm text-gray-500 mb-4">A IA vai analisar e enviar para a fila de aprovação (Database).</p>
-                    
-                    <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="Cole aqui o texto..." className="w-full h-96 p-4 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm resize-y mb-4"/>
-
-                    <div className="flex justify-end gap-3 mt-4">
-                        <button onClick={() => { setRawText(''); }} className="px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold">Limpar</button>
-                        <button onClick={processWithAI} disabled={isProcessing || apiKeys.length === 0} className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
-                            {isProcessing ? <><Loader2 className="animate-spin" size={20} /> Processando...</> : <><Wand2 size={20} /> Enviar para Fila</>}
+                    <div className="flex gap-2">
+                        <input 
+                            type="url" 
+                            value={adminRenewalLink} 
+                            onChange={(e) => setAdminRenewalLink(e.target.value)}
+                            placeholder="https://exemplo.com/pagamento"
+                            className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-slate-500" 
+                        />
+                        <button 
+                            onClick={handleSaveAdminLink}
+                            disabled={isAdminSaving}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+                        >
+                            {isAdminSaving ? 'Salvando...' : 'Salvar'}
                         </button>
                     </div>
                 </div>
             </div>
         )}
 
-        {/* BATCH IMAGES TAB */}
-        {activeTab === 'batch_images' && (
-            <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                    <div className="flex justify-between items-start mb-6">
-                        <div>
-                            <label className="block text-lg font-bold text-slate-800 mb-1">
-                                Importador de Imagens (Lote ou Única)
-                            </label>
-                            <p className="text-sm text-gray-500">Adicione ou cole (Ctrl+V) várias imagens. As processadas com sucesso serão removidas automaticamente.</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button onClick={clearBatchQueue} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} title="Limpar Tudo" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30"><Trash2 size={20}/></button>
-                            
-                            {batchStatus === 'processing' ? (
-                                <button onClick={toggleBatchProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
-                            ) : batchStatus === 'pausing' ? (
-                                <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
-                            ) : (
-                                <button onClick={toggleBatchProcessing} disabled={batchImages.length === 0} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {batchStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
-                            )}
-                        </div>
-                    </div>
-
-                    <div 
-                        onPaste={handleBatchPaste}
-                        className="w-full h-32 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        tabIndex="0"
-                    >
-                        <div className="text-center pointer-events-none p-4">
-                            <UploadCloud size={32} className="mx-auto text-gray-400 mb-2" />
-                            <p className="text-gray-600 font-bold text-sm">Arraste, Clique ou Cole (Ctrl+V)</p>
-                        </div>
-                        <input type="file" accept="image/*" multiple onChange={handleBatchImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                    </div>
-
-                    <div className="flex flex-col lg:flex-row gap-6">
-                        {/* QUEUE GRID */}
-                        <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-200 h-[500px] overflow-y-auto">
-                            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3 flex justify-between">
-                                <span>Fila ({batchImages.length})</span>
-                                {batchStatus === 'processing' && <span className="text-blue-600 flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Processando...</span>}
-                                {batchStatus === 'pausing' && <span className="text-amber-600 flex items-center gap-1"><Clock size={10} className="animate-spin"/> Pausando...</span>}
-                            </h3>
-                            
-                            {batchImages.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
-                                    <Files size={48} className="mb-2"/>
-                                    <p className="text-sm">Nenhuma imagem na fila</p>
-                                </div>
-                            ) : (
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                                    {batchImages.map((img) => (
-                                        <div key={img.id} className={`relative group rounded-lg overflow-hidden border bg-white aspect-square shadow-sm ${img.status === 'error' ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'}`}>
-                                            <img src={img.preview} alt="Preview" className="w-full h-full object-cover" />
-                                            <button onClick={() => removeBatchImage(img.id)} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} className="absolute top-1 right-1 bg-white/80 p-1 rounded-full text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"><X size={14}/></button>
-                                            
-                                            {img.status === 'error' && (
-                                                <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center p-2 text-center">
-                                                    <span className="text-xs font-bold text-white bg-red-600 px-2 py-1 rounded shadow-sm truncate max-w-full">{img.errorMsg || 'Erro'}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* CONSOLE / LOGS */}
-                        <div className="w-full lg:w-1/3 flex flex-col h-[500px]">
-                            <div className="bg-slate-900 rounded-xl overflow-hidden shadow-inner flex flex-col h-full">
-                                <div className="p-3 bg-slate-800 border-b border-slate-700 text-gray-400 text-xs font-bold flex items-center gap-2">
-                                    <Terminal size={14}/> Console de Imagens
-                                </div>
-                                <div className="flex-1 p-4 overflow-y-auto font-mono text-xs text-gray-300 space-y-1">
-                                    {batchLogs.length === 0 && <span className="opacity-50">Aguardando logs de imagem...</span>}
-                                    {batchLogs.map((log, i) => (
-                                        <div key={i} className={`mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-amber-400' : 'text-blue-300'}`}>
-                                            <span className="opacity-50 mr-2">[{log.time}]</span>
-                                            {log.message}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
+        {/* PERFIL */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+            <div className="flex items-center gap-4 mb-6"><div className="bg-blue-100 p-3 rounded-full text-blue-600"><User size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Meu Perfil</h2><p className="text-slate-500 text-sm">Gerencie suas informações pessoais</p></div></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">Nome Completo</label>
+                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    {/* BOTÃO PARA COPIAR ID */}
+                    <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                        <span className="font-bold">SEU ID:</span> 
+                        <span className="font-mono bg-gray-100 px-2 py-1 rounded">{user.uid}</span>
+                        <CopyButton text={user.uid} className="text-blue-500 hover:text-blue-700" />
                     </div>
                 </div>
+                <div><label className="block text-sm font-semibold text-slate-700 mb-2">E-mail</label><input type="email" value={user.email} disabled className="w-full px-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 cursor-not-allowed" /></div>
+                <div className="md:col-span-2"><label className="block text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2"><Smartphone size={16} className="text-green-600" /> WhatsApp (Opcional)</label><input type="text" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="(00) 00000-0000" className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /><p className="text-xs text-gray-400 mt-1">Usaremos apenas para comunicações importantes sobre sua conta.</p></div>
             </div>
-        )}
+            <div className="text-right"><button onClick={handleSaveProfile} disabled={isSaving || (name === user.name && whatsapp === user.whatsapp)} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Salvar Alterações</button></div>
+        </div>
 
-        {/* PDF TAB */}
-        {activeTab === 'pdf' && (
-            <div className="max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4">
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-                    <div className="flex justify-between items-start mb-6">
-                        <div>
-                            <label className="block text-lg font-bold text-slate-800 mb-1">
-                                Importador Massivo de PDF (Até 1000 pgs)
-                            </label>
-                            <p className="text-sm text-gray-500">Fatiamento automático: 10 páginas por ciclo. Detecção de erros e pausa inteligente.</p>
-                        </div>
-                        {pdfStatus !== 'idle' && (
-                            <div className="flex items-center gap-2">
-                                <button onClick={handleResetPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Cancelar e Novo PDF" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><XCircle size={20}/></button>
-                                <button onClick={handleRestartPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Reiniciar Processamento" className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors mr-2 disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw size={20}/></button>
-                                
-                                {pdfStatus === 'processing' ? (
-                                    <button onClick={togglePdfProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
-                                ) : pdfStatus === 'pausing' ? (
-                                    <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
-                                ) : (
-                                    <button onClick={togglePdfProcessing} disabled={pdfStatus === 'reading' || pdfStatus === 'completed' || pdfStatus === 'error'} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {pdfStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                    
-                    {/* DROPZONE PDF */}
-                    {pdfStatus === 'idle' && (
-                        <div className="space-y-4">
-                             {/* LAST SESSION INFO BOX */}
-                             {lastSessionData && (
-                                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-4 animate-in slide-in-from-top-2">
-                                     <div className="bg-blue-200 text-blue-700 p-2 rounded-lg">
-                                         <History size={24} />
-                                     </div>
-                                     <div className="flex-1">
-                                         <p className="text-xs font-bold text-blue-500 uppercase">Última Sessão Detectada</p>
-                                         <p className="font-bold text-slate-700 text-sm">Arquivo: {lastSessionData.fileName}</p>
-                                         <p className="text-xs text-slate-500">Parou na fatia: <strong>{lastSessionData.lastChunkPages || 'Desconhecido'}</strong></p>
-                                     </div>
-                                     <div className="text-xs text-blue-400 bg-white/50 px-2 py-1 rounded">
-                                         Se enviar este arquivo novamente,<br/>o sistema continuará automaticamente.
-                                     </div>
-                                 </div>
-                             )}
+        {/* SEGURANÇA */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm"><div className="flex items-center gap-4 mb-6"><div className="bg-orange-100 p-3 rounded-full text-orange-600"><Key size={24} /></div><div><h2 className="text-xl font-bold text-slate-900">Segurança</h2><p className="text-slate-500 text-sm">Gerencie sua senha de acesso</p></div></div><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-gray-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Alterar Senha</h4><p className="text-xs text-gray-500">Recomendamos usar uma senha forte e única.</p></div><button onClick={() => setIsPasswordModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900 transition-colors"><Key size={18} /> Alterar Senha</button></div></div>
+        
+        {/* ZONA DE PERIGO */}
+        <div className="bg-red-50 rounded-2xl border border-red-200 p-6 shadow-sm"><div className="flex items-center gap-4 mb-6"><div className="bg-red-100 p-3 rounded-full text-red-600"><AlertTriangle size={24} /></div><div><h2 className="text-xl font-bold text-red-700">Zona de Perigo</h2><p className="text-red-500 text-sm">Ações irreversíveis de gerenciamento de dados</p></div></div><div className="space-y-4"><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Questões</h4><p className="text-xs text-gray-500">Apaga o histórico de respostas. As questões voltam a ser novas.</p></div><button onClick={() => openModal('questions')} className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 text-red-600 font-bold rounded-lg hover:bg-red-50 transition-colors"><RotateCcw size={18} /> Resetar Questões</button></div><div className="flex flex-col md:flex-row items-center justify-between p-4 bg-white rounded-xl border border-red-100"><div className="mb-4 md:mb-0"><h4 className="font-semibold text-slate-800">Resetar Tudo</h4><p className="text-xs text-gray-500">Apaga tudo, inclusive sua sequência (streak).</p></div><button onClick={() => openModal('history')} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors"><Trash2 size={18} /> Resetar Tudo</button></div></div></div>
+      </div>
+    </div>
+  );
+}
 
-                             {/* RANGE INPUTS */}
-                             <div className="flex items-end gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                                <div className="flex-1">
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><BookOpen size={12}/> De pg.</label>
-                                    <input type="number" min="1" value={pdfStartPage} onChange={e=>setPdfStartPage(e.target.value)} placeholder="Início" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
-                                </div>
-                                <div className="flex-1">
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><SkipForward size={12}/> Até pg.</label>
-                                    <input type="number" min="1" value={pdfEndPage} onChange={e=>setPdfEndPage(e.target.value)} placeholder="Fim" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
-                                </div>
-                                <div className="text-xs text-gray-400 pb-2 w-1/3 leading-tight">
-                                    Deixe em branco para processar o PDF inteiro.
-                                </div>
-                             </div>
+function AddQuestionView({ onBack, addToast }) {
+    const [area, setArea] = useState(areasBase[0].id);
+    const [topic, setTopic] = useState('');
+    const [institution, setInstitution] = useState('');
+    const [year, setYear] = useState('');
+    const [text, setText] = useState('');
+    const [options, setOptions] = useState([{ id: 'a', text: '' }, { id: 'b', text: '' }, { id: 'c', text: '' }, { id: 'd', text: '' }, { id: 'e', text: '' }]);
+    const [correctOptionId, setCorrectOptionId] = useState('a');
+    const [explanation, setExplanation] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const availableThemes = useMemo(() => themesMap[area] || [], [area]);
 
-                             <div className="w-full h-56 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400">
-                                <div className="text-center pointer-events-none p-4">
-                                    <FileText size={48} className="mx-auto text-gray-400 mb-3" />
-                                    <p className="text-gray-600 font-bold mb-1">Arraste seu PDF aqui</p>
-                                    <p className="text-gray-400 text-sm">Suporta arquivos grandes (100MB+)</p>
-                                </div>
-                                <input type="file" accept="application/pdf" onChange={handlePdfUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                             </div>
-                        </div>
-                    )}
+    useEffect(() => { setTopic(''); }, [area]);
+    const handleOptionChange = (id, newText) => { setOptions(prev => prev.map(opt => opt.id === id ? { ...opt, text: newText } : opt)); };
+    const handleSave = async (e) => {
+        e.preventDefault(); setIsSaving(true);
+        const optionA = options.find(o => o.id === 'a').text.trim();
+        const optionB = options.find(o => o.id === 'b').text.trim();
+        if (!text || !topic || !optionA || !optionB) { 
+            addToast('Atenção', 'Preencha a Área, Tópico, Enunciado e as Alternativas A e B.', 'error');
+            setIsSaving(false); return; 
+        }
+        const validOptions = options.filter(opt => opt.text.trim() !== '');
+        if (!validOptions.find(o => o.id === correctOptionId)) { 
+            addToast('Erro', 'A alternativa correta selecionada está vazia.', 'error');
+            setIsSaving(false); return; 
+        }
+        try {
+            const questionData = { area: areaNameMap[area], topic: topic, institution: institution || "", year: year ? parseInt(year) : "", text: text, options: validOptions, correctOptionId: correctOptionId, explanation: explanation || "", createdAt: new Date().toISOString(), hasImage: false, id: null };
+            await addDoc(collection(db, "questions"), questionData);
+            addToast('Sucesso', 'Questão adicionada com sucesso!', 'success');
+            setText(''); setOptions([{ id: 'a', text: '' }, { id: 'b', text: '' }, { id: 'c', text: '' }, { id: 'd', text: '' }, { id: 'e', text: '' }]); setExplanation('');
+        } catch (error) { 
+            addToast('Erro', 'Erro ao salvar no banco de dados.', 'error'); 
+        } finally { setIsSaving(false); }
+    };
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10"><div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold">Nova Questão</h1></div><form onSubmit={handleSave} className="space-y-6"><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-700 mb-2">Área</label><select value={area} onChange={e => setArea(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">{areasBase.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Tema</label><select value={topic} onChange={e => setTopic(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl"><option value="">Selecione...</option>{availableThemes.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Instituição (Opcional)</label><input type="text" value={institution} onChange={e => setInstitution(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ex: USP, UNIFESP..." /></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Ano (Opcional)</label><input type="number" value={year} onChange={e => setYear(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ano (opcional)" /></div></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Enunciado</label><textarea value={text} onChange={e => setText(e.target.value)} rows={5} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl resize-y" /></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4"><h3 className="font-bold text-slate-900 border-b border-gray-100 pb-2 mb-4">Alternativas</h3>{options.map((opt) => (<div key={opt.id} className="flex items-start gap-3"><div className="mt-3"><input type="radio" name="correctOption" checked={correctOptionId === opt.id} onChange={() => setCorrectOptionId(opt.id)} className="w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer"/></div><div className="flex-1"><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Opção {opt.id}</label><textarea value={opt.text} onChange={e => handleOptionChange(opt.id, e.target.value)} rows={2} className={`w-full px-4 py-3 border rounded-xl resize-none ${correctOptionId === opt.id ? 'bg-emerald-50 border-emerald-200 focus:ring-emerald-500' : 'bg-gray-50 border-gray-200 focus:ring-blue-500'}`} placeholder={`Texto da alternativa ${opt.id.toUpperCase()}`} /></div></div>))}</div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Comentário</label><textarea value={explanation} onChange={e => setExplanation(e.target.value)} rows={4} className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl resize-y" /></div><div className="flex justify-end gap-4"><button type="button" onClick={onBack} className="px-6 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button><button type="submit" disabled={isSaving} className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50">{isSaving ? 'Salvando...' : 'Salvar Questão'}</button></div></form></div>
+    );
+}
 
-                    {/* PDF PROGRESS UI */}
-                    {pdfStatus !== 'idle' && (
-                        <div className="space-y-6">
-                            {/* STATUS BAR */}
-                            <div className="bg-gray-100 rounded-xl p-4 flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className={`p-2 rounded-lg 
-                                        ${pdfStatus === 'error' ? 'bg-red-100 text-red-600' : 
-                                          pdfStatus === 'processing' ? 'bg-blue-100 text-blue-600 animate-pulse' : 
-                                          pdfStatus === 'pausing' ? 'bg-amber-100 text-amber-600 animate-pulse' :
-                                          'bg-gray-200 text-gray-600'}`}>
-                                        {pdfStatus === 'reading' && <Loader2 className="animate-spin" size={24}/>}
-                                        {pdfStatus === 'ready' && <CheckCircle size={24}/>}
-                                        {pdfStatus === 'processing' && <Cpu size={24}/>}
-                                        {pdfStatus === 'pausing' && <Clock size={24}/>}
-                                        {pdfStatus === 'paused' && <Pause size={24}/>}
-                                        {pdfStatus === 'completed' && <CheckCircle size={24}/>}
-                                        {pdfStatus === 'error' && <AlertOctagon size={24}/>}
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-slate-800 text-sm uppercase">
-                                            {pdfStatus === 'reading' ? 'Lendo Arquivo...' : 
-                                             pdfStatus === 'pausing' ? 'Pausando...' : pdfStatus}
-                                        </p>
-                                        <p className="text-xs text-gray-500">{pdfFile?.name} • {pdfChunks.length} fatias</p>
-                                    </div>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-2xl font-bold text-slate-700">{Math.round((parsedQuestions.filter(q => q.sourceFile === pdfFile?.name).length))} <span className="text-sm font-normal text-gray-400">questões</span></p>
-                                </div>
-                            </div>
+// --- QUESTION VIEW ATUALIZADA (COM REPORT E SUGGESTION) ---
+function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress, addToast }) {
+  const [questions] = useState(() => initialData ? initialData.questionsData : []); 
+  const [userAnswers, setUserAnswers] = useState(() => initialData ? initialData.answersData : {}); 
+  const [currentIndex, setCurrentIndex] = useState(() => initialData ? initialData.currentIndex : 0);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [status, setStatus] = useState('unanswered'); 
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [suggestionModalOpen, setSuggestionModalOpen] = useState(false);
+  const [suggestionType, setSuggestionType] = useState(null); 
 
-                            {/* GRID DE CHUNKS */}
-                            <div className="border border-gray-200 rounded-xl p-4 max-h-60 overflow-y-auto">
-                                <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
-                                    <span>Timeline (Navegação)</span>
-                                    {pdfStatus === 'paused' && <span className="text-blue-500 text-[10px]">Clique para Navegar (Seek)</span>}
-                                </p>
-                                <div className="grid grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2">
-                                    {pdfChunks.map((chunk, idx) => (
-                                        <button key={chunk.id} 
-                                            onClick={() => handleJumpToChunk(idx)}
-                                            disabled={pdfStatus === 'reading' || pdfStatus === 'processing' || pdfStatus === 'pausing'}
-                                            className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
-                                            ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
-                                            ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
-                                            ${chunk.status === 'restored' ? 'bg-indigo-100 text-indigo-600 border-indigo-200 shadow-sm' : ''} 
-                                            ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
-                                            ${idx === currentChunkIndex && (pdfStatus === 'processing' || pdfStatus === 'pausing') ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
-                                            ${(pdfStatus === 'paused' || pdfStatus === 'ready' || pdfStatus === 'completed') ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer hover:border-blue-300' : ''}
-                                            ${(pdfStatus === 'processing' || pdfStatus === 'pausing') && idx !== currentChunkIndex ? 'opacity-50 cursor-not-allowed' : ''}
-                                            `}
-                                            title={`Páginas ${chunk.pages} | Erros: ${chunk.errorCount}`}
-                                        >
-                                            {idx + 1}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+  // Notifica o componente pai sobre mudanças para o "Autosave" da navegação segura
+  useEffect(() => {
+     if (onUpdateProgress) {
+         onUpdateProgress(questions, userAnswers, currentIndex, initialData?.id);
+     }
+  }, [questions, userAnswers, currentIndex, onUpdateProgress, initialData?.id]);
 
-                            {/* TERMINAL DE LOGS DO PDF */}
-                            <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-gray-300 h-48 overflow-y-auto shadow-inner flex flex-col-reverse">
-                                {processingLogs.length === 0 && <span className="opacity-50">Aguardando logs...</span>}
-                                {processingLogs.map((log, i) => (
-                                    <div key={i} className={`mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-amber-400' : 'text-blue-300'}`}>
-                                        <span className="opacity-50 mr-2">[{log.time}]</span>
-                                        {log.message}
-                                    </div>
-                                ))}
-                                <div className="text-gray-500 border-b border-gray-800 mb-2 pb-1 flex items-center gap-2 sticky top-0 bg-slate-900"><Terminal size={12}/> Console de PDF</div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        )}
+  useEffect(() => {
+    if (userAnswers[currentIndex]) {
+      setSelectedOption(userAnswers[currentIndex]);
+      const isCorrect = userAnswers[currentIndex] === questions[currentIndex].correctOptionId;
+      setStatus(isCorrect ? 'correct' : 'incorrect');
+    } else {
+      setSelectedOption(null);
+      setStatus('unanswered');
+    }
+  }, [currentIndex, userAnswers, questions]);
 
-        {/* REVIEW TAB (ATUALIZADA COM FILTROS MÚLTIPLOS) */}
-        {activeTab === 'review' && (
-            <div className="max-w-4xl mx-auto space-y-4">
-                {parsedQuestions.length > 0 && (
-                    /* --- INÍCIO DA ÁREA DE FILTROS E AÇÕES (COLE AQUI) --- */
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-4 sticky top-20 z-10">
-                        
-                        {/* LINHA 1: TODOS OS FILTROS */}
-                        <div className="flex flex-col gap-2">
-                            <div className="flex justify-between items-center px-1">
-                                <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros</span>
-                                <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
-                            </div>
-                            
-                            {/* Container de Botões de Filtro */}
-                            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                <button 
-                                    onClick={() => toggleFilter('all')} 
-                                    className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border 
-                                    ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
-                                >
-                                    Todas
-                                </button>
-                                
-                                <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
-                                <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
-                                <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
-                                <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
-                                <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
-                            </div>
-                        </div>
+  const currentQuestion = questions[currentIndex];
+  const handleConfirmAnswer = () => { if (!selectedOption) return; const isCorrect = selectedOption === currentQuestion.correctOptionId; setStatus(isCorrect ? 'correct' : 'incorrect'); setUserAnswers(prev => ({ ...prev, [currentIndex]: selectedOption })); };
+  const handleNext = () => { if (currentIndex < questions.length - 1) { setCurrentIndex(prev => prev + 1); window.scrollTo(0,0); } else { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); } };
+  const handlePrevious = () => { if (currentIndex > 0) { setCurrentIndex(prev => prev - 1); window.scrollTo(0,0); } };
+  const handleRedo = () => { setSelectedOption(null); setStatus('unanswered'); };
+  const handleSaveAndExit = () => { onPause(questions, userAnswers, currentIndex, initialData?.id); };
+  
+  const MobileNavBar = () => (
+      <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-3 z-50 flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:hidden">
+          <button onClick={handlePrevious} disabled={currentIndex === 0} className="p-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 rounded-xl bg-gray-50 border border-gray-100"><ArrowLeft size={24} /></button>
+          <div className="flex-1 mx-3">{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="w-full bg-blue-600 disabled:opacity-50 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 active:scale-95 transition-transform">Responder</button>) : (<button onClick={handleRedo} className="w-full text-blue-600 border border-blue-200 bg-blue-50 py-3 rounded-xl font-bold flex items-center justify-center gap-2"><RotateCcw size={18} /> Refazer</button>)}</div><button onClick={handleNext} className="p-3 text-white bg-slate-900 rounded-xl shadow-lg"><ArrowRight size={24} /></button>
+      </div>
+  );
 
-                        {/* Divisória */}
-                        <div className="h-px bg-gray-100 w-full"></div>
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-32 md:pb-0 relative">
+      <ReportModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="error" addToast={addToast} />
+      <ReportModal isOpen={suggestionModalOpen} onClose={() => setSuggestionModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="suggestion" category={suggestionType} addToast={addToast} />
+      <div className="flex items-center justify-between mb-6 sticky top-14 md:top-0 bg-gray-50 z-30 py-4 border-b md:border-none border-gray-200">
+          <div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> <span className="hidden md:inline">Salvar e Sair</span><span className="md:hidden">Sair</span></button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-3 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> <span className="hidden md:inline">Encerrar</span></button></div>
+          <div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-20 md:w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200 relative">
+              <div className="flex justify-between items-start mb-4 border-b border-gray-100 pb-4">
+                  <div className="flex flex-wrap gap-2 items-center">
+                      {/* Botão Unificado para Sugerir Banca/Ano se faltar algo */}
+                      {(!currentQuestion.institution || !currentQuestion.year) && (
+                          <button onClick={() => { setSuggestionType('institution'); setSuggestionModalOpen(true); }} className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-500 bg-blue-50 text-xs font-bold hover:bg-blue-100 transition-colors flex items-center gap-1">
+                              <Edit2 size={10}/> Sugerir Banca/Ano
+                          </button>
+                      )}
+                      
+                      {/* Exibição dos dados existentes */}
+                      {currentQuestion.institution && (
+                         <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide border border-blue-100">
+                            {currentQuestion.institution}
+                         </span>
+                      )}
+                      {currentQuestion.year && (
+                         <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200">
+                            {currentQuestion.year}
+                         </span>
+                      )}
 
-                        {/* LINHA 2: AÇÕES (Limpar e Aprovar/Descartar) */}
-                        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                            
-                            {/* Esquerda: Limpeza em Massa */}
-                            <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-                                <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap">
-                                    <Eraser size={14}/> Limpar Inst.
-                                </button>
-                                <button onClick={() => clearAllField('year')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap">
-                                    <Eraser size={14}/> Limpar Anos
-                                </button>
-                            </div>
-
-                            {/* Direita: Botões Principais */}
-                            <div className="flex items-center gap-2 w-full sm:w-auto">
-                                <button 
-                                    onClick={handleDiscardFilteredClick} 
-                                    disabled={isBatchAction || currentFilteredList.length === 0} 
-                                    className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm"
-                                >
-                                    <Trash2 size={16} /> Descartar {currentFilteredList.length}
-                                </button>
-                                
-                                <button 
-                                    onClick={handleApproveFilteredClick} 
-                                    disabled={isBatchAction || currentFilteredList.length === 0} 
-                                    className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
-                                >
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16} />} 
-                                    Aprovar {currentFilteredList.length}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    /* --- FIM DA ÁREA DE FILTROS E AÇÕES --- */
-                )}
-
-                {currentFilteredList.length === 0 ? (
-                    <div className="text-center py-20 opacity-50">
-                        <Database size={64} className="mx-auto mb-4 text-gray-300" />
-                        <p className="text-xl font-medium text-gray-500">Nenhuma questão encontrada neste filtro.</p>
-                        {parsedQuestions.length === 0 && <button onClick={() => setActiveTab('input')} className="mt-4 text-blue-600 font-bold hover:underline">Adicionar novas</button>}
-                    </div>
-                ) : (
-                    currentFilteredList.map((q, idx) => (
-                        <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
-                            {/* STATUS BADGES */}
-                            <div className="absolute top-0 right-0 z-10 flex flex-col items-end gap-1">
-                                <div className={`p-2 rounded-bl-xl shadow-sm text-xs font-bold flex items-center gap-1
-                                    ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : 
-                                    q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={14}/> Double-Checked</>}
-                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={14}/> Suspeita: {q.verificationReason}</>}
-                                    {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
-                                </div>
-                                
-                                {q.sourceFound && (
-                                    <div className="bg-teal-100 text-teal-800 p-2 rounded-l-lg shadow-sm text-xs font-bold flex items-center gap-1">
-                                        <Globe size={14}/> FONTE ENCONTRADA
-                                    </div>
-                                )}
-
-                                {q.isDuplicate && (
-                                    <div className="bg-amber-100 text-amber-800 p-2 rounded-l-lg shadow-sm text-xs font-bold flex items-center gap-1 animate-pulse">
-                                        <Copy size={14}/> JÁ CADASTRADA
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
-                            <div className="p-6 pt-10">
-                                {/* METADATA FIELDS */}
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Inst</label><input value={q.institution} onChange={e=>updateQuestionField(idx,'institution',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Ano</label><input type="number" value={q.year} onChange={e=>updateQuestionField(idx,'year',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Área</label><select value={q.area} onChange={e=>updateQuestionField(idx,'area',e.target.value)} className="w-full p-2 bg-blue-50 border border-blue-100 rounded-lg text-sm font-bold text-blue-800"><option value="">Selecione...</option>{areasBase.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(idx,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
-                                </div>
-
-                                {/* QUESTION CONTENT */}
-                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
-
-                                <div className="space-y-2 mb-6">
-                                    {q.options?.map((opt, optIdx) => (
-                                        <div key={opt.id} className="flex items-center gap-3">
-                                            <div onClick={()=>updateQuestionField(idx,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id.toUpperCase()}</div>
-                                            <input value={opt.text} onChange={e=>updateOptionText(idx,optIdx,e.target.value)} className={`w-full p-2 border rounded-lg text-sm ${q.correctOptionId===opt.id?'border-emerald-200 bg-emerald-50':'bg-white'}`}/>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
-                                    <label className="text-xs font-bold text-amber-700 uppercase flex items-center gap-1 mb-2"><Brain size={12}/> Comentário IA</label>
-                                    <textarea value={q.explanation} onChange={e=>updateQuestionField(idx,'explanation',e.target.value)} rows={3} className="w-full p-3 bg-white/50 border border-amber-200/50 rounded-lg text-slate-700 text-sm focus:bg-white focus:ring-2 focus:ring-amber-400 outline-none"/>
-                                </div>
-                            </div>
-                            
-                            <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
-                                <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
-                                
-                                {q.isDuplicate ? (
-                                    <button disabled className="bg-amber-200 text-amber-700 font-bold text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 cursor-not-allowed opacity-70">
-                                        <Copy size={18}/> Questão Duplicada
-                                    </button>
-                                ) : (
-                                    <button onClick={()=>approveQuestion(q)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
-                                )}
-                            </div>
-                        </div>
-                    ))
-                )}
-            </div>
-        )}
-      </main>
+                      <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200">{currentQuestion.topic}</span>
+                  </div>
+                  
+                  {/* ID e Reportar - USANDO O NOVO COMPONENTE COPYBUTTON */}
+                  <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 text-[10px] md:text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100 font-bold uppercase tracking-wider">
+                          <span>ID</span>
+                          <CopyButton text={currentQuestion.id} />
+                      </div>
+                      <button onClick={() => setReportModalOpen(true)} className="text-red-500 hover:text-red-700 transition-colors" title="Reportar Erro"><AlertTriangle size={18} /></button>
+                  </div>
+              </div>
+              <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6 font-medium whitespace-pre-line">{currentQuestion.text}</p>
+          </div>
+          <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 md:p-5 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium text-base ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
+          <div className="hidden md:flex justify-between items-center pt-4 mt-4 border-t border-gray-100"><button onClick={handlePrevious} disabled={currentIndex === 0} className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"><ArrowLeft size={20} /> Anterior</button>{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4">Responder</button>) : (<button onClick={handleRedo} className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"><RotateCcw size={18} /> Refazer</button>)}<button onClick={handleNext} className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors">{currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} /></button></div>
+        </div>
+        <div className="lg:col-span-1 space-y-6">
+           {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
+        </div>
+      </div>
+      <MobileNavBar />
     </div>
   );
 }
