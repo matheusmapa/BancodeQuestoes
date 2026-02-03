@@ -233,9 +233,9 @@ export default function App() {
   
   // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
   // ... outros estados
-  const [activeFilters, setActiveFilters] = useState(['all']); 
+  const [activeFilters, setActiveFilters] = useState(['verified', 'source']); 
   // ADICIONE ESTA LINHA:
-  const [filterLogic, setFilterLogic] = useState('OR'); // 'OR' (Soma) ou 'AND' (Restritivo)
+  const [filterLogic, setFilterLogic] = useState('AND'); // 'OR' (Soma) ou 'AND' (Restritivo)
   
 
   // Override States (Pré-definições)
