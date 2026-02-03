@@ -793,7 +793,10 @@ export default function App() {
 
           const batch = writeBatch(db);
           let savedCount = 0;
-          let newQuestionsForAudit = processedQuestions.filter(q => !q.isDuplicate);
+          
+          // --- ALTERAÇÃO AQUI: PERMITIR DUPLICATAS NA FILA ---
+          // Antes: let newQuestionsForAudit = processedQuestions.filter(q => !q.isDuplicate);
+          let newQuestionsForAudit = processedQuestions; 
 
           // 4. Auditoria IA (Double Check)
           if (newQuestionsForAudit.length > 0) {
@@ -1221,8 +1224,9 @@ export default function App() {
           }));
 
           // --- LOGICA DOUBLE CHECK SEQUENCIAL ---
-          const newQuestions = processedQuestions.filter(q => !q.isDuplicate);
-          const duplicateCount = processedQuestions.length - newQuestions.length;
+          // --- ALTERAÇÃO AQUI: PERMITIR DUPLICATAS NA FILA (PDF) ---
+          // Antes: const newQuestions = processedQuestions.filter(q => !q.isDuplicate);
+          const newQuestions = processedQuestions;
 
           if (newQuestions.length > 0) {
               if (doDoubleCheck) {
@@ -1277,7 +1281,7 @@ export default function App() {
               await batch.commit();
           }
 
-          addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} novas, ${duplicateCount} duplicatas descartadas.`);
+          addLog('success', `Sucesso fatia ${chunk.pages}: ${newQuestions.length} questões salvas.`);
           setPdfChunks(prev => {
               const newChunks = [...prev];
               newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'success' };
@@ -1581,8 +1585,9 @@ export default function App() {
         }));
 
         // FILTRA DUPLICATAS ANTES DO DOUBLE CHECK
-        const uniqueQuestions = finalQuestions.filter(q => !q.isDuplicate);
-        const duplicateCount = finalQuestions.length - uniqueQuestions.length;
+        // --- ALTERAÇÃO AQUI: PERMITIR DUPLICATAS NA FILA (TEXTO) ---
+        // Antes: const uniqueQuestions = finalQuestions.filter(q => !q.isDuplicate);
+        const uniqueQuestions = finalQuestions; 
 
         if (isDoubleCheckEnabled && uniqueQuestions.length > 0) {
             showNotification('success', 'Iniciando Auditoria IA nas questões novas...');
@@ -1631,14 +1636,7 @@ export default function App() {
         setRawText('');
         setActiveTab('review');
         
-        // NOTIFICAÇÕES MELHORADAS
-        if (savedCount === 0 && duplicateCount > 0) {
-            showNotification('warning', `Todas as ${duplicateCount} questões eram duplicatas e foram descartadas.`);
-        } else if (duplicateCount > 0) {
-            showNotification('success', `${savedCount} enviadas. ${duplicateCount} duplicatas descartadas.`);
-        } else {
-            showNotification('success', `${savedCount} questões enviadas para fila!`);
-        }
+        showNotification('success', `${savedCount} questões enviadas para fila (inclusive duplicatas)!`);
 
     } catch (error) {
         console.error(error);
@@ -1684,18 +1682,10 @@ export default function App() {
       const targetQuestions = getFilteredQuestions();
       if (targetQuestions.length === 0) return;
       
-      // Verifica se tem alguma duplicata na lista filtrada
-      const hasDuplicates = targetQuestions.some(q => q.isDuplicate);
-      if (hasDuplicates && !activeFilters.includes('duplicates')) {
-          showNotification('warning', 'Algumas duplicatas serão ignoradas automaticamente.');
-      }
+      // --- ALTERAÇÃO AQUI: CONTA TUDO, INCLUINDO DUPLICATAS ---
+      // Antes: const count = targetQuestions.filter(q => !q.isDuplicate).length;
+      const count = targetQuestions.length;
 
-      const count = targetQuestions.filter(q => !q.isDuplicate).length;
-      if (count === 0 && !activeFilters.includes('duplicates')) {
-           return showNotification('error', 'Nenhuma questão válida para aprovar (todas são duplicatas).');
-      }
-
-      // --- MUDANÇA 4: LABEL DINÂMICO PARA O MODAL ---
       const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
 
       setConfirmationModal({
@@ -1703,8 +1693,8 @@ export default function App() {
           type: 'approve_filtered',
           data: null,
           title: `Aprovar ${count} Questões?`,
-          message: `Você está prestes a publicar ${count} questões dos filtros: ${activeLabels}.`,
-          confirmText: 'Sim, Publicar',
+          message: `Você está prestes a publicar (ou atualizar) ${count} questões dos filtros: ${activeLabels}.`,
+          confirmText: 'Sim, Publicar/Atualizar',
           confirmColor: 'emerald'
       });
   };
@@ -1713,7 +1703,6 @@ export default function App() {
       const targetQuestions = getFilteredQuestions();
       if (targetQuestions.length === 0) return;
 
-      // --- MUDANÇA 5: LABEL DINÂMICO PARA O MODAL ---
       const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
 
       setConfirmationModal({
@@ -1771,16 +1760,18 @@ export default function App() {
 
           try {
               for (const q of targetQuestions) {
-                  if (q.isDuplicate) continue; 
+                  // --- ALTERAÇÃO AQUI: NÃO PULA MAIS AS DUPLICATAS ---
+                  // if (q.isDuplicate) continue; 
 
                   const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
                   if (q.area && q.topic && q.text) {
-                     await setDoc(doc(db, "questions", id), { ...finalData, createdAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
+                     // setDoc vai SOBRESCREVER se já existir (id = hash)
+                     await setDoc(doc(db, "questions", id), { ...finalData, updatedAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
                      await deleteDoc(doc(db, "draft_questions", id));
                      count++;
                   }
               }
-              showNotification('success', `${count} questões publicadas!`);
+              showNotification('success', `${count} questões processadas (criadas ou atualizadas)!`);
           } catch (e) { showNotification('error', e.message); } finally { setIsBatchAction(false); }
       }
       else if (type === 'delete_filtered') {
@@ -1796,23 +1787,34 @@ export default function App() {
   };
 
   const approveQuestion = async (q) => {
+    // --- ALTERAÇÃO AQUI: PERMITIR APROVAR INDIVIDUALMENTE DUPLICATAS ---
+    /*
     if (q.isDuplicate) {
         return showNotification('error', 'Esta questão já existe no banco de dados (Duplicata).');
     }
+    */
+
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
       return showNotification('error', 'Preencha os campos obrigatórios.');
     }
     try {
       const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
-      // Garante o ID
+      
+      // Garante o ID e Atualiza se existir
       await setDoc(doc(db, "questions", id), {
         ...finalData,
-        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(), // Marca atualização
         approvedBy: user.email,
         hasImage: false
       });
+      
       await deleteDoc(doc(db, "draft_questions", id));
-      showNotification('success', 'Publicada!');
+      
+      if (q.isDuplicate) {
+          showNotification('success', 'Questão original ATUALIZADA com sucesso!');
+      } else {
+          showNotification('success', 'Publicada!');
+      }
     } catch (error) {
       showNotification('error', 'Erro: ' + error.message);
     }
