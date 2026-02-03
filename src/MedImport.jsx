@@ -2436,47 +2436,70 @@ export default function App() {
                     </div>
                 )}
 
-               {/* --- LISTAGEM DAS QUESTÕES (MODIFICADO) --- */}
+               {/* --- AQUI COMEÇA A LISTAGEM DAS QUESTÕES (CÓDIGO COMPLETO) --- */}
                 {currentFilteredList.length === 0 ? (
+                    /* ESTADO VAZIO (Nenhuma questão encontrada) */
                     <div className="text-center py-20 opacity-50">
                         <Database size={64} className="mx-auto mb-4 text-gray-300" />
                         <p className="text-xl font-medium text-gray-500">Nenhuma questão encontrada neste filtro.</p>
                         {parsedQuestions.length === 0 && <button onClick={() => setActiveTab('input')} className="mt-4 text-blue-600 font-bold hover:underline">Adicionar novas</button>}
                     </div>
                 ) : (
+                    /* LISTA DE CARDS */
                     currentFilteredList.map((q, idx) => (
                         <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                             
                             {/* Loading Bar Visual */}
                             <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
                             
-                            {/* --- NOVA BARRA DE CABEÇALHO (SUBSTITUI AS TAGS FLUTUANTES) --- */}
-                            {/* Isso resolve o problema de sobreposição. As tags ficam numa linha dedicada. */}
-                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-end items-center gap-2 flex-wrap min-h-[40px]">
-                                
-                                {/* Tag: Status de Verificação (Com TRUNCATE para não quebrar) */}
-                                <div 
-                                    className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
-                                    title={q.verificationReason || "Status da verificação"}
-                                >
-                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
-                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
-                                    {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
+                            {/* --- HEADER DO CARD --- */}
+                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-between items-center gap-2 flex-wrap min-h-[40px]">
+                                {/* Esquerda: Info de Origem (Se precisar de imagem) */}
+                                <div className="flex-1 flex items-center gap-2">
+                                    {q.needsImage && (
+                                        <div className="flex items-center gap-2 text-xs text-orange-700 bg-orange-50 px-2 py-1 rounded border border-orange-100 animate-pulse">
+                                            <FileSearch size={14}/> 
+                                            <span className="font-bold">Requer Imagem:</span>
+                                            {q.sourceFile ? (
+                                                <span className="truncate max-w-[150px]" title={q.sourceFile}>
+                                                    PDF: {q.sourceFile} (Pág {q.sourcePages || '?'})
+                                                </span>
+                                            ) : (
+                                                <span>Origem Texto/Cola</span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-                                
-                                {/* Tag: Fonte Encontrada */}
-                                {q.sourceFound && (
-                                    <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
-                                        <Globe size={12}/> FONTE OK
-                                    </div>
-                                )}
 
-                                {/* Tag: Duplicada */}
-                                {q.isDuplicate && (
-                                    <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
-                                        <Copy size={12}/> DUPLICADA
+                                {/* Direita: Tags de Status */}
+                                <div className="flex items-center gap-2 flex-wrap justify-end">
+                                    {/* Tag Verificação */}
+                                    <div 
+                                        className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                        title={q.verificationReason || "Status da verificação"}
+                                    >
+                                        {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
+                                        {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
+                                        {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
                                     </div>
-                                )}
+                                    
+                                    {/* Tag Needs Image (Badge) */}
+                                    {q.needsImage && <div className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1"><ImagePlus size={12}/> FALTA IMG</div>}
+                                    
+                                    {/* Tag Fonte */}
+                                    {q.sourceFound && (
+                                        <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
+                                            <Globe size={12}/> FONTE OK
+                                        </div>
+                                    )}
+
+                                    {/* Tag Duplicada */}
+                                    {q.isDuplicate && (
+                                        <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
+                                            <Copy size={12}/> DUPLICADA
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="p-6">
@@ -2488,8 +2511,27 @@ export default function App() {
                                     <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(idx,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
                                 </div>
 
-                                {/* QUESTION CONTENT */}
-                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
+                                {/* Enunciado + Área de Upload */}
+                                <div className="mb-6 relative">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 flex justify-between">
+                                        <span>Enunciado</span>
+                                        {/* Botão de Upload Mini */}
+                                        <label className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 font-bold">
+                                            {isUploadingImage === q.id ? <Loader2 size={12} className="animate-spin"/> : <ImagePlus size={14}/>}
+                                            {q.imageUrl ? 'Alterar Imagem' : 'Adicionar Imagem'}
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadQuestionImage(e.target.files[0], q.id)} disabled={isUploadingImage === q.id}/>
+                                        </label>
+                                    </label>
+                                    <textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/>
+                                    
+                                    {/* Preview da Imagem se existir */}
+                                    {q.imageUrl && (
+                                        <div className="mt-2 p-2 border border-gray-200 rounded-lg bg-gray-50 inline-block relative group">
+                                            <img src={q.imageUrl} alt="Anexo" className="h-32 w-auto object-contain rounded"/>
+                                            <button onClick={() => updateQuestionField(idx, 'imageUrl', null)} className="absolute top-1 right-1 bg-white rounded-full p-1 shadow text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                                        </div>
+                                    )}
+                                </div>
 
                                 <div className="space-y-2 mb-6">
                                     {q.options?.map((opt, optIdx) => (
@@ -2509,7 +2551,7 @@ export default function App() {
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
                                 <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
                                 
-                                {/* --- BOTÃO DE APROVAÇÃO UNIFICADO (FIX: Desbloqueado para Duplicadas) --- */}
+                                {/* --- BOTÃO DE APROVAÇÃO UNIFICADO --- */}
                                 <button 
                                     onClick={()=>approveQuestion(q)} 
                                     className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
