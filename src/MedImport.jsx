@@ -2298,69 +2298,71 @@ export default function App() {
                          {/* HEADER AND FILTER TOOLBAR */}
                          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-2 flex flex-col sm:flex-row justify-between items-center gap-4">
                             
-                            {/* --- MUDANÇA 6: BOTÕES COM LÓGICA DE ARRAY (MULTI-SELECT) --- */}
-                            <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto p-1">
-                                <button 
-                                    onClick={() => toggleFilter('all')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border 
-                                    ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    Todas ({parsedQuestions.length})
-                                </button>
-                                
-                                <button 
-                                    onClick={() => toggleFilter('verified')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
-                                    ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    <ShieldCheck size={14}/> Verificadas
-                                </button>
-                                
-                                <button 
-                                    onClick={() => toggleFilter('source')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
-                                    ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    <Globe size={14}/> Com Fonte
-                                </button>
+                            {/* LAYOUT NOVO: FILTROS EM CIMA, AÇÕES EMBAIXO */}
+<div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-4 sticky top-20 z-10">
+    
+    {/* LINHA 1: FILTROS */}
+    <div className="flex flex-col gap-2">
+        <div className="flex justify-between items-center">
+             <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros Ativos</span>
+             <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
+        </div>
+        
+        {/* Lista de Botões de Filtro */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            <button 
+                onClick={() => toggleFilter('all')} 
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border 
+                ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
+            >
+                Todas
+            </button>
+            
+            <button onClick={() => toggleFilter('verified')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
+            <button onClick={() => toggleFilter('source')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
+            <button onClick={() => toggleFilter('no_source')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
+            <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
+            <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
+        </div>
+    </div>
 
-                                {/* NOVO BOTÃO: SEM FONTE */}
-                                <button 
-                                    onClick={() => toggleFilter('no_source')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
-                                    ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    <AlertOctagon size={14}/> Sem Fonte
-                                </button>
-                                
-                                <button 
-                                    onClick={() => toggleFilter('suspicious')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
-                                    ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    <AlertTriangle size={14}/> Suspeitas
-                                </button>
-                                
-                                <button 
-                                    onClick={() => toggleFilter('duplicates')} 
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
-                                    ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
-                                >
-                                    <Copy size={14}/> Duplicadas
-                                </button>
-                            </div>
+    <div className="h-px bg-gray-100 w-full"></div>
 
-                            {/* ACTION BUTTONS */}
-                            <div className="flex items-center gap-2 w-full sm:w-auto">
-                                <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap">
-                                    <Trash2 size={14} /> Descartar {currentFilteredList.length}
-                                </button>
-                                <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap">
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={14}/> : <CheckCircle size={14} />} 
-                                    Aprovar {currentFilteredList.length}
-                                </button>
-                            </div>
-                         </div>
+    {/* LINHA 2: AÇÕES E FERRAMENTAS */}
+    <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+        
+        {/* Esquerda: Ferramentas em Massa */}
+        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
+            <span className="text-xs font-bold text-gray-400 uppercase whitespace-nowrap hidden sm:inline">Em massa:</span>
+            <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-600 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap">
+                <Eraser size={14}/> Limpar Inst.
+            </button>
+            <button onClick={() => clearAllField('year')} className="text-xs bg-white border border-gray-200 text-slate-600 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap">
+                <Eraser size={14}/> Limpar Anos
+            </button>
+        </div>
+
+        {/* Direita: Ações Principais (Aprovar/Descartar) */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button 
+                onClick={handleDiscardFilteredClick} 
+                disabled={isBatchAction || currentFilteredList.length === 0} 
+                className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm"
+            >
+                <Trash2 size={16} /> Descartar {currentFilteredList.length}
+            </button>
+            
+            <button 
+                onClick={handleApproveFilteredClick} 
+                disabled={isBatchAction || currentFilteredList.length === 0} 
+                className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0"
+            >
+                {isBatchAction ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16} />} 
+                Aprovar {currentFilteredList.length}
+            </button>
+        </div>
+    </div>
+</div>
 
                          {/* SUB-TOOLBAR FOR BULK EDITING */}
                          <div className="flex items-center gap-2 px-1">
