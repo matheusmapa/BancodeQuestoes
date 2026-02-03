@@ -1,1109 +1,1159 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Trash2, Plus, Download, Clipboard, ArrowRight, Save, RefreshCw, FileText, Settings, Upload, File, Info, XCircle, CheckSquare, Square, Printer, FolderDown, FolderUp, X } from 'lucide-react';
-
-const OtimizadorCorteAco = () => {
-  // --- Estados ---
-  const [activeTab, setActiveTab] = useState('input'); // input, inventory, results
-  const [items, setItems] = useState([]); // DEMANDA
-  const [inventory, setInventory] = useState([]); // ESTOQUE
-  const [results, setResults] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
-  
-  // Estados do Modal de Adicionar Estoque
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newItemData, setNewItemData] = useState({ bitola: 10.0, length: 100, qty: 1 });
-
-  // Filtro de quais bitolas aceitar na importação
-  const BITOLAS_COMERCIAIS = [4.2, 5.0, 6.3, 8.0, 10.0, 12.5, 16.0, 20.0, 25.0, 32.0, 40.0];
-  const [enabledBitolas, setEnabledBitolas] = useState([...BITOLAS_COMERCIAIS]);
-
-  const fileInputRef = useRef(null);
-  const inventoryInputRef = useRef(null); // Ref para importação de estoque
-
-  // --- Constantes ---
-  const BARRA_PADRAO = 1200; // 12 metros
-  const PERDA_CORTE = 0; // Perda por corte
-
-  // --- Função Helper para Gerar IDs Únicos ---
-  const generateId = () => {
-    return Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
-  };
-
-  // --- Carregar Scripts Externos ---
-  useEffect(() => {
-    // PDF.js
-    const scriptPdf = document.createElement('script');
-    scriptPdf.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    scriptPdf.async = true;
-    scriptPdf.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    };
-    document.body.appendChild(scriptPdf);
-
-    // jsPDF
-    const scriptJsPdf = document.createElement('script');
-    scriptJsPdf.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-    scriptJsPdf.async = true;
-    document.body.appendChild(scriptJsPdf);
-    
-    // AutoTable
-    const scriptAutoTable = document.createElement('script');
-    scriptAutoTable.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
-    scriptAutoTable.async = true;
-    document.body.appendChild(scriptAutoTable);
-
-    const savedInventory = localStorage.getItem('estoquePontas');
-    if (savedInventory) {
-      try {
-        let parsedInv = JSON.parse(savedInventory);
-        if (Array.isArray(parsedInv)) {
-            parsedInv = parsedInv.map(i => i.qty ? i : { ...i, qty: 1 });
-            setInventory(parsedInv);
-        }
-      } catch (e) {
-        console.error("Erro ao carregar estoque salvo", e);
-      }
-    }
-
-    return () => {
-      document.body.removeChild(scriptPdf);
-      document.body.removeChild(scriptJsPdf);
-      document.body.removeChild(scriptAutoTable);
-    }
-  }, []);
-
-  const saveInventoryToLocal = (newInv) => {
-    setInventory([...newInv]); // Garante nova referência para re-render
-    localStorage.setItem('estoquePontas', JSON.stringify(newInv));
-  };
-
-  // --- Lógica de Filtro de Bitolas ---
-  const toggleBitola = (bitola) => {
-      setEnabledBitolas(prev => 
-          prev.includes(bitola) 
-            ? prev.filter(b => b !== bitola)
-            : [...prev, bitola].sort((a,b) => a-b)
-      );
-  };
-
-  const toggleAllBitolas = () => {
-      if (enabledBitolas.length === BITOLAS_COMERCIAIS.length) {
-          setEnabledBitolas([]);
-      } else {
-          setEnabledBitolas([...BITOLAS_COMERCIAIS]);
-      }
-  };
-
-  // --- Lógica de Leitura de PDF (Entrada) ---
-  const extractTextFromPDF = async (file) => {
-    if (!window.pdfjsLib) {
-        alert("Aguarde um momento, carregando biblioteca de PDF...");
-        return "";
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        let lastY = -1;
-        let pageText = "";
-        for (const item of textContent.items) {
-            if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
-                pageText += "\n";
-            }
-            pageText += item.str + " ";
-            lastY = item.transform[5];
-        }
-        fullText += pageText + "\n--- PAGE BREAK ---\n";
-    }
-    return fullText;
-  };
-
-  const handleFileUpload = async (event) => {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
-
-    setIsProcessing(true);
-    const newUploadedFiles = [...uploadedFiles];
-    let allExtractedItems = [];
-
-    for (const file of files) {
-        if (newUploadedFiles.some(f => f.name === file.name)) {
-             setItems(prev => prev.filter(i => i.origin !== file.name));
-        } else {
-             newUploadedFiles.push({ name: file.name, size: file.size, status: 'lendo' });
-        }
-        setUploadedFiles([...newUploadedFiles]);
-
-        try {
-            let text = "";
-            if (file.type === "application/pdf") {
-                text = await extractTextFromPDF(file);
-            } else {
-                text = await file.text();
-            }
-
-            const itemsFromThisFile = parseTextToItems(text, file.name);
-            allExtractedItems = [...allExtractedItems, ...itemsFromThisFile];
-            
-            const fileIndex = newUploadedFiles.findIndex(f => f.name === file.name);
-            if (fileIndex !== -1) newUploadedFiles[fileIndex].status = 'ok';
-
-        } catch (error) {
-            console.error("Erro:", error);
-            const fileIndex = newUploadedFiles.findIndex(f => f.name === file.name);
-            if (fileIndex !== -1) newUploadedFiles[fileIndex].status = 'erro';
-        }
-    }
-
-    setUploadedFiles(newUploadedFiles);
-    setItems(prevItems => [...prevItems, ...allExtractedItems]);
-    setIsProcessing(false);
-    if(fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const removeFile = (fileName) => {
-      setUploadedFiles(prev => prev.filter(f => f.name !== fileName));
-      setItems(prev => prev.filter(i => i.origin !== fileName));
-  };
-
-  const parseTextToItems = (text, fileName) => {
-    let cleanText = text
-        .replace(/\$/g, '')
-        .replace(/\\times/g, 'x')
-        .replace(/\\/g, '')
-        .replace(/CONSUMIDOR FINAL\/CF/g, '')
-        .replace(/Código: \d+/g, '');
-
-    const extracted = [];
-    const lines = cleanText.split('\n');
-
-    lines.forEach(line => {
-        const l = line.trim();
-        if (l.length < 3) return;
-
-        const lineMatch = l.match(/(\d+[.,]\d+).*?(\d+\s*[x*]\s*\d+|\d{1,3}).*?(\d{3,4})/);
-        
-        if (lineMatch) {
-            const val1 = parseFloat(lineMatch[1].replace(',', '.'));
-            const val2Str = lineMatch[2];
-            const val3 = parseFloat(lineMatch[3]);
-            
-            const isBitolaValid = enabledBitolas.includes(val1); 
-            const isCompr = val3 > 20 && val3 <= 1200;
-            
-            if (isBitolaValid && isCompr) {
-                 let qtd = 1;
-                 if (val2Str.toLowerCase().includes('x') || val2Str.includes('*')) {
-                    const parts = val2Str.toLowerCase().replace('x', '*').split('*');
-                    qtd = parseInt(parts[0]) * parseInt(parts[1]);
-                 } else {
-                    qtd = parseInt(val2Str);
-                 }
-
-                 if (qtd > 0) {
-                     extracted.push({
-                        id: generateId(),
-                        origin: fileName,
-                        bitola: val1,
-                        qty: qtd,
-                        length: val3,
-                        selected: true
-                     });
-                 }
-            }
-        }
-    });
-
-    if (extracted.length === 0) {
-        const fallbackRegex = /(\d+[.,]\d+)(?:[^0-9]{1,100}?)(\d+\s*[x*]\s*\d+|\d+)(?:[^0-9]{1,100}?)(\d{2,4})/g;
-        let match;
-        const normalizedText = cleanText.replace(/,/g, '.').replace(/\s+/g, ' ');
-        while ((match = fallbackRegex.exec(normalizedText)) !== null) {
-            const b = parseFloat(match[1]);
-            const qStr = match[2];
-            const c = parseFloat(match[3]);
-            if (enabledBitolas.includes(b) && c > 30 && c <= 1200) {
-                 let qtd = 1;
-                 if (qStr.toLowerCase().includes('x') || qStr.includes('*')) {
-                    const parts = qStr.toLowerCase().replace('x', '*').split('*');
-                    qtd = parseInt(parts[0]) * parseInt(parts[1]);
-                 } else {
-                    qtd = parseInt(qStr);
-                 }
-                 extracted.push({
-                    id: generateId(),
-                    origin: fileName,
-                    bitola: b,
-                    qty: qtd,
-                    length: c,
-                    selected: true
-                 });
-            }
-        }
-    }
-    return extracted;
-  };
-
-  // --- Manipulação de Itens (Demanda) ---
-  const addItem = () => {
-    setItems([...items, { id: generateId(), origin: 'Manual', bitola: 10.0, qty: 1, length: 100, selected: true }]);
-  };
-  const updateItem = (id, field, value) => {
-    setItems(items.map(item => item.id === id ? { ...item, [field]: value } : item));
-  };
-  const removeItem = (id) => {
-    setItems(items.filter(item => item.id !== id));
-  };
-  const clearItems = () => {
-      if(window.confirm("Limpar toda a lista de corte e os arquivos carregados?")) {
-          setItems([]);
-          setUploadedFiles([]);
-          setResults(null);
-          if(fileInputRef.current) fileInputRef.current.value = '';
-      }
-  };
-
-  // --- Manipulação de Estoque (Pontas) ---
-  
-  const openAddModal = () => {
-      setNewItemData({ bitola: 10.0, length: 100, qty: 1 });
-      setShowAddModal(true);
-  };
-
-  const confirmAddItem = () => {
-      const { bitola, length, qty } = newItemData;
-      if (length <= 0 || qty <= 0) {
-          alert("Comprimento e Quantidade devem ser maiores que zero.");
-          return;
-      }
-      
-      const newPonta = { 
-          id: generateId(), 
-          bitola: parseFloat(bitola), 
-          length: parseFloat(length), 
-          qty: parseInt(qty), 
-          source: 'estoque_manual' 
-      };
-      
-      saveInventoryToLocal([...inventory, newPonta]);
-      setShowAddModal(false);
-  };
-
-  const updateInventoryItem = (id, field, value) => {
-    const newInv = inventory.map(item => item.id === id ? { ...item, [field]: value } : item);
-    saveInventoryToLocal(newInv);
-  };
-
-  const removeInventoryItem = (id) => {
-    saveInventoryToLocal(inventory.filter(item => item.id !== id));
-  };
-
-  const clearInventory = () => {
-      if(window.confirm("Tem certeza que deseja APAGAR TODO o estoque de pontas?\nIsso não pode ser desfeito.")) {
-          saveInventoryToLocal([]);
-          setInventory([]); // Força atualização visual
-      }
-  }
-
-  // --- BACKUP E RESTAURAÇÃO DE ESTOQUE ---
-  const exportInventoryJSON = () => {
-      const dataStr = JSON.stringify(inventory, null, 2);
-      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-      const exportFileDefaultName = `Backup_Estoque_${new Date().toLocaleDateString().replace(/\//g, '-')}.json`;
-      const linkElement = document.createElement('a');
-      linkElement.setAttribute('href', dataUri);
-      linkElement.setAttribute('download', exportFileDefaultName);
-      linkElement.click();
-  };
-
-  const handleRestoreClick = () => {
-      // Gatilho seguro para o input file
-      if (inventoryInputRef.current) {
-          inventoryInputRef.current.click();
-      }
-  };
-
-  const importInventoryJSON = (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-          try {
-              const importedData = JSON.parse(e.target.result);
-              if (Array.isArray(importedData)) {
-                  const validData = importedData.map(item => ({
-                      id: item.id || generateId(),
-                      bitola: parseFloat(item.bitola) || 0,
-                      length: parseFloat(item.length) || 0,
-                      qty: parseInt(item.qty) || 1,
-                      source: item.source || 'importado'
-                  })).filter(i => i.bitola > 0 && i.length > 0);
-
-                  if(validData.length > 0) {
-                      if(window.confirm(`Encontrados ${validData.length} itens no arquivo.\nDeseja substituir seu estoque atual por estes itens?`)){
-                          saveInventoryToLocal(validData);
-                          alert("Estoque restaurado com sucesso!");
-                      }
-                  } else {
-                      alert("O arquivo não contém itens válidos.");
-                  }
-              } else {
-                  alert("Arquivo inválido. Formato incorreto.");
-              }
-          } catch (err) {
-              alert("Erro ao ler arquivo. Verifique se é um JSON válido.");
-          }
-          // Limpa o input para permitir selecionar o mesmo arquivo novamente
-          if(inventoryInputRef.current) inventoryInputRef.current.value = '';
-      };
-      reader.readAsText(file);
-  };
-  
-  const exportInventoryPDF = () => {
-    if (!window.jspdf) return alert("Biblioteca PDF carregando...");
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-    doc.text("Relatório de Estoque de Pontas", 14, 20);
-    doc.setFontSize(10);
-    doc.text(`Gerado em: ${new Date().toLocaleString()}`, 14, 26);
-    const tableData = inventory
-      .sort((a,b) => a.bitola - b.bitola || b.length - a.length)
-      .map(item => [
-          `${item.bitola.toFixed(1)} mm`,
-          item.qty,
-          `${item.length} cm`,
-          `${(item.length * item.qty / 100).toFixed(2)} m`,
-          item.source || '-'
-    ]);
-    doc.autoTable({
-        head: [['Bitola', 'Qtd', 'Comprimento Unit.', 'Total Linear', 'Origem']],
-        body: tableData,
-        startY: 30,
-    });
-    doc.save(`Relatorio_Estoque_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
-  };
-
-  // --- OTIMIZAÇÃO E AGRUPAMENTO ---
-  const runOptimization = () => {
-    if (items.length === 0) {
-        alert("Adicione itens na lista de corte primeiro!");
-        return;
-    }
-
-    const itemsByBitola = {};
-    const inventoryByBitola = {};
-
-    items.forEach(item => {
-        if (!item.selected) return;
-        if (!itemsByBitola[item.bitola]) itemsByBitola[item.bitola] = [];
-        for (let i = 0; i < item.qty; i++) {
-            itemsByBitola[item.bitola].push({ ...item, realId: `${item.id}-${i}` });
-        }
-    });
-
-    inventory.forEach(inv => {
-        if (!inventoryByBitola[inv.bitola]) inventoryByBitola[inv.bitola] = [];
-        const qtdDisponivel = inv.qty || 1; 
-        for(let i=0; i < qtdDisponivel; i++) {
-            inventoryByBitola[inv.bitola].push({ 
-                ...inv, 
-                virtualId: `${inv.id}_copy_${i}`,
-                used: false 
-            });
-        }
-    });
-
-    const finalResult = [];
-
-    Object.keys(itemsByBitola).forEach(bitola => {
-        const demandList = itemsByBitola[bitola].sort((a, b) => b.length - a.length);
-        const stockList = inventoryByBitola[bitola] ? inventoryByBitola[bitola].sort((a, b) => a.length - b.length) : [];
-
-        const barsUsed = [];
-
-        demandList.forEach(piece => {
-            let fitted = false;
-            let bestBarIndex = -1;
-            let minWaste = Infinity;
-
-            for (let i = 0; i < barsUsed.length; i++) {
-                const bar = barsUsed[i];
-                if (bar.remaining >= piece.length + PERDA_CORTE) {
-                    const waste = bar.remaining - (piece.length + PERDA_CORTE);
-                    if (waste < minWaste) {
-                        minWaste = waste;
-                        bestBarIndex = i;
-                    }
-                }
-            }
-
-            if (bestBarIndex !== -1) {
-                barsUsed[bestBarIndex].cuts.push(piece.length);
-                barsUsed[bestBarIndex].remaining -= (piece.length + PERDA_CORTE);
-                fitted = true;
-            }
-
-            if (!fitted) {
-                let bestStockIndex = -1;
-                let minStockWaste = Infinity;
-
-                for (let i = 0; i < stockList.length; i++) {
-                    if (!stockList[i].used && stockList[i].length >= piece.length) {
-                        const waste = stockList[i].length - piece.length;
-                        if (waste < minStockWaste) {
-                            minStockWaste = waste;
-                            bestStockIndex = i;
-                        }
-                    }
-                }
-
-                if (bestStockIndex !== -1) {
-                    stockList[bestStockIndex].used = true;
-                    barsUsed.push({
-                        type: 'estoque',
-                        originalLength: stockList[bestStockIndex].length,
-                        remaining: stockList[bestStockIndex].length - piece.length - PERDA_CORTE,
-                        cuts: [piece.length],
-                        id: stockList[bestStockIndex].id
-                    });
-                    fitted = true;
-                }
-            }
-
-            if (!fitted) {
-                barsUsed.push({
-                    type: 'nova',
-                    originalLength: BARRA_PADRAO,
-                    remaining: BARRA_PADRAO - piece.length - PERDA_CORTE,
-                    cuts: [piece.length],
-                    id: 'new-' + generateId()
-                });
-            }
-        });
-
-        const groupedBars = [];
-        barsUsed.forEach(bar => {
-            const sortedCuts = [...bar.cuts].sort((a,b) => b-a);
-            const signature = `${bar.type}-${bar.originalLength}-${sortedCuts.join(',')}`;
-            const existingGroup = groupedBars.find(g => g.signature === signature);
-            if (existingGroup) {
-                existingGroup.count++;
-                existingGroup.ids.push(bar.id);
-            } else {
-                groupedBars.push({ ...bar, cuts: sortedCuts, count: 1, signature: signature, ids: [bar.id] });
-            }
-        });
-
-        finalResult.push({ bitola: bitola, bars: groupedBars });
-    });
-
-    setResults(finalResult);
-    setActiveTab('results');
-    setItems([]);
-    setUploadedFiles([]);
-    if(fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const generatePDF = () => {
-    if (!window.jspdf || !results) return alert("Biblioteca PDF ainda não carregada ou sem resultados.");
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-    let yPos = 20;
-    
-    doc.setFontSize(18);
-    doc.text("Plano de Corte - Otimizador de Aço", 105, yPos, { align: 'center' });
-    yPos += 15;
-    
-    doc.setFontSize(10);
-    doc.text(`Data: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 105, yPos, { align: 'center' });
-    yPos += 15;
-
-    results.forEach(group => {
-        if (yPos > 270) { doc.addPage(); yPos = 20; }
-        doc.setFillColor(240, 240, 240);
-        doc.rect(10, yPos - 5, 190, 8, 'F');
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text(`Bitola: ${parseFloat(group.bitola).toFixed(1)} mm`, 15, yPos);
-        yPos += 10;
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(10);
-        group.bars.forEach(bar => {
-             if (yPos > 260) { doc.addPage(); yPos = 20; }
-             const typeText = bar.type === 'nova' ? "BARRA NOVA (1200cm)" : `PONTA ESTOQUE (${bar.originalLength}cm)`;
-             const wasteText = `Sobra: ${bar.remaining.toFixed(0)}cm`;
-             doc.setFont("helvetica", "bold");
-             doc.text(`${bar.count}x  ${typeText}`, 15, yPos);
-             doc.setFont("helvetica", "normal");
-             doc.text(wasteText, 150, yPos, { align: 'right' });
-             yPos += 3;
-             const scale = 180 / bar.originalLength;
-             let currentX = 15;
-             const barHeight = 8;
-             bar.cuts.forEach(cut => {
-                 const cutWidth = cut * scale;
-                 doc.setFillColor(59, 130, 246);
-                 doc.rect(currentX, yPos, cutWidth, barHeight, 'F');
-                 doc.rect(currentX, yPos, cutWidth, barHeight, 'S');
-                 if (cutWidth > 8) {
-                    doc.setTextColor(255, 255, 255);
-                    doc.setFontSize(8);
-                    const textX = currentX + (cutWidth / 2);
-                    doc.text(`${cut}`, textX, yPos + 5.5, { align: 'center' });
-                 }
-                 currentX += cutWidth;
-             });
-             if (bar.remaining > 0) {
-                 const remainingWidth = bar.remaining * scale;
-                 doc.setFillColor(220, 220, 220);
-                 doc.rect(currentX, yPos, remainingWidth, barHeight, 'F');
-                 doc.rect(currentX, yPos, remainingWidth, barHeight, 'S');
-                 doc.setTextColor(100, 100, 100);
-                 doc.setFontSize(8);
-                 if (remainingWidth > 15) {
-                    doc.text("Sobra", currentX + (remainingWidth/2), yPos + 5.5, { align: 'center' });
-                 }
-             }
-             doc.setTextColor(0, 0, 0);
-             yPos += 15;
-        });
-        yPos += 5;
-    });
-    doc.save(`Plano_Corte_${new Date().toISOString().slice(0,10)}.pdf`);
-  };
-
-  const consolidateLeftovers = () => {
-    if (!results) return;
-    const usedCounts = {};
-
-    results.forEach(group => {
-        group.bars.forEach(barGroup => {
-            if (barGroup.type === 'estoque') {
-                barGroup.ids.forEach(id => {
-                    usedCounts[id] = (usedCounts[id] || 0) + 1;
-                });
-            }
-        });
-    });
-
-    let updatedInventory = inventory.map(item => {
-        if (usedCounts[item.id]) {
-            const newQty = item.qty - usedCounts[item.id];
-            return { ...item, qty: Math.max(0, newQty) };
-        }
-        return item;
-    }).filter(item => item.qty > 0);
-
-    results.forEach(group => {
-        group.bars.forEach(barGroup => {
-            if (barGroup.remaining > 50) { 
-                const bitola = parseFloat(group.bitola);
-                const length = parseFloat(barGroup.remaining.toFixed(1));
-                const qtyToAdd = barGroup.count; 
-
-                const existingIndex = updatedInventory.findIndex(
-                    i => Math.abs(i.bitola - bitola) < 0.01 && Math.abs(i.length - length) < 0.1
-                );
-
-                if (existingIndex !== -1) {
-                    updatedInventory[existingIndex].qty += qtyToAdd;
-                } else {
-                    updatedInventory.push({
-                        id: generateId(),
-                        bitola: bitola,
-                        length: length,
-                        qty: qtyToAdd,
-                        source: 'sobra_corte'
-                    });
-                }
-            }
-        });
-    });
-
-    saveInventoryToLocal(updatedInventory);
-    alert(`Estoque atualizado! As sobras foram somadas e as barras usadas removidas.`);
-    setActiveTab('inventory');
-  };
-
-  // --- Função para determinar a classe do botão Resultado ---
-  const getResultsTabClass = () => {
-      // Se estiver ativo
-      if (activeTab === 'results') {
-          return 'bg-white border-b-2 border-blue-600 text-blue-600 font-bold shadow-sm';
-      }
-      // Se não estiver ativo mas tiver resultados (clicável e visualmente disponível)
-      if (results) {
-          return 'bg-green-50 text-green-700 hover:bg-green-100 border-b-2 border-transparent hover:border-green-300 transition-all';
-      }
-      // Se não tiver resultados (bloqueado)
-      return 'text-slate-400 cursor-not-allowed';
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
-      <header className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <Settings className="w-6 h-6 text-yellow-500" />
-            <h1 className="text-xl font-bold tracking-tight">Otimizador Corte & Dobra</h1>
-          </div>
-          <div className="text-sm text-slate-400 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
-            Barras Padrão: 1200cm (Automático)
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto p-4">
-        
-        <div className="flex gap-4 mb-6 border-b border-slate-200 pb-2 overflow-x-auto">
-          <button 
-            onClick={() => setActiveTab('input')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors whitespace-nowrap ${activeTab === 'input' ? 'bg-white border-b-2 border-blue-600 text-blue-600 font-bold shadow-sm' : 'text-slate-500 hover:bg-white'}`}
-          >
-            <FileText size={18} /> Inserir PDF(s)
-          </button>
-          <button 
-            onClick={() => setActiveTab('inventory')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors whitespace-nowrap ${activeTab === 'inventory' ? 'bg-white border-b-2 border-blue-600 text-blue-600 font-bold shadow-sm' : 'text-slate-500 hover:bg-white'}`}
-          >
-            <Clipboard size={18} /> Estoque Pontas ({inventory.reduce((acc, i) => acc + i.qty, 0)})
-          </button>
-          <button 
-            onClick={() => setActiveTab('results')}
-            disabled={!results}
-            className={`flex items-center gap-2 px-4 py-2 rounded-t-lg transition-colors whitespace-nowrap ${getResultsTabClass()}`}
-          >
-            <Download size={18} /> Resultado {results ? '(Pronto)' : ''}
-          </button>
-        </div>
-
-        {/* --- TAB: INPUT --- */}
-        {activeTab === 'input' && (
-          <div className="space-y-6">
-            <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-                <div className="flex justify-between items-center mb-2">
-                    <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Filtro de Importação: Selecione as bitolas</h3>
-                    <button onClick={toggleAllBitolas} className="text-xs text-blue-600 hover:underline">
-                        {enabledBitolas.length === BITOLAS_COMERCIAIS.length ? "Desmarcar todas" : "Marcar todas"}
-                    </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    {BITOLAS_COMERCIAIS.map(bitola => {
-                        const isSelected = enabledBitolas.includes(bitola);
-                        return (
-                            <button 
-                                key={bitola}
-                                onClick={() => toggleBitola(bitola)}
-                                className={`px-3 py-1 text-sm rounded-full border transition-all flex items-center gap-1 ${
-                                    isSelected 
-                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                                    : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
-                                }`}
-                            >
-                                {isSelected ? <CheckSquare size={14} /> : <Square size={14} />}
-                                {bitola.toFixed(1)}mm
-                            </button>
-                        )
-                    })}
-                </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-              <h2 className="text-lg font-semibold mb-3 text-slate-700">1. Carregar Arquivos (PDF ou Texto)</h2>
-              <div className="border-2 border-dashed border-blue-200 rounded-lg p-8 text-center hover:bg-blue-50 transition cursor-pointer relative group">
-                  <input 
-                    ref={fileInputRef}
-                    type="file" 
-                    multiple 
-                    accept=".pdf,.txt,.csv" 
-                    onChange={handleFileUpload}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <div className="flex flex-col items-center gap-3 text-blue-600">
-                      {isProcessing ? (
-                          <RefreshCw className="animate-spin w-10 h-10" />
-                      ) : (
-                          <Upload className="w-10 h-10 group-hover:scale-110 transition-transform" />
-                      )}
-                      <span className="font-bold">
-                          {isProcessing ? "Lendo arquivos..." : "Clique ou Arraste seus PDFs aqui"}
-                      </span>
-                  </div>
-              </div>
-              {uploadedFiles.length > 0 && (
-                  <div className="mt-4 space-y-2">
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                          {uploadedFiles.map((file, idx) => (
-                              <div key={idx} className={`flex items-center gap-2 p-2 rounded border text-sm group ${file.status === 'erro' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-green-50 border-green-200 text-green-700'}`}>
-                                  <File size={14} />
-                                  <span className="truncate flex-1 font-medium">{file.name}</span>
-                                  {file.status === 'ok' && <span className="text-xs font-bold bg-green-200 px-1 rounded text-green-800">LIDO</span>}
-                                  {file.status === 'erro' && <span className="text-xs font-bold bg-red-200 px-1 rounded text-red-800">ERRO</span>}
-                                  <button onClick={() => removeFile(file.name)} className="ml-2 text-slate-400 hover:text-red-600 p-1 rounded hover:bg-red-100 transition-colors"><XCircle size={16} /></button>
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-              )}
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-              <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-                <div>
-                    <h2 className="text-lg font-semibold text-slate-700 flex items-center gap-2">
-                        2. Lista de Peças a Cortar (Demanda)
-                        <div className="group relative">
-                            <Info size={16} className="text-slate-400 cursor-help"/>
-                            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 bg-slate-800 text-white text-xs p-2 rounded shadow-lg z-10">
-                                Esta é a lista de peças que você PRECISA ter cortadas no final.
-                            </div>
-                        </div>
-                    </h2>
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={clearItems} className="text-red-500 text-sm hover:underline px-2">Limpar Lista</button>
-                    <button onClick={addItem} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 text-sm">
-                        <Plus size={16} /> Adicionar Manual
-                    </button>
-                </div>
-              </div>
-
-              {items.length === 0 ? (
-                <div className="text-center py-12 text-slate-400 bg-slate-50 rounded-md border border-dashed border-slate-300">
-                  <p className="font-medium">Lista de corte vazia.</p>
-                  <p className="text-sm mt-1">Carregue um PDF acima ou adicione itens manualmente.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-slate-500 uppercase bg-slate-100">
-                      <tr>
-                        <th className="px-4 py-3">Bitola (mm)</th>
-                        <th className="px-4 py-3">Qtde</th>
-                        <th className="px-4 py-3">Comp. (cm)</th>
-                        <th className="px-4 py-3">Origem</th>
-                        <th className="px-4 py-3 text-right">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, idx) => (
-                        <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-4 py-2">
-                            <select 
-                                value={item.bitola} 
-                                onChange={(e) => updateItem(item.id, 'bitola', parseFloat(e.target.value))}
-                                className="w-24 p-1.5 border rounded bg-white"
-                            >
-                                {BITOLAS_COMERCIAIS.map(b => (
-                                    <option key={b} value={b}>{b.toFixed(1)}</option>
-                                ))}
-                            </select>
-                          </td>
-                          <td className="px-4 py-2">
-                            <input 
-                              type="number" 
-                              value={item.qty} 
-                              onChange={(e) => updateItem(item.id, 'qty', parseInt(e.target.value))}
-                              className="w-20 p-1.5 border rounded font-bold text-blue-800"
-                              min="1"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input 
-                              type="number" 
-                              value={item.length} 
-                              onChange={(e) => updateItem(item.id, 'length', parseFloat(e.target.value))}
-                              className="w-24 p-1.5 border rounded"
-                              min="1"
-                            />
-                          </td>
-                           <td className="px-4 py-2 text-xs text-slate-500 truncate max-w-[100px]" title={item.origin}>
-                            {item.origin}
-                          </td>
-                          <td className="px-4 py-2 text-right">
-                            <button onClick={() => removeItem(item.id)} className="text-red-400 hover:text-red-600">
-                              <Trash2 size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end pb-8">
-                <button 
-                    onClick={runOptimization}
-                    className={`px-8 py-3 rounded-md shadow-md font-bold flex items-center gap-2 transition-all ${items.length === 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'}`}
-                >
-                    <RefreshCw size={20} /> CALCULAR PLANO DE CORTE
-                </button>
-            </div>
-          </div>
-        )}
-
-        {/* --- TAB: INVENTORY --- */}
-        {activeTab === 'inventory' && (
-           <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200 space-y-4">
-              <div className="flex justify-between items-center flex-wrap gap-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-700">Estoque de Pontas (Sobras)</h2>
-                    <p className="text-sm text-slate-500">Sobras agrupadas por tamanho. Total de peças: <span className="font-bold text-slate-800">{inventory.reduce((acc, i) => acc + i.qty, 0)}</span></p>
-                  </div>
-                  <div className="flex gap-2 flex-wrap">
-                    {/* Input file escondido para restauração */}
-                    <input 
-                        ref={inventoryInputRef}
-                        type="file" 
-                        accept=".json"
-                        onChange={importInventoryJSON}
-                        className="hidden" 
-                    />
-
-                    {/* BACKUP BUTTONS */}
-                    <div className="flex items-center gap-2 border-r pr-2 mr-2">
-                        <button onClick={exportInventoryJSON} className="flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-md hover:bg-slate-200 text-xs font-semibold" title="Baixar arquivo de dados para backup">
-                            <FolderDown size={14} /> Backup (JSON)
-                        </button>
-                        <button onClick={handleRestoreClick} className="flex items-center gap-1 bg-slate-100 text-slate-700 border border-slate-300 px-3 py-1.5 rounded-md hover:bg-slate-200 text-xs font-semibold" title="Restaurar dados de um arquivo">
-                            <FolderUp size={14} /> Restaurar
-                        </button>
-                    </div>
-                    
-                    <button onClick={exportInventoryPDF} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-md hover:bg-indigo-100 text-xs font-semibold">
-                        <Printer size={14} /> Relatório PDF
-                    </button>
-                    <button onClick={clearInventory} className="text-red-500 text-sm hover:underline px-2">Zerar</button>
-                    <button onClick={openAddModal} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 text-sm">
-                        <Plus size={16} /> Adicionar
-                    </button>
-                  </div>
-              </div>
-
-              <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-slate-500 uppercase bg-yellow-50 sticky top-0">
-                        <tr>
-                            <th className="px-4 py-3">Bitola (mm)</th>
-                            <th className="px-4 py-3">Qtd</th>
-                            <th className="px-4 py-3">Comp. (cm)</th>
-                            <th className="px-4 py-3">Origem</th>
-                            <th className="px-4 py-3 text-right">Ação</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {inventory.length === 0 ? (
-                            <tr><td colSpan="5" className="text-center py-8 text-slate-400">Nenhuma ponta no estoque. O sistema usará apenas barras novas de 1200cm.</td></tr>
-                        ) : (
-                            inventory.sort((a,b) => b.bitola - a.bitola).map(item => (
-                                <tr key={item.id} className="border-b border-slate-100 hover:bg-yellow-50">
-                                    <td className="px-4 py-2">
-                                        <select 
-                                            value={item.bitola} 
-                                            onChange={(e) => updateInventoryItem(item.id, 'bitola', parseFloat(e.target.value))}
-                                            className="w-24 p-1 border rounded bg-transparent"
-                                        >
-                                            {BITOLAS_COMERCIAIS.map(b => (
-                                                <option key={b} value={b}>{b.toFixed(1)}</option>
-                                            ))}
-                                        </select>
-                                    </td>
-                                    <td className="px-4 py-2">
-                                        <input 
-                                            type="number" 
-                                            value={item.qty} 
-                                            onChange={(e) => updateInventoryItem(item.id, 'qty', parseInt(e.target.value))}
-                                            className="w-20 p-1 border rounded bg-transparent font-bold text-slate-700"
-                                            min="1"
-                                        />
-                                    </td>
-                                    <td className="px-4 py-2">
-                                        <input 
-                                            type="number" 
-                                            value={item.length} 
-                                            onChange={(e) => updateInventoryItem(item.id, 'length', parseFloat(e.target.value))}
-                                            className="w-24 p-1 border rounded bg-transparent font-semibold"
-                                        />
-                                    </td>
-                                    <td className="px-4 py-2 text-xs text-slate-400 uppercase">
-                                        {item.source || 'Manual'}
-                                    </td>
-                                    <td className="px-4 py-2 text-right">
-                                        <button onClick={() => removeInventoryItem(item.id)} className="text-red-400 hover:text-red-600">
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-              </div>
-           </div>
-        )}
-
-        {/* --- MODAL DE ADICIONAR ITEM --- */}
-        {showAddModal && (
-            <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center backdrop-blur-sm animate-in fade-in">
-                <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
-                    <div className="flex justify-between items-center mb-4 border-b pb-2">
-                        <h3 className="text-lg font-bold text-slate-800">Adicionar Ponta ao Estoque</h3>
-                        <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">
-                            <X size={20} />
-                        </button>
-                    </div>
-                    
-                    <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-600 mb-1">Bitola (mm)</label>
-                            <select 
-                                value={newItemData.bitola}
-                                onChange={(e) => setNewItemData({...newItemData, bitola: e.target.value})}
-                                className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                            >
-                                {BITOLAS_COMERCIAIS.map(b => (
-                                    <option key={b} value={b}>{b.toFixed(1)} mm</option>
-                                ))}
-                            </select>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-600 mb-1">Comprimento (cm)</label>
-                                <input 
-                                    type="number"
-                                    value={newItemData.length}
-                                    onChange={(e) => setNewItemData({...newItemData, length: e.target.value})}
-                                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                    min="1"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-600 mb-1">Quantidade</label>
-                                <input 
-                                    type="number"
-                                    value={newItemData.qty}
-                                    onChange={(e) => setNewItemData({...newItemData, qty: e.target.value})}
-                                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                                    min="1"
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="mt-6 flex justify-end gap-2">
-                        <button 
-                            onClick={() => setShowAddModal(false)}
-                            className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded"
-                        >
-                            Cancelar
-                        </button>
-                        <button 
-                            onClick={confirmAddItem}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium"
-                        >
-                            Salvar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
-
-        {/* --- TAB: RESULTS --- */}
-        {activeTab === 'results' && results && (
-            <div className="space-y-8 animate-fade-in pb-8">
-                
-                <div className="flex justify-between items-center bg-indigo-50 p-4 rounded-lg border border-indigo-100 flex-wrap gap-4">
-                    <div>
-                        <h2 className="text-xl font-bold text-indigo-900">Plano de Corte Gerado</h2>
-                        <p className="text-sm text-indigo-700">Barras idênticas foram agrupadas.</p>
-                    </div>
-                    <div className="flex gap-2">
-                        <button 
-                            onClick={generatePDF}
-                            className="bg-white text-indigo-700 border border-indigo-200 px-4 py-2 rounded shadow hover:bg-indigo-50 flex items-center gap-2"
-                        >
-                            <Printer size={18} /> Baixar PDF
-                        </button>
-                        <button 
-                            onClick={consolidateLeftovers}
-                            className="bg-indigo-600 text-white px-6 py-2 rounded shadow hover:bg-indigo-700 flex items-center gap-2"
-                        >
-                            <Save size={18} /> Salvar Sobras
-                        </button>
-                    </div>
-                </div>
-
-                {results.map((group, gIdx) => {
-                    const totalBars = group.bars.reduce((acc, b) => acc + b.count, 0);
-                    return (
-                        <div key={gIdx} className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="bg-slate-100 px-6 py-3 border-b border-slate-200 flex justify-between">
-                                <h3 className="font-bold text-lg text-slate-800">Bitola: {group.bitola}mm</h3>
-                                <span className="text-sm text-slate-500">{totalBars} barras necessárias</span>
-                            </div>
-                            <div className="p-6 space-y-6">
-                                {group.bars.map((bar, bIdx) => (
-                                    <div key={bIdx} className="flex flex-col gap-1 pb-4 border-b border-slate-100 last:border-0 last:pb-0">
-                                        <div className="flex justify-between text-sm text-slate-600 mb-1 items-center">
-                                            <div className="flex items-center gap-3">
-                                                <span className="bg-slate-800 text-white font-bold px-3 py-1 rounded-full text-xs">
-                                                    {bar.count}x
-                                                </span>
-                                                <span className="font-semibold uppercase tracking-wider flex items-center gap-1 text-xs">
-                                                    {bar.type === 'nova' ? (
-                                                        <span className="text-blue-600 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">Barra Nova (12m)</span>
-                                                    ) : (
-                                                        <span className="text-amber-600 bg-amber-100 px-2 py-0.5 rounded border border-amber-200">Ponta Estoque ({bar.originalLength}cm)</span>
-                                                    )}
-                                                </span>
-                                            </div>
-                                            <span className="font-mono text-xs">Sobra: <span className={bar.remaining > 100 ? "text-green-600 font-bold" : "text-slate-600"}>{bar.remaining.toFixed(1)}cm</span></span>
-                                        </div>
-                                        <div className="h-14 w-full bg-slate-200 rounded overflow-hidden flex border border-slate-300 relative">
-                                            {bar.cuts.map((cut, cIdx) => {
-                                                const widthPerc = (cut / bar.originalLength) * 100;
-                                                return (
-                                                    <div 
-                                                        key={cIdx} 
-                                                        style={{ width: `${widthPerc}%` }}
-                                                        className="h-full bg-blue-500 border-r border-white flex flex-col items-center justify-center text-white text-xs overflow-hidden whitespace-nowrap hover:bg-blue-600 transition-colors relative group"
-                                                        title={`Cortar peça de ${cut}cm`}
-                                                    >
-                                                        <span className="font-bold text-sm">{cut}</span>
-                                                        <span className="text-[10px] opacity-75">cm</span>
-                                                    </div>
-                                                )
-                                            })}
-                                            <div className="flex-1 bg-slate-300 pattern-diagonal-lines flex items-center justify-center">
-                                                {bar.remaining > 10 && <span className="text-xs text-slate-500 italic font-medium">{bar.remaining.toFixed(0)}cm</span>}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        )}
-
-      </main>
-      <style>{`
-        .pattern-diagonal-lines {
-            background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(255,255,255,0.5) 5px, rgba(255,255,255,0.5) 10px);
-        }
-      `}</style>
-    </div>
-  );
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { 
+  Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
+  AlertCircle, Database, List, ArrowLeft, LogOut, Loader2, 
+  CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
+  MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
+  Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
+  Shield, Award, UserPlus, ExternalLink, HelpCircle
+} from 'lucide-react';
+
+// --- FIREBASE IMPORTS ---
+import { initializeApp, deleteApp } from "firebase/app"; // Adicionado deleteApp
+import { 
+  getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
+  onSnapshot, query, orderBy, where, writeBatch, setDoc, 
+  limit, startAfter, getDocs, startAt, endAt
+} from "firebase/firestore";
+import { 
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  createUserWithEmailAndPassword, updateProfile // Adicionados para criar usuários
+} from "firebase/auth";
+
+// --- CONFIGURAÇÃO FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBhwtINeofqm97BzIE_s9DcG-l3v7zsAAY",
+  authDomain: "bancodequestoes-5cc34.firebaseapp.com",
+  projectId: "bancodequestoes-5cc34",
+  storageBucket: "bancodequestoes-5cc34.firebasestorage.app",
+  messagingSenderId: "174347052858",
+  appId: "1:174347052858:web:d54bbf3b193d30a5f69203",
+  measurementId: "G-XNHXB5BCGF"
 };
 
-export default OtimizadorCorteAco;
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+// --- CONSTANTES ---
+const ITEMS_PER_PAGE = 20;
+
+const areasBase = [
+  'Clínica Médica', 'Cirurgia Geral', 'Ginecologia e Obstetrícia', 'Pediatria', 'Preventiva'
+];
+
+const themesMap = {
+    'Clínica Médica': ['Cardiologia', 'Dermatologia', 'Endocrinologia e Metabologia', 'Gastroenterologia', 'Hematologia', 'Hepatologia', 'Infectologia', 'Nefrologia', 'Neurologia', 'Pneumologia', 'Psiquiatria', 'Reumatologia'],
+    'Cirurgia Geral': ['Abdome Agudo', 'Cirurgia Hepatobiliopancreática', 'Cirurgia Torácica e de Cabeça e Pescoço', 'Cirurgia Vascular', 'Cirurgia do Esôfago e Estômago', 'Coloproctologia', 'Hérnias e Parede Abdominal', 'Pré e Pós-Operatório', 'Queimaduras', 'Resposta Metabólica e Cicatrização', 'Trauma', 'Urologia'],
+    'Ginecologia e Obstetrícia': ['Ciclo Menstrual e Anticoncepção', 'Climatério e Menopausa', 'Doenças Intercorrentes na Gestação', 'Infecções Congênitas e Gestacionais', 'Infecções Ginecológicas e ISTs', 'Mastologia', 'Obstetrícia Fisiológica e Pré-Natal', 'Oncologia Pélvica', 'Parto e Puerpério', 'Sangramentos da Gestação', 'Uroginecologia e Distopias', 'Vitalidade Fetal e Amniograma'],
+    'Pediatria': ['Adolescência e Puberdade', 'Afecções Respiratórias', 'Aleitamento Materno e Nutrição', 'Cardiologia e Reumatologia Pediátrica', 'Crescimento e Desenvolvimento', 'Emergências e Acidentes', 'Gastroenterologia Pediátrica', 'Imunizações', 'Infectopediatria e Exantemáticas', 'Nefrologia Pediátrica', 'Neonatologia: Patologias', 'Neonatologia: Sala de Parto'],
+    'Preventiva': ['Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética']
+};
+
+// --- COMPONENTE DE NOTIFICAÇÃO ---
+function NotificationToast({ notification, onClose }) {
+  const [isHovered, setIsHovered] = useState(false);
+  useEffect(() => {
+    if (!notification || isHovered) return;
+    const timer = setTimeout(() => onClose(), 6000); 
+    return () => clearTimeout(timer);
+  }, [notification, isHovered, onClose]);
+
+  if (!notification) return null;
+
+  return (
+    <div 
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        className="fixed top-24 right-4 z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-md border bg-white border-gray-200 text-slate-800"
+    >
+        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
+            {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
+        </div>
+        <div className="flex-1">
+            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Atenção' : 'Sucesso'}</p>
+            <p className="text-sm opacity-90 leading-tight break-words">{notification.text}</p>
+            {notification.link && (
+                <a href={notification.link} target="_blank" rel="noopener noreferrer" className="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded mt-2 inline-flex items-center gap-1 hover:bg-blue-100">
+                    <ExternalLink size={12}/> Criar Índice no Firebase Agora
+                </a>
+            )}
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400"><X size={18}/></button>
+    </div>
+  );
+}
+
+export default function MedManager() {
+  const [user, setUser] = useState(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  
+  // Data State
+  const [questions, setQuestions] = useState([]);
+  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); // Nova lista para prioridades
+  const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
+  const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
+  const [missingIndexLink, setMissingIndexLink] = useState(null); 
+  
+  const [students, setStudents] = useState([]); 
+  const [lastStudentDoc, setLastStudentDoc] = useState(null);
+  const [hasMoreStudents, setHasMoreStudents] = useState(true);
+
+  // Reports
+  const [reports, setReports] = useState([]); 
+  const [userProfiles, setUserProfiles] = useState({}); 
+
+  // Loading States
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [loadingStudents, setLoadingStudents] = useState(false); 
+  const [isSearchingServer, setIsSearchingServer] = useState(false);
+  
+  // View State
+  const [activeView, setActiveView] = useState('questions'); 
+  
+  // Filters
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedArea, setSelectedArea] = useState('Todas');
+  const [selectedTopic, setSelectedTopic] = useState('Todos');
+  const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
+  const [selectedYear, setSelectedYear] = useState('Todos'); 
+  const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
+
+  // Students Filters
+  const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
+  const [studentRoleFilter, setStudentRoleFilter] = useState('all'); 
+  
+  // Edit/Action States
+  const [editingQuestion, setEditingQuestion] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [associatedReport, setAssociatedReport] = useState(null);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [viewingUserStats, setViewingUserStats] = useState(null); 
+  
+  // UI State
+  const [notification, setNotification] = useState(null);
+  const [deleteModal, setDeleteModal] = useState(null); 
+  const [rejectReportModal, setRejectReportModal] = useState(null);
+  
+  // Login Inputs
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const showNotification = (type, text, link = null) => setNotification({ type, text, link });
+
+  // --- AUTH ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+        if (u) {
+            const userDoc = await getDoc(doc(db, "users", u.uid));
+            if (userDoc.exists() && userDoc.data().role === 'admin') {
+                setUser(u);
+                loadQuestions(true);
+            } else {
+                await signOut(auth);
+                showNotification('error', 'Acesso negado: Apenas administradores.');
+                setUser(null);
+            }
+        } else {
+            setUser(null);
+        }
+        setIsLoadingAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- REALTIME REPORTS & PRIORITY FETCH ---
+  useEffect(() => {
+    if (!user) return;
+    const qReports = query(collection(db, "reports"), where("status", "==", "pending"));
+    const unsubReports = onSnapshot(qReports, (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setReports(list);
+    });
+    return () => unsubReports();
+  }, [user]);
+
+  const reportsCountByQuestion = useMemo(() => {
+      const counts = {}; reports.forEach(r => { counts[r.questionId] = (counts[r.questionId] || 0) + 1; }); return counts;
+  }, [reports]);
+
+  // Busca automática das questões reportadas que não estão na tela
+  useEffect(() => {
+    const fetchMissing = async () => {
+        if (reports.length === 0) return;
+        
+        const reportedIds = Object.keys(reportsCountByQuestion);
+        // IDs que têm report mas não estão nem na lista principal nem na lista extra
+        const missingIds = reportedIds.filter(id => 
+            !questions.find(q => q.id === id) && 
+            !extraReportedQuestions.find(q => q.id === id)
+        );
+
+        if (missingIds.length === 0) return;
+
+        const newDocs = [];
+        // Limitando a 20 requests paralelos para não sobrecarregar
+        const idsToFetch = missingIds.slice(0, 20); 
+
+        await Promise.all(idsToFetch.map(async (id) => {
+            try {
+                const snap = await getDoc(doc(db, "questions", id));
+                if (snap.exists()) {
+                    newDocs.push({ id: snap.id, ...snap.data() });
+                }
+            } catch (e) { console.error("Erro fetch reported q", id, e); }
+        }));
+
+        if (newDocs.length > 0) {
+            setExtraReportedQuestions(prev => [...prev, ...newDocs]);
+        }
+    };
+    
+    const timer = setTimeout(fetchMissing, 1000);
+    return () => clearTimeout(timer);
+  }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
+
+
+  // --- LOAD QUESTIONS ---
+  const loadQuestions = async (reset = false) => {
+      if (loadingQuestions) return;
+      if (!reset && !hasMoreQuestions) return;
+
+      setLoadingQuestions(true);
+      setMissingIndexLink(null); // Limpa erro anterior
+
+      try {
+          let q = collection(db, "questions");
+          let constraints = [orderBy("createdAt", "desc")];
+
+          // Filtros de Servidor
+          if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
+          if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
+
+          // Paginação
+          if (!reset && lastQuestionDoc) {
+              constraints.push(startAfter(lastQuestionDoc));
+          }
+          
+          constraints.push(limit(ITEMS_PER_PAGE));
+          
+          const finalQuery = query(q, ...constraints);
+          const snapshot = await getDocs(finalQuery);
+          
+          const newQuestions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          
+          if (reset) {
+              setQuestions(newQuestions);
+          } else {
+              setQuestions(prev => [...prev, ...newQuestions]);
+          }
+
+          setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
+
+      } catch (error) {
+          console.error("Erro ao carregar questões:", error);
+          if (error.message.includes("requires an index")) {
+              const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
+              const link = linkMatch ? linkMatch[0] : null;
+              setMissingIndexLink(link);
+              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro. Clique no link para criar.', link);
+          } else {
+              showNotification('error', 'Erro ao carregar dados: ' + error.message);
+          }
+      } finally {
+          setLoadingQuestions(false);
+      }
+  };
+
+  // --- SERVER SIDE SEARCH ---
+  const handleServerSearch = async () => {
+      const term = searchTerm.trim();
+      if (!term) {
+          loadQuestions(true);
+          return;
+      }
+      setIsSearchingServer(true);
+      setMissingIndexLink(null);
+      let foundDocs = [];
+
+      try {
+          try {
+            const docRef = doc(db, "questions", term);
+            const docSnap = await getDoc(docRef);
+            if (docSnap.exists()) {
+                foundDocs.push({ id: docSnap.id, ...docSnap.data() });
+            }
+          } catch(e) { }
+
+          if (foundDocs.length === 0) {
+              const qText = query(
+                  collection(db, "questions"),
+                  orderBy("text"),
+                  startAt(term),
+                  endAt(term + '\uf8ff'),
+                  limit(5)
+              );
+              const textSnap = await getDocs(qText);
+              textSnap.forEach(d => {
+                  if (!foundDocs.some(f => f.id === d.id)) {
+                      foundDocs.push({ id: d.id, ...d.data() });
+                  }
+              });
+          }
+
+          if (foundDocs.length > 0) {
+              setQuestions(foundDocs); 
+              setHasMoreQuestions(false); 
+              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s) no servidor!`);
+          } else {
+              showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
+          }
+      } catch (error) {
+          console.error("Erro na busca:", error);
+          if (error.message.includes("requires an index")) {
+            const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
+            const link = linkMatch ? linkMatch[0] : null;
+            setMissingIndexLink(link);
+            showNotification('error', 'Falta índice para busca de texto! Clique no link acima.', link);
+          } else {
+            showNotification('error', 'Erro ao buscar no servidor.');
+          }
+      } finally {
+          setIsSearchingServer(false);
+      }
+  };
+
+  const handleKeyDownSearch = (e) => {
+      if (e.key === 'Enter') {
+          handleServerSearch();
+      }
+  };
+
+  // --- LOAD STUDENTS ---
+  const loadStudents = async (reset = false) => {
+      if (loadingStudents) return;
+      if (!reset && !hasMoreStudents) return;
+
+      setLoadingStudents(true);
+      try {
+          let q = collection(db, "users");
+          let constraints = [orderBy("name")]; 
+
+          if (studentRoleFilter !== 'all') {
+              constraints.push(where("role", "==", studentRoleFilter));
+          }
+
+          if (!reset && lastStudentDoc) {
+              constraints.push(startAfter(lastStudentDoc));
+          }
+
+          constraints.push(limit(ITEMS_PER_PAGE));
+
+          const finalQuery = query(q, ...constraints);
+          const snapshot = await getDocs(finalQuery);
+
+          const newStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+          if (reset) {
+              setStudents(newStudents);
+          } else {
+              setStudents(prev => [...prev, ...newStudents]);
+          }
+
+          setLastStudentDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setHasMoreStudents(snapshot.docs.length === ITEMS_PER_PAGE);
+
+      } catch (error) {
+          console.error(error);
+          showNotification('error', 'Erro ao carregar alunos.');
+      } finally {
+          setLoadingStudents(false);
+      }
+  };
+
+  useEffect(() => {
+      if (activeView === 'students' && students.length === 0) {
+          loadStudents(true);
+      }
+  }, [activeView]);
+
+  useEffect(() => {
+      if(user) {
+          const timer = setTimeout(() => {
+             if(!searchTerm) loadQuestions(true);
+          }, 500);
+          return () => clearTimeout(timer);
+      }
+  }, [selectedArea, selectedTopic]); 
+
+  useEffect(() => {
+      if(user && activeView === 'students') {
+          loadStudents(true);
+      }
+  }, [studentRoleFilter]);
+
+  // --- HELPER DATA ---
+  useEffect(() => {
+      const fetchReporters = async () => {
+        if (reports.length === 0) return;
+        const uids = new Set(reports.map(r => r.userId).filter(uid => uid));
+        const newProfiles = { ...userProfiles };
+        const toFetch = [];
+        uids.forEach(uid => { if (!newProfiles[uid]) toFetch.push(uid); });
+
+        if (toFetch.length === 0) return;
+
+        await Promise.all(toFetch.map(async (uid) => {
+            try {
+                const snap = await getDoc(doc(db, "users", uid));
+                if (snap.exists()) { newProfiles[uid] = snap.data(); } 
+                else { newProfiles[uid] = { name: 'Desconhecido', whatsapp: '' }; }
+            } catch (e) { console.error("Erro user", uid, e); }
+        }));
+        setUserProfiles(newProfiles);
+      };
+      fetchReporters();
+  }, [reports]);
+
+  // --- FILTERS MEMO & SORTING ---
+  const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
+  const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
+  
+  const filteredQuestions = useMemo(() => {
+      // 1. Merge: Junta a lista normal + a lista de questões com report (sem duplicatas)
+      const allQuestionsMap = new Map();
+      questions.forEach(q => allQuestionsMap.set(q.id, q));
+      extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
+      
+      const allQuestions = Array.from(allQuestionsMap.values());
+
+      // 2. Filtra
+      let result = allQuestions.filter(q => {
+          const matchesSearch = searchTerm ? (
+              q.text.toLowerCase().includes(searchTerm.toLowerCase()) || 
+              q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+              q.id === searchTerm.trim()
+          ) : true;
+          
+          const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
+          const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
+          const matchesInstitution = selectedInstitution === 'Todas' || q.institution === selectedInstitution;
+          const matchesYear = selectedYear === 'Todos' || String(q.year) === selectedYear;
+          return matchesSearch && matchesArea && matchesTopic && matchesInstitution && matchesYear;
+      });
+
+      // 3. Ordena: Quem tem Report primeiro (maior número), depois por data de criação
+      result.sort((a, b) => {
+          const countA = reportsCountByQuestion[a.id] || 0;
+          const countB = reportsCountByQuestion[b.id] || 0;
+
+          // Se um tem report e o outro não, ou se os counts são diferentes
+          if (countA > 0 || countB > 0) {
+              if (countA !== countB) return countB - countA; // Maior report primeiro
+          }
+
+          // Desempate ou lista normal: Data de criação (mais recente primeiro)
+          // createdAt pode ser string ISO ou objeto Firestore, garantindo comparação segura
+          const dateA = new Date(a.createdAt || 0).getTime();
+          const dateB = new Date(b.createdAt || 0).getTime();
+          return dateB - dateA;
+      });
+
+      return result;
+  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear]);
+
+  const filteredReports = useMemo(() => {
+      let result = reports;
+      if (reportFilterQuestionId) result = result.filter(r => r.questionId === reportFilterQuestionId);
+      if (activeView === 'reports' && searchTerm) {
+          const lower = searchTerm.toLowerCase();
+          result = result.filter(r => r.userId?.toLowerCase().includes(lower) || r.questionId?.toLowerCase().includes(lower) || r.text?.toLowerCase().includes(lower) || r.details?.toLowerCase().includes(lower) || (userProfiles[r.userId]?.name || '').toLowerCase().includes(lower));
+      }
+      return result;
+  }, [reports, reportFilterQuestionId, searchTerm, activeView, userProfiles]);
+
+  const filteredStudents = useMemo(() => {
+      if (activeView !== 'students') return [];
+      const lower = searchTerm.toLowerCase();
+      return students.filter(s => {
+          const matchesSearch = s.name?.toLowerCase().includes(lower) || s.email?.toLowerCase().includes(lower) || s.id?.toLowerCase().includes(lower);
+          const isPremium = s.subscriptionUntil && new Date(s.subscriptionUntil) > new Date();
+          let matchesStatus = true;
+          if (studentStatusFilter === 'active') matchesStatus = isPremium;
+          if (studentStatusFilter === 'expired') matchesStatus = !isPremium;
+          return matchesSearch && matchesStatus;
+      });
+  }, [students, searchTerm, activeView, studentStatusFilter]);
+
+
+  // --- ACTIONS ---
+  const handleLogout = async () => {
+      try {
+          await signOut(auth);
+          setUser(null);
+          setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]);
+          setActiveView('questions');
+      } catch (error) { console.error(error); }
+  };
+
+  const handleGoToReports = (questionId) => {
+      setReportFilterQuestionId(questionId);
+      setSearchTerm('');
+      setActiveView('reports');
+  };
+
+  const handleClearReportFilter = () => setReportFilterQuestionId(null);
+  const handleClearQuestionFilters = () => { setSearchTerm(''); setSelectedArea('Todas'); setSelectedTopic('Todos'); setSelectedInstitution('Todas'); setSelectedYear('Todos'); };
+
+  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
+  const handleCreateUser = async (e) => {
+      e.preventDefault();
+      setIsSaving(true);
+      const formData = new FormData(e.target);
+      const userData = Object.fromEntries(formData);
+      
+      const appName = `SecondaryApp-${Date.now()}`;
+      let secondaryApp;
+
+      try {
+          // 1. Inicializa um "App Secundário" para criar o user SEM deslogar o admin
+          secondaryApp = initializeApp(firebaseConfig, appName);
+          const secondaryAuth = getAuth(secondaryApp);
+
+          // 2. Cria o login no Firebase Auth
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
+          const newUser = userCredential.user;
+          
+          // 3. Atualiza o nome do usuário no perfil do Auth
+          await updateProfile(newUser, { displayName: userData.name });
+
+          const newUserId = newUser.uid; // Pega o UID real gerado pelo Auth
+          
+          const newUserObj = {
+              id: newUserId,
+              name: userData.name,
+              email: userData.email,
+              role: userData.role || 'student',
+              createdAt: new Date().toISOString(),
+              subscriptionUntil: userData.subscriptionUntil || null,
+              whatsapp: userData.whatsapp || '',
+              dailyGoal: 50, // Padrão
+              // Stats básicos no documento principal (opcional, mas bom para lista rápida)
+              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
+          };
+          
+          // 4. Salva os dados no Firestore usando o UID real
+          await setDoc(doc(db, "users", newUserId), newUserObj);
+          
+          // 5. Inicializa a subcoleção de estatísticas (padrão do app)
+          await setDoc(doc(db, "users", newUserId, "stats", "main"), {
+              correctAnswers: 0,
+              totalAnswers: 0,
+              questionsToday: 0,
+              streak: 0,
+              lastStudyDate: null
+          });
+          
+          // Atualiza lista local
+          setStudents(prev => [newUserObj, ...prev]);
+          
+          showNotification('success', 'Aluno criado com acesso ao sistema!');
+          setIsCreatingUser(false);
+      } catch (error) {
+          console.error(error);
+          if (error.code === 'auth/email-already-in-use') {
+              showNotification('error', 'Este email já está em uso.');
+          } else {
+              showNotification('error', 'Erro ao criar: ' + error.message);
+          }
+      } finally {
+          // 6. Limpa o app secundário da memória
+          if (secondaryApp) {
+              try {
+                  await deleteApp(secondaryApp); 
+              } catch (e) {
+                  console.error("Erro ao limpar app secundário", e);
+              }
+          }
+          setIsSaving(false);
+      }
+  };
+
+  const updateLocalList = (listType, id, newData) => {
+      if (listType === 'questions') {
+          setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+          setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+      } else if (listType === 'students') {
+          setStudents(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+      }
+  };
+
+  const removeLocalList = (listType, id) => {
+      if (listType === 'questions') {
+          setQuestions(prev => prev.filter(item => item.id !== id));
+          setExtraReportedQuestions(prev => prev.filter(item => item.id !== id));
+      } else if (listType === 'students') {
+          setStudents(prev => prev.filter(item => item.id !== id));
+      }
+  };
+
+  const handleInlineUserUpdate = async (id, field, value) => {
+      try {
+          await updateDoc(doc(db, "users", id), { [field]: value });
+          updateLocalList('students', id, { [field]: value }); 
+          showNotification('success', 'Atualizado com sucesso!');
+      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+  };
+
+  const handleAdd30Days = async (student) => {
+      const now = new Date(); let newDate = new Date();
+      if (student.subscriptionUntil) { const currentExpiry = new Date(student.subscriptionUntil); if (currentExpiry > now) { newDate = new Date(currentExpiry); } }
+      newDate.setDate(newDate.getDate() + 30);
+      try {
+          const isoDate = newDate.toISOString();
+          await updateDoc(doc(db, "users", student.id), { subscriptionUntil: isoDate });
+          updateLocalList('students', student.id, { subscriptionUntil: isoDate });
+          showNotification('success', '+30 dias adicionados!');
+      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+  };
+
+  const handleDeleteUser = async () => {
+      if (!deleteModal || !deleteModal.email) return; 
+      try {
+          await deleteDoc(doc(db, "users", deleteModal.id));
+          
+          // Tenta limpar subcoleções (embora exija delete recursivo ou Cloud Functions para limpeza total)
+          // Aqui fazemos o básico para a UI limpar
+          removeLocalList('students', deleteModal.id);
+          showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
+          setDeleteModal(null);
+      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
+  };
+
+  const fetchUserStats = async (student) => {
+      setViewingUserStats({ ...student, loading: true });
+      try {
+          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
+          if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } 
+          else { setViewingUserStats({ ...student, stats: null, loading: false }); }
+      } catch (e) { console.error(e); setViewingUserStats({ ...student, stats: null, loading: false }); }
+  };
+
+  const handleSave = async (shouldResolveReport = false) => {
+      setIsSaving(true);
+      try {
+          const batch = writeBatch(db);
+          const { id, ...data } = editingQuestion;
+          batch.update(doc(db, "questions", id), data);
+          if (shouldResolveReport && associatedReport) {
+              batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() });
+          }
+          await batch.commit();
+          updateLocalList('questions', id, data);
+          showNotification('success', shouldResolveReport ? 'Salvo e resolvido!' : 'Atualizado!');
+          setEditingQuestion(null);
+          setAssociatedReport(null);
+      } catch (error) { console.error(error); showNotification('error', error.message); } finally { setIsSaving(false); }
+  };
+
+  const handleRejectReport = async () => {
+      if (!rejectReportModal) return;
+      try {
+          await deleteDoc(doc(db, "reports", rejectReportModal.id));
+          showNotification('success', 'Reporte excluído.');
+          if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); }
+          setRejectReportModal(null);
+      } catch (error) { showNotification('error', error.message); }
+  };
+
+  const handleOpenFromReport = async (report) => {
+      let question = questions.find(q => q.id === report.questionId) || extraReportedQuestions.find(q => q.id === report.questionId);
+      if (!question) {
+          try {
+              const qSnap = await getDoc(doc(db, "questions", report.questionId));
+              if (qSnap.exists()) { question = { id: qSnap.id, ...qSnap.data() }; }
+          } catch (e) { console.error(e); }
+      }
+      if (question) {
+          let qToEdit = { ...question };
+          if (report.category === "metadata_suggestion" || report.category === "suggestion_update") {
+              if (report.suggestedInstitution) qToEdit.institution = report.suggestedInstitution;
+              if (report.suggestedYear) qToEdit.year = report.suggestedYear;
+          }
+          setEditingQuestion(qToEdit);
+          setAssociatedReport(report);
+      } else { showNotification('error', 'Questão não encontrada.'); }
+  };
+
+  const handleDeleteQuestion = async () => {
+      if (!deleteModal || deleteModal.email) return; 
+      try {
+          await deleteDoc(doc(db, "questions", deleteModal.id));
+          removeLocalList('questions', deleteModal.id); 
+          showNotification('success', 'Questão excluída.');
+          if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); }
+          setDeleteModal(null);
+      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
+  };
+
+  const copyToClipboard = async (text) => {
+      try {
+          const textArea = document.createElement("textarea"); textArea.value = text;
+          textArea.style.position = "fixed"; textArea.style.left = "-9999px";
+          document.body.appendChild(textArea); textArea.focus(); textArea.select();
+          document.execCommand('copy'); document.body.removeChild(textArea);
+          showNotification('success', 'Copiado!');
+      } catch (err) { showNotification('error', 'Erro ao copiar.'); }
+  };
+
+  const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
+  const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
+  const checkSubscriptionStatus = (d, role) => { 
+      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
+      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+  };
+  const getReportDetails = (r) => {
+      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
+          return (
+              <div className="flex gap-4 mt-2">
+                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span><span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span></div>
+                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span><span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span></div>
+              </div>
+          );
+      }
+      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
+  };
+
+  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+  const pendingReportsCount = reports.length;
+
+  if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
+  if (!user) return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center">
+              <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div>
+              <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1>
+              <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p>
+              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro de login: " + err.message)); }} className="space-y-4">
+                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button>
+              </form>
+          </div>
+          <NotificationToast notification={notification} onClose={() => setNotification(null)} />
+      </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans text-slate-800 flex">
+      <NotificationToast notification={notification} onClose={() => setNotification(null)} />
+      
+      {/* SIDEBAR */}
+      <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
+          <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.4</p>
+          </div>
+          
+          <div className="p-4 flex-1 overflow-y-auto space-y-2">
+              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
+              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
+              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
+              
+              {/* FILTERS FOR QUESTIONS */}
+              {activeView === 'questions' && (
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros (Servidor)</label>
+                        <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
+                    </div>
+                    {missingIndexLink && (
+                        <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="block text-xs bg-red-100 text-red-700 p-2 rounded border border-red-200 hover:bg-red-200 transition-colors mb-2 font-bold animate-pulse">
+                            <AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui
+                        </a>
+                    )}
+                    <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca no banco de dados.</div>
+                    <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                    <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                    
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais</label>
+                    <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
+                    <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
+                </div>
+              )}
+
+              {/* FILTERS FOR STUDENTS */}
+              {activeView === 'students' && (
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
+                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos</option><option value="expired">Expirados</option></select></div>
+                </div>
+              )}
+          </div>
+          
+          <div className="p-4 border-t border-gray-100 space-y-1">
+              <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors"><ArrowLeft size={16} /> Voltar ao App</button>
+              <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors"><LogOut size={16} /> Sair</button>
+          </div>
+      </aside>
+
+      {/* MAIN CONTENT */}
+      <main className="ml-64 flex-1 p-8 overflow-y-auto">
+          
+          {/* SEARCH HEADER */}
+          <div className="flex items-center justify-between mb-8 gap-4">
+              <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+                  {activeView === 'questions' && <><List className="text-blue-600"/> Questões</>}
+                  {activeView === 'reports' && <><MessageSquare className="text-red-600"/> Reportes <span className="text-sm font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{pendingReportsCount} Pendentes</span></>}
+                  {activeView === 'students' && <><Users className="text-purple-600"/> Gestão de Alunos</>}
+              </h2>
+              <div className="relative flex-1 max-w-md group">
+                  <Search onClick={handleServerSearch} className="absolute left-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600 z-10" size={20} />
+                  <input 
+                    type="text" 
+                    placeholder="Cole o começo do enunciado ou o ID..." 
+                    value={searchTerm} 
+                    onChange={e => setSearchTerm(e.target.value)} 
+                    onKeyDown={handleKeyDownSearch}
+                    className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
+                  />
+                  {isSearchingServer && <div className="absolute right-4 top-3.5"><Loader2 className="animate-spin text-blue-600" size={20}/></div>}
+                  <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto"><HelpCircle size={16}/></div>
+              </div>
+              {activeView === 'students' && (
+                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
+                      <UserPlus size={20} /> Novo Aluno
+                  </button>
+              )}
+          </div>
+
+          {/* VIEW: QUESTIONS */}
+          {activeView === 'questions' && (
+              <div className="space-y-4 pb-10">
+                  {missingIndexLink && (
+                       <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-4 mb-4">
+                           <AlertTriangle size={32} className="flex-shrink-0"/>
+                           <div>
+                               <h3 className="font-bold text-lg">Índice do Firebase Ausente</h3>
+                               <p className="text-sm mb-2">Para filtrar por Área e Tópico, o Firebase exige um índice composto.</p>
+                               <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-sm inline-flex items-center gap-2 hover:bg-red-700">
+                                   <ExternalLink size={16}/> Criar Índice Agora
+                               </a>
+                           </div>
+                       </div>
+                  )}
+
+                  {loadingQuestions && questions.length === 0 ? (
+                      <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-blue-600 w-10 h-10"/></div>
+                  ) : (
+                      <>
+                        {filteredQuestions.map(q => {
+                            const reportCount = reportsCountByQuestion[q.id] || 0;
+                            return (
+                                <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200'}`}>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
+                                            <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
+                                            {reportCount > 0 && (
+                                                <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
+                                            )}
+                                            <div className="flex items-center gap-2">
+                                                <span className="flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded border border-blue-100"><Building size={10}/> {q.institution || 'N/A'}</span>
+                                                <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200"><Calendar size={10}/> {q.year || '----'}</span>
+                                            </div>
+                                            <div className="flex items-center flex-wrap gap-1"><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></div>
+                                        </div>
+                                        <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 self-start md:self-center">
+                                        <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg hover:border-blue-100 border border-transparent"><Edit3 size={18}/></button>
+                                        <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg hover:border-red-100 border border-transparent"><Trash2 size={18}/></button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        
+                        {/* LOAD MORE BUTTON */}
+                        {hasMoreQuestions && !missingIndexLink && (
+                            <button 
+                                onClick={() => loadQuestions(false)} 
+                                disabled={loadingQuestions}
+                                className="w-full py-4 mt-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
+                            >
+                                {loadingQuestions ? <Loader2 className="animate-spin" size={20}/> : <ChevronDown size={20}/>}
+                                {loadingQuestions ? 'Carregando...' : 'Carregar Mais Questões'}
+                            </button>
+                        )}
+                        {!hasMoreQuestions && questions.length > 0 && (
+                            <p className="text-center text-gray-400 text-sm py-4">Fim da lista.</p>
+                        )}
+                        {questions.length === 0 && !loadingQuestions && (
+                            <div className="text-center py-10 text-gray-500">
+                                <Database size={48} className="mx-auto mb-2 opacity-20"/>
+                                <p>Nenhuma questão encontrada.</p>
+                            </div>
+                        )}
+                      </>
+                  )}
+              </div>
+          )}
+
+          {/* VIEW: REPORTS */}
+          {activeView === 'reports' && (
+              <div className="max-w-4xl mx-auto space-y-6">
+                  {reportFilterQuestionId && (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div>
+                          <button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button>
+                      </div>
+                  )}
+                  {filteredReports.map(report => {
+                      const reporter = getUserDetails(report.userId);
+                      return (
+                          <div key={report.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                              <div className="flex justify-between items-start mb-4">
+                                  <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
+                                      <div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div>
+                                  </div>
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span>
+                              </div>
+                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
+                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button>
+                                  <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
+                              </div>
+                          </div>
+                      );
+                  })}
+              </div>
+          )}
+
+          {/* VIEW: STUDENTS TABLE */}
+          {activeView === 'students' && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden pb-4">
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm text-slate-600">
+                          <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b border-gray-200">
+                              <tr>
+                                  <th className="px-6 py-4">Aluno / Email</th>
+                                  <th className="px-6 py-4">Função</th>
+                                  <th className="px-6 py-4">ID</th>
+                                  <th className="px-6 py-4">Status / Vencimento</th>
+                                  <th className="px-6 py-4 text-right">Ações</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {filteredStudents.map(student => {
+                                  const subStatus = checkSubscriptionStatus(student.subscriptionUntil, student.role);
+                                  const isAdmin = student.role === 'admin';
+                                  
+                                  return (
+                                      <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                                          <td className="px-6 py-4">
+                                              <div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div>
+                                              <div className="text-xs text-gray-500 mb-1">{student.email}</div>
+                                              {student.whatsapp && (
+                                                  <div className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
+                                                      <Phone size={12}/> {student.whatsapp}
+                                                  </div>
+                                              )}
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              <select 
+                                                  value={student.role} 
+                                                  onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)}
+                                                  className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}
+                                              >
+                                                  <option value="student">Aluno</option>
+                                                  <option value="admin">Admin</option>
+                                              </select>
+                                          </td>
+                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>
+                                              {student.id.slice(0, 8)}... <Copy size={12}/>
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              {!isAdmin ? (
+                                                  <>
+                                                      <div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div>
+                                                      <div className="flex items-center gap-2">
+                                                          <input 
+                                                              type="date" 
+                                                              value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''}
+                                                              onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)}
+                                                              className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"
+                                                          />
+                                                          <button onClick={() => handleAdd30Days(student)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors" title="Adicionar 30 dias"><PlusCircle size={10}/> +30</button>
+                                                      </div>
+                                                  </>
+                                              ) : ( <span className="text-gray-400 text-sm font-medium">–</span> )}
+                                          </td>
+                                          <td className="px-6 py-4 text-right">
+                                              <div className="flex justify-end gap-2">
+                                                  <button onClick={() => fetchUserStats(student)} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors" title="Ver Desempenho"><TrendingUp size={18}/></button>
+                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Excluir"><Trash2 size={18}/></button>
+                                              </div>
+                                          </td>
+                                      </tr>
+                                  );
+                              })}
+                          </tbody>
+                      </table>
+                  </div>
+                  {/* PAGINATION FOR STUDENTS */}
+                  <div className="p-4 border-t border-gray-100">
+                      {loadingStudents && <div className="text-center py-2"><Loader2 className="animate-spin inline text-purple-600"/> Carregando alunos...</div>}
+                      {hasMoreStudents && !loadingStudents && (
+                          <button onClick={() => loadStudents(false)} className="w-full py-2 bg-gray-50 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-100">Carregar Mais Alunos</button>
+                      )}
+                  </div>
+              </div>
+          )}
+      </main>
+
+      {/* --- MODALS (Igual ao original, mas edit/delete chamam novas funções) --- */}
+
+      {/* EDIT QUESTION MODAL */}
+      {editingQuestion && (
+          <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200">
+              <div className="max-w-4xl mx-auto p-6 pb-20">
+                  {associatedReport && (
+                      <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between shadow-sm">
+                          <div className="flex items-start gap-3 w-full">
+                              <div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div>
+                              <div className="w-full">
+                                  <h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3>
+                                  <div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+                  <div className="flex items-center justify-between mb-8 sticky top-0 bg-white py-4 border-b border-gray-100 z-10">
+                      <div className="flex items-center gap-3">
+                          <button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
+                          <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
+                      </div>
+                      <div className="flex gap-3">
+                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar</span></button>}
+                          {associatedReport ? (
+                              <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
+                          ) : (
+                              <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
+                          )}
+                          <button onClick={() => setDeleteModal(editingQuestion)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 ml-2" title="Excluir Questão"><Trash2 size={20} /></button>
+                      </div>
+                  </div>
+                  <form className="space-y-8">
+                      <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label><input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                      </div>
+                      <div><label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label><textarea value={editingQuestion.text} onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})} rows={6} className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"/></div>
+                      <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
+                      <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100"><label className="block text-sm font-bold text-amber-800 uppercase tracking-wider mb-3">Comentário / Explicação</label><textarea value={editingQuestion.explanation} onChange={e => setEditingQuestion({...editingQuestion, explanation: e.target.value})} rows={5} className="w-full p-4 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-slate-700"/></div>
+                  </form>
+              </div>
+          </div>
+      )}
+
+      {/* CREATE USER MODAL */}
+      {isCreatingUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+                  <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4">
+                      <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><UserPlus size={24}/></div>
+                      <h2 className="text-xl font-bold text-slate-800">Novo Aluno</h2>
+                  </div>
+                  <form onSubmit={handleCreateUser} className="space-y-4">
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input name="name" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="Ex: Ana Silva" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">E-mail</label><input name="email" type="email" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="email@exemplo.com" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha (Provisória)</label><input name="password" type="text" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="123456" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WhatsApp (Opcional)</label><input name="whatsapp" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="31999999999" /></div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div>
+                      </div>
+                      <div className="flex gap-3 pt-4">
+                          <button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                          <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
+
+      {/* USER STATS MODAL */}
+      {viewingUserStats && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
+                  <button onClick={() => setViewingUserStats(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                  <div className="flex items-center gap-4 mb-6">
+                      <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-2xl">
+                          {viewingUserStats.name ? viewingUserStats.name.charAt(0) : 'U'}
+                      </div>
+                      <div>
+                          <h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2>
+                          <p className="text-sm text-gray-500">{viewingUserStats.email}</p>
+                          <div className="flex gap-2 mt-1">
+                              {checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>}
+                              <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span>
+                          </div>
+                      </div>
+                  </div>
+                  {viewingUserStats.loading ? (
+                      <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-purple-600" size={32} /></div>
+                  ) : (
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-orange-50 p-4 rounded-xl text-center border border-orange-100"><div className="flex justify-center text-orange-600 mb-1"><Zap size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.streak || 0}</div><div className="text-xs uppercase font-bold text-orange-600">Dias em Sequência</div></div>
+                          <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100"><div className="flex justify-center text-blue-600 mb-1"><CheckSquare size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.totalAnswers || 0}</div><div className="text-xs uppercase font-bold text-blue-600">Questões Totais</div></div>
+                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2">
+                              <div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span><span className="text-2xl font-bold text-emerald-600">{viewingUserStats.stats?.totalAnswers > 0 ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) : 0}%</span></div>
+                              <div className="w-full bg-emerald-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div></div>
+                              <p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+
+      {/* DELETE MODAL */}
+      {deleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="bg-red-100 p-3 rounded-full text-red-600 mb-4"><AlertTriangle size={32}/></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">Excluir Definitivamente?</h2>
+                    <p className="text-gray-600 mb-6 text-sm">{deleteModal.email ? `O aluno ${deleteModal.name} será removido.` : 'Essa questão será removida do banco de dados oficial.'}</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                        <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* REJECT REPORT MODAL */}
+      {rejectReportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="bg-orange-100 p-3 rounded-full text-orange-600 mb-4"><ThumbsDown size={32}/></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">Recusar Sugestão?</h2>
+                    <p className="text-gray-600 mb-6 text-sm">Esta ação vai <strong>APAGAR</strong> o reporte do banco de dados.</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                        <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
+    </div>
+  );
+}
