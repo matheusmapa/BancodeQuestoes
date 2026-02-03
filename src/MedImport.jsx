@@ -6,17 +6,22 @@ import {
   LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
-  SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter
+  SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter, ImagePlus, FileSearch
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
+  // ... (outros imports firestore/auth) ...
 } from "firebase/firestore";
 import { 
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
-} from "firebase/auth";
+  getStorage, ref, uploadBytes, getDownloadURL // <--- Import do Storage
+} from "firebase/storage"; 
+
+// ... (logo abaixo de init app)
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const storage = getStorage(app); // <--- Inicializa Storage
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
 const loadPdfJs = async () => {
@@ -232,11 +237,15 @@ export default function App() {
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
   
   // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
-  // ... outros estados
-  const [activeFilters, setActiveFilters] = useState(['all']); 
-  // ADICIONE ESTA LINHA:
-  const [filterLogic, setFilterLogic] = useState('OR'); // 'OR' (Soma) ou 'AND' (Restritivo)
-  
+  // ... (outros estados)
+  const [activeFilters, setActiveFilters] = useState(['all']);
+  const [filterLogic, setFilterLogic] = useState('OR'); 
+
+  // --- NOVOS FILTROS SECUNDÁRIOS ---
+  const [subFilterArea, setSubFilterArea] = useState('all');
+  const [subFilterTopic, setSubFilterTopic] = useState('all');
+  const [subFilterUser, setSubFilterUser] = useState('all');
+  const [isUploadingImage, setIsUploadingImage] = useState(null); // ID da questão sendo enviada
 
   // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
@@ -483,16 +492,16 @@ export default function App() {
             QUESTÃO:
             Enunciado: ${questionData.text}
             Alternativas: ${JSON.stringify(questionData.options)}
-            Gabarito Indicado: ${questionData.correctOptionId}
-            Comentário Gerado: ${questionData.explanation}
             
-            TAREFA:
-            Verifique se a questão é medicamente correta, se o gabarito faz sentido e se não há alucinações graves.
+            TAREFA 1: Validade Médica (isValid)
+            TAREFA 2: Detecção de Imagem Ausente (needsImage)
+            - O enunciado menciona alguma figura, imagem, tabela ou exame visual que NÃO está descrito no texto?
             
             Retorne APENAS um JSON:
             {
-                "isValid": boolean (true se aceitável, false se tiver erro grave/alucinação),
-                "reason": "Explicação curta se for false"
+                "isValid": boolean,
+                "reason": "Explicação curta",
+                "needsImage": boolean
             }
           `;
 
@@ -510,7 +519,8 @@ export default function App() {
       }).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
-              reason: result.reason || (result.isValid ? "Verificado por IA" : "Inconsistência detectada")
+              reason: result.reason || (result.isValid ? "Verificado por IA" : "Inconsistência detectada"),
+              needsImage: result.needsImage || false // <--- Retorna a flag
           };
       });
   };
@@ -546,32 +556,39 @@ export default function App() {
 
   // --- MUDANÇA 3: FILTRO COM LÓGICA 'OR' (SOMA) ---
   const getFilteredQuestions = () => {
-    if (activeFilters.includes('all')) return parsedQuestions;
+    // 1. Filtros Principais (Lógica OR/AND)
+    let filtered = parsedQuestions;
     
-    return parsedQuestions.filter(q => {
-      // Regra Global: Se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde sempre
-      if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
+    if (!activeFilters.includes('all')) {
+        filtered = filtered.filter(q => {
+          // Regra Global: Se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde
+          if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
 
-      // Define as condições baseadas nos filtros ativos
-      // Mapeia cada filtro ativo para um booleano (se a questão atende aquele filtro específico)
-      const results = activeFilters.map(filterKey => {
-          if (filterKey === 'verified') return q.verificationStatus === 'verified';
-          if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
-          if (filterKey === 'source') return !!q.sourceFound;
-          if (filterKey === 'no_source') return !q.sourceFound;
-          if (filterKey === 'duplicates') return !!q.isDuplicate;
-          return true; // Fallback
-      });
+          const results = activeFilters.map(filterKey => {
+              if (filterKey === 'verified') return q.verificationStatus === 'verified';
+              if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
+              if (filterKey === 'source') return !!q.sourceFound;
+              if (filterKey === 'no_source') return !q.sourceFound;
+              if (filterKey === 'duplicates') return !!q.isDuplicate;
+              if (filterKey === 'needs_image') return !!q.needsImage; // <--- NOVO
+              return true;
+          });
 
-      // Aplica a Lógica Selecionada
-      if (filterLogic === 'AND') {
-          // Lógica E: A questão precisa atender TODAS as condições dos filtros ativos
-          return results.every(r => r === true);
-      } else {
-          // Lógica OU (Padrão): A questão precisa atender PELO MENOS UMA condição
+          if (filterLogic === 'AND') return results.every(r => r === true);
           return results.some(r => r === true);
-      }
-    });
+        });
+    } else {
+        // Mesmo em 'all', esconde duplicatas se não solicitado explicitamente (opcional, mas bom pra limpeza)
+        // Se quiser ver tudo mesmo, remova essa linha.
+        filtered = filtered.filter(q => !q.isDuplicate || activeFilters.includes('duplicates')); 
+    }
+
+    // 2. Sub-Filtros (Lógica AND - Restritiva)
+    if (subFilterArea !== 'all') filtered = filtered.filter(q => q.area === subFilterArea);
+    if (subFilterTopic !== 'all') filtered = filtered.filter(q => q.topic === subFilterTopic);
+    if (subFilterUser !== 'all') filtered = filtered.filter(q => q.createdBy === subFilterUser);
+
+    return filtered;
   };
 
   // --- FILTER CONFIG (ATUALIZADA) ---
@@ -826,7 +843,10 @@ export default function App() {
                           newQuestionsForAudit[i] = { 
                               ...newQuestionsForAudit[i], 
                               verificationStatus: verification.status, 
-                              verificationReason: verification.reason 
+                              verificationReason: verification.reason,
+                              // --- AQUI ESTÁ A MÁGICA ---
+                              // Mantém true se já era true, ou vira true se a auditoria disser que sim
+                              needsImage: newQuestionsForAudit[i].needsImage || verification.needsImage 
                           };
                       } catch (err) {
                           newQuestionsForAudit[i] = { ...newQuestionsForAudit[i], verificationStatus: 'unchecked' };
@@ -849,7 +869,7 @@ export default function App() {
                       createdAt: new Date().toISOString(),
                       createdBy: user.email,
                       sourceFile: nextImg.name,
-                      hasImage: true 
+                      hasImage: true // Já tem imagem pois veio do upload
                   });
                   savedCount++;
               }
@@ -1128,43 +1148,38 @@ export default function App() {
           // USANDO ROTAÇÃO DE CHAVES PARA A GERAÇÃO PRINCIPAL
           const questions = await executeWithKeyRotation("Geração", async (key) => {
               const systemPrompt = `
-                Você é um especialista em provas de Residência Médica (MedMaps).
-                Analise o texto extraído de um PDF.
-                
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Extraia questões no formato JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-                SUA MISSÃO:
-                1. Identificar questões (Enunciado + Alternativas).
-                
-                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
-                   - É CRUCIAL que a classificação esteja correta.
-                   - LISTA DE CLASSIFICAÇÃO VÁLIDA:
-                   ${JSON.stringify(activeThemesMap)}
+              REGRAS:
+              1. Retorne APENAS o JSON (sem markdown).
+              2. CLASSIFICAÇÃO (OBRIGATÓRIO):
+                 - Classifique CADA questão usando a lista abaixo.
+                 - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
+              3. GABARITO E COMENTÁRIO: 
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre um campo "explanation".
+              4. DADOS DE CABEÇALHO:
+                 - IGNORE nomes de cursos preparatórios no campo "institution".
+              
+              5. DETECÇÃO DE IMAGEM (NOVO):
+                 - Se o texto citar "figura abaixo", "imagem a seguir", "analise o ECG", "radiografia", etc, defina "needsImage": true.
+                 - Caso contrário, "needsImage": false.
 
-                3. GABARITO E COMENTÁRIO:
-                   - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
-                   - Gere sempre um campo "explanation".
-                
-                4. DADOS DE CABEÇALHO:
-                   - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
-                   - Procure pelo nome do HOSPITAL ou BANCA.
-                   - Se não encontrar, deixe "".
-
-                OBSERVAÇÃO SOBRE CONTEXTO:
-                - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
-                - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
-                - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
-                
-                Retorne JSON ESTRITO:
-                [{ 
-                    "institution": "String", "year": Number|"", "area": "String", "topic": "String", 
-                    "text": "String", "options": [{"id": "a", "text": "..."}], 
-                    "correctOptionId": "char", "explanation": "String" 
-                }]
-              `;
+              Formato Saída:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
 
               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
                 method: 'POST',
@@ -1259,7 +1274,9 @@ export default function App() {
                           newQuestions[i] = { 
                               ...newQuestions[i], 
                               verificationStatus: verification.status, 
-                              verificationReason: verification.reason 
+                              verificationReason: verification.reason,
+                              // --- AQUI ESTÁ A MÁGICA ---
+                              needsImage: newQuestions[i].needsImage || verification.needsImage
                           };
                       } catch (err) {
                           const msg = err.message || "";
@@ -1529,12 +1546,17 @@ export default function App() {
               4. DADOS DE CABEÇALHO:
                  - IGNORE nomes de cursos preparatórios no campo "institution".
               
+              5. DETECÇÃO DE IMAGEM (NOVO):
+                 - Se o texto citar "figura abaixo", "imagem a seguir", "analise o ECG", "radiografia", etc, defina "needsImage": true.
+                 - Caso contrário, "needsImage": false.
+
               Formato Saída:
               [
                 {
                   "institution": "String", "year": Number|String, "area": "String", "topic": "String",
                   "text": "String", "options": [{"id": "a", "text": "String"}],
-                  "correctOptionId": "char", "explanation": "String"
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
                 }
               ]
             `;
@@ -1616,17 +1638,19 @@ export default function App() {
         // Antes: const uniqueQuestions = finalQuestions.filter(q => !q.isDuplicate);
         const uniqueQuestions = finalQuestions; 
 
-        if (isDoubleCheckEnabled && uniqueQuestions.length > 0) {
+       if (isDoubleCheckEnabled && uniqueQuestions.length > 0) {
             showNotification('success', 'Iniciando Auditoria IA nas questões novas...');
             for (let i = 0; i < uniqueQuestions.length; i++) {
-                // OTIMIZAÇÃO: Delay reduzido para 200ms
                 if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
                 try {
                     const verification = await verifyQuestionWithAI(uniqueQuestions[i]);
                     uniqueQuestions[i] = { 
                         ...uniqueQuestions[i], 
                         verificationStatus: verification.status, 
-                        verificationReason: verification.reason 
+                        verificationReason: verification.reason,
+                        // --- AQUI ESTÁ A MÁGICA DO PONTO 4 ---
+                        // Se a geração disse que precisa (true) OU a auditoria disse que precisa (true)
+                        needsImage: uniqueQuestions[i].needsImage || verification.needsImage 
                     };
                 } catch (err) {
                     console.error("Erro auditoria unica:", err);
@@ -1813,28 +1837,77 @@ export default function App() {
       }
   };
 
-  const approveQuestion = async (q) => {
-    // --- ALTERAÇÃO AQUI: PERMITIR APROVAR INDIVIDUALMENTE DUPLICATAS ---
-    /*
-    if (q.isDuplicate) {
-        return showNotification('error', 'Esta questão já existe no banco de dados (Duplicata).');
-    }
-    */
+// --- FUNÇÃO 5: UPLOAD DE IMAGEM NO CARD ---
+  const handleUploadQuestionImage = async (file, questionId) => {
+      if (!file) return;
+      setIsUploadingImage(questionId);
+      try {
+          // Upload para Firebase Storage
+          const storageRef = ref(storage, `question_images/${questionId}/${file.name}`);
+          await uploadBytes(storageRef, file);
+          const downloadURL = await getDownloadURL(storageRef);
 
+          // Atualiza rascunho (Firestore e Local)
+          const batch = writeBatch(db);
+          const docRef = doc(db, "draft_questions", questionId);
+          
+          // Atualiza URL e remove a flag de needsImage (já que agora tem)
+          batch.update(docRef, { 
+              imageUrl: downloadURL,
+              needsImage: false 
+          });
+          await batch.commit();
+
+          // Atualiza estado local para refletir na tela na hora
+          setParsedQuestions(prev => prev.map(q => {
+              if (q.id === questionId) {
+                  return { ...q, imageUrl: downloadURL, needsImage: false };
+              }
+              return q;
+          }));
+
+          showNotification('success', 'Imagem anexada com sucesso!');
+      } catch (error) {
+          console.error(error);
+          showNotification('error', 'Erro no upload: ' + error.message);
+      } finally {
+          setIsUploadingImage(null);
+      }
+  };
+  
+  const approveQuestion = async (q) => {
+    // Validação básica
     if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
-      return showNotification('error', 'Preencha os campos obrigatórios.');
+      return showNotification('error', 'Preencha os campos obrigatórios e tenha pelo menos 2 alternativas.');
     }
+
     try {
-      const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
+      const { id, status, createdAt, createdBy, ...finalData } = q;
       
-      // Garante o ID e Atualiza se existir
-      await setDoc(doc(db, "questions", id), {
-        ...finalData,
-        updatedAt: new Date().toISOString(), // Marca atualização
-        approvedBy: user.email,
-        hasImage: false
-      });
+      // Monta o objeto final garantindo que as flags de metadados vão junto
+      const questionToSave = {
+          ...finalData,
+          // Mantém o status que veio da IA
+          verificationStatus: q.verificationStatus || 'unchecked',
+          verificationReason: q.verificationReason || '',
+          sourceFound: !!q.sourceFound,
+          isDuplicate: !!q.isDuplicate,
+          
+          // --- NOVOS CAMPOS SALVOS NO BANCO FINAL ---
+          needsImage: !!q.needsImage, // Salva se ainda precisa de imagem (útil pra filtrar depois)
+          imageUrl: q.imageUrl || null, // Salva a URL da imagem se tiver
+          
+          updatedAt: new Date().toISOString(),
+          approvedBy: user.email,
+          
+          // Flag simples pro app do aluno saber se renderiza imagem ou não
+          hasImage: !!q.imageUrl 
+      };
+
+      // Salva na coleção oficial "questions"
+      await setDoc(doc(db, "questions", id), questionToSave);
       
+      // Remove do rascunho
       await deleteDoc(doc(db, "draft_questions", id));
       
       if (q.isDuplicate) {
@@ -2319,18 +2392,19 @@ export default function App() {
         )}
 
         {/* REVIEW TAB (ATUALIZADA COM FILTROS MÚLTIPLOS) */}
+        {/* REVIEW TAB (ATUALIZADA) */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-4">
                 {parsedQuestions.length > 0 && (
-                    /* --- BARRA DE FERRAMENTAS (NOVO LAYOUT) --- */
+                    /* --- BARRA DE FERRAMENTAS --- */
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-4 sticky top-20 z-10">
                         
-                        {/* Linha 1: Filtros */}
+                        {/* Linha 1: Filtros Principais */}
                         <div className="flex flex-col gap-2">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros Ativos</span>
                                 
-                                {/* --- NOVO: SWITCH DE LÓGICA --- */}
+                                {/* SWITCH DE LÓGICA */}
                                 <button 
                                     onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
                                     className={`text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
@@ -2339,19 +2413,44 @@ export default function App() {
                                     {filterLogic === 'AND' ? <ToggleRight size={14}/> : <ToggleLeft size={14}/>}
                                     Lógica: {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
                                 </button>
-                                {/* ------------------------------ */}
 
                                 <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
                             </div>
                             
                             <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                {/* ... MANTENHA OS BOTÕES DE FILTRO EXISTENTES AQUI ... */}
                                 <button onClick={() => toggleFilter('all')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>Todas</button>
                                 <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
                                 <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
                                 <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
                                 <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
                                 <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
+                                {/* BOTÃO NEEDS IMAGE */}
+                                <button onClick={() => toggleFilter('needs_image')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('needs_image') ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ImagePlus size={14}/> Falta Imagem</button>
+                            </div>
+                        </div>
+
+                        {/* Linha 1.5: Sub-Filtros (Selects) */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-100">
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Filtrar Área</label>
+                                <select value={subFilterArea} onChange={e=>setSubFilterArea(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
+                                    <option value="all">Todas as Áreas</option>
+                                    {[...new Set(parsedQuestions.map(q=>q.area).filter(Boolean))].sort().map(a=><option key={a} value={a}>{a}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Filtrar Tópico</label>
+                                <select value={subFilterTopic} onChange={e=>setSubFilterTopic(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
+                                    <option value="all">Todos os Tópicos</option>
+                                    {[...new Set(parsedQuestions.map(q=>q.topic).filter(Boolean))].sort().map(t=><option key={t} value={t}>{t}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Enviado Por</label>
+                                <select value={subFilterUser} onChange={e=>setSubFilterUser(e.target.value)} className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none">
+                                    <option value="all">Todos os Usuários</option>
+                                    {[...new Set(parsedQuestions.map(q=>q.createdBy).filter(Boolean))].sort().map(u=><option key={u} value={u}>{u}</option>)}
+                                </select>
                             </div>
                         </div>
 
@@ -2378,7 +2477,7 @@ export default function App() {
                     </div>
                 )}
 
-               {/* --- LISTAGEM DAS QUESTÕES (MODIFICADO) --- */}
+                {/* --- LISTAGEM DAS QUESTÕES --- */}
                 {currentFilteredList.length === 0 ? (
                     <div className="text-center py-20 opacity-50">
                         <Database size={64} className="mx-auto mb-4 text-gray-300" />
@@ -2389,36 +2488,56 @@ export default function App() {
                     currentFilteredList.map((q, idx) => (
                         <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                             
-                            {/* Loading Bar Visual */}
                             <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
                             
-                            {/* --- NOVA BARRA DE CABEÇALHO (SUBSTITUI AS TAGS FLUTUANTES) --- */}
-                            {/* Isso resolve o problema de sobreposição. As tags ficam numa linha dedicada. */}
-                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-end items-center gap-2 flex-wrap min-h-[40px]">
-                                
-                                {/* Tag: Status de Verificação (Com TRUNCATE para não quebrar) */}
-                                <div 
-                                    className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
-                                    title={q.verificationReason || "Status da verificação"}
-                                >
-                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
-                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
-                                    {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
+                            {/* --- HEADER DO CARD ATUALIZADO --- */}
+                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-between items-center gap-2 flex-wrap min-h-[40px]">
+                                {/* Esquerda: Info de Origem (Se precisar de imagem) */}
+                                <div className="flex-1 flex items-center gap-2">
+                                    {q.needsImage && (
+                                        <div className="flex items-center gap-2 text-xs text-orange-700 bg-orange-50 px-2 py-1 rounded border border-orange-100 animate-pulse">
+                                            <FileSearch size={14}/> 
+                                            <span className="font-bold">Requer Imagem:</span>
+                                            {q.sourceFile ? (
+                                                <span className="truncate max-w-[150px]" title={q.sourceFile}>
+                                                    PDF: {q.sourceFile} (Pág {q.sourcePages || '?'})
+                                                </span>
+                                            ) : (
+                                                <span>Origem Texto/Cola</span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-                                
-                                {/* Tag: Fonte Encontrada */}
-                                {q.sourceFound && (
-                                    <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
-                                        <Globe size={12}/> FONTE OK
-                                    </div>
-                                )}
 
-                                {/* Tag: Duplicada */}
-                                {q.isDuplicate && (
-                                    <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
-                                        <Copy size={12}/> DUPLICADA
+                                {/* Direita: Tags de Status */}
+                                <div className="flex items-center gap-2 flex-wrap justify-end">
+                                    {/* Tag Verificação */}
+                                    <div 
+                                        className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                        title={q.verificationReason || "Status da verificação"}
+                                    >
+                                        {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
+                                        {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
+                                        {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
                                     </div>
-                                )}
+                                    
+                                    {/* Tag Needs Image (Badge) */}
+                                    {q.needsImage && <div className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1"><ImagePlus size={12}/> FALTA IMG</div>}
+                                    
+                                    {/* Tag Fonte */}
+                                    {q.sourceFound && (
+                                        <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
+                                            <Globe size={12}/> FONTE OK
+                                        </div>
+                                    )}
+
+                                    {/* Tag Duplicada */}
+                                    {q.isDuplicate && (
+                                        <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
+                                            <Copy size={12}/> DUPLICADA
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="p-6">
@@ -2430,8 +2549,27 @@ export default function App() {
                                     <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(idx,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
                                 </div>
 
-                                {/* QUESTION CONTENT */}
-                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
+                                {/* Enunciado + Área de Upload */}
+                                <div className="mb-6 relative">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 flex justify-between">
+                                        <span>Enunciado</span>
+                                        {/* Botão de Upload Mini */}
+                                        <label className="cursor-pointer text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 font-bold">
+                                            {isUploadingImage === q.id ? <Loader2 size={12} className="animate-spin"/> : <ImagePlus size={14}/>}
+                                            {q.imageUrl ? 'Alterar Imagem' : 'Adicionar Imagem'}
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUploadQuestionImage(e.target.files[0], q.id)} disabled={isUploadingImage === q.id}/>
+                                        </label>
+                                    </label>
+                                    <textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/>
+                                    
+                                    {/* Preview da Imagem se existir */}
+                                    {q.imageUrl && (
+                                        <div className="mt-2 p-2 border border-gray-200 rounded-lg bg-gray-50 inline-block relative group">
+                                            <img src={q.imageUrl} alt="Anexo" className="h-32 w-auto object-contain rounded"/>
+                                            <button onClick={() => updateQuestionField(idx, 'imageUrl', null)} className="absolute top-1 right-1 bg-white rounded-full p-1 shadow text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                                        </div>
+                                    )}
+                                </div>
 
                                 <div className="space-y-2 mb-6">
                                     {q.options?.map((opt, optIdx) => (
@@ -2451,7 +2589,6 @@ export default function App() {
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
                                 <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
                                 
-                                {/* --- BOTÃO DE APROVAÇÃO UNIFICADO (FIX: Desbloqueado para Duplicadas) --- */}
                                 <button 
                                     onClick={()=>approveQuestion(q)} 
                                     className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
