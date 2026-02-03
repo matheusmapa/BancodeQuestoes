@@ -139,9 +139,6 @@ const safeJsonParse = (jsonString) => {
         console.warn("JSON quebrado detectado. Iniciando recuperação iterativa...", e.message);
         
         // 4. Estratégia de Recuperação Iterativa (Backtracking)
-        // Se a string foi cortada no meio (ex: limite de tokens), o JSON é inválido.
-        // Vamos tentar cortar a string no último fechamento de objeto '}' válido e adicionar ']'
-        
         let currentString = clean;
         let attempts = 0;
         const maxAttempts = 50; // Evita loop infinito
@@ -159,7 +156,6 @@ const safeJsonParse = (jsonString) => {
             }
             
             // Tenta fechar o array ali
-            // Ex: [... {"a":1}, {"b": "inc... -> [... {"a":1}]
             const candidate = currentString.substring(0, lastClose + 1) + ']';
             
             try {
@@ -167,8 +163,6 @@ const safeJsonParse = (jsonString) => {
                 console.log(`Recuperação com sucesso na tentativa ${attempts}! ${result.length} itens salvos de um JSON quebrado.`);
                 return result;
             } catch (e2) {
-                // Se falhar, significa que o '}' que achamos estava quebrado ou dentro de uma string
-                // Corta a string logo ANTES desse '}' para tentar o próximo (anterior)
                 currentString = currentString.substring(0, lastClose);
             }
         }
@@ -236,8 +230,10 @@ export default function App() {
   const [isValidatingKey, setIsValidatingKey] = useState(false);
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false); // NOVO: Chavinha de busca
-  const [filterMode, setFilterMode] = useState('all'); // 'all', 'verified', 'source', 'suspicious', 'duplicates'
   
+  // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
+  const [activeFilters, setActiveFilters] = useState(['all']); // Array em vez de string
+
   // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
   const [overrideYear, setOverrideYear] = useState('');
@@ -527,21 +523,53 @@ export default function App() {
       setBatchLogs(prev => [{ type, message, time }, ...prev].slice(0, 50));
   };
 
-  // --- FILTER HELPERS ---
+  // --- MUDANÇA 2: FUNÇÃO DE TOGGLE DO FILTRO ---
+  const toggleFilter = (filterKey) => {
+      setActiveFilters(prev => {
+          if (filterKey === 'all') return ['all'];
+          let newFilters = prev.filter(f => f !== 'all');
+          
+          if (newFilters.includes(filterKey)) {
+              newFilters = newFilters.filter(f => f !== filterKey);
+          } else {
+              newFilters.push(filterKey);
+          }
+          
+          if (newFilters.length === 0) return ['all'];
+          return newFilters;
+      });
+  };
+
+  // --- MUDANÇA 3: FILTRO COM LÓGICA 'OR' (SOMA) ---
   const getFilteredQuestions = () => {
-    switch (filterMode) {
-      case 'verified':
-        return parsedQuestions.filter(q => q.verificationStatus === 'verified' && !q.isDuplicate);
-      case 'source':
-        return parsedQuestions.filter(q => q.sourceFound && !q.isDuplicate);
-      case 'suspicious':
-        return parsedQuestions.filter(q => q.verificationStatus === 'suspicious');
-      case 'duplicates':
-        return parsedQuestions.filter(q => q.isDuplicate);
-      case 'all':
-      default:
-        return parsedQuestions; // Retorna todas (inclusive duplicatas se o usuario quiser ver)
-    }
+    if (activeFilters.includes('all')) return parsedQuestions;
+    
+    return parsedQuestions.filter(q => {
+      // Verifica condições ativas
+      const matchesVerified = activeFilters.includes('verified') && q.verificationStatus === 'verified';
+      const matchesSuspicious = activeFilters.includes('suspicious') && q.verificationStatus === 'suspicious';
+      const matchesSource = activeFilters.includes('source') && q.sourceFound;
+      const matchesNoSource = activeFilters.includes('no_source') && !q.sourceFound; // NOVA
+      const matchesDuplicates = activeFilters.includes('duplicates') && q.isDuplicate;
+
+      // Se bater em QUALQUER um, passa (Lógica OR)
+      const isMatch = matchesVerified || matchesSuspicious || matchesSource || matchesNoSource || matchesDuplicates;
+      
+      // Mas se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde
+      if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
+
+      return isMatch;
+    });
+  };
+
+  // --- FILTER CONFIG (ATUALIZADA) ---
+  const filterLabels = {
+      'all': 'Todas',
+      'verified': 'Verificadas',
+      'source': 'Com Fonte',
+      'no_source': 'Sem Fonte', // NOVO LABEL
+      'suspicious': 'Suspeitas',
+      'duplicates': 'Duplicadas'
   };
 
   // --- LOGIC: BATCH IMAGE PROCESSING ---
@@ -1658,21 +1686,24 @@ export default function App() {
       
       // Verifica se tem alguma duplicata na lista filtrada
       const hasDuplicates = targetQuestions.some(q => q.isDuplicate);
-      if (hasDuplicates && filterMode !== 'duplicates') {
+      if (hasDuplicates && !activeFilters.includes('duplicates')) {
           showNotification('warning', 'Algumas duplicatas serão ignoradas automaticamente.');
       }
 
       const count = targetQuestions.filter(q => !q.isDuplicate).length;
-      if (count === 0 && filterMode !== 'duplicates') {
+      if (count === 0 && !activeFilters.includes('duplicates')) {
            return showNotification('error', 'Nenhuma questão válida para aprovar (todas são duplicatas).');
       }
+
+      // --- MUDANÇA 4: LABEL DINÂMICO PARA O MODAL ---
+      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
 
       setConfirmationModal({
           isOpen: true,
           type: 'approve_filtered',
           data: null,
           title: `Aprovar ${count} Questões?`,
-          message: `Você está prestes a publicar ${count} questões do filtro "${filterLabels[filterMode]}".`,
+          message: `Você está prestes a publicar ${count} questões dos filtros: ${activeLabels}.`,
           confirmText: 'Sim, Publicar',
           confirmColor: 'emerald'
       });
@@ -1682,12 +1713,15 @@ export default function App() {
       const targetQuestions = getFilteredQuestions();
       if (targetQuestions.length === 0) return;
 
+      // --- MUDANÇA 5: LABEL DINÂMICO PARA O MODAL ---
+      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
+
       setConfirmationModal({
           isOpen: true,
           type: 'delete_filtered',
           data: null,
           title: `Excluir ${targetQuestions.length} Questões?`,
-          message: `Isso excluirá permanentemente as ${targetQuestions.length} questões do filtro "${filterLabels[filterMode]}".`,
+          message: `Isso excluirá permanentemente as questões dos filtros: ${activeLabels}.`,
           confirmText: 'Sim, Excluir',
           confirmColor: 'red'
       });
@@ -1795,15 +1829,6 @@ export default function App() {
       setParsedQuestions(newQ);
   };
 
-  // --- FILTERS CONFIG ---
-  const filterLabels = {
-      'all': 'Todas',
-      'verified': 'Verificadas (IA)',
-      'source': 'Com Fonte (Web)',
-      'suspicious': 'Suspeitas',
-      'duplicates': 'Duplicadas'
-  };
-
   const currentFilteredList = getFilteredQuestions();
 
   // --- RENDER LOGIN ---
@@ -1891,7 +1916,7 @@ export default function App() {
       {/* NOTIFICATION */}
       <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed top-24 right-4" />
 
-      {/* API KEY MODAL (Omitted for brevity) */}
+      {/* API KEY MODAL */}
       {showApiKeyModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-y-auto">
@@ -1930,7 +1955,7 @@ export default function App() {
           </div>
       )}
 
-      {/* CONFIRMATION MODAL (Omitted for brevity) */}
+      {/* CONFIRMATION MODAL */}
       {confirmationModal.isOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative animate-in zoom-in-95 duration-200">
@@ -1960,7 +1985,7 @@ export default function App() {
             </div>
         </div>
 
-        {/* OVERRIDES SECTION (PRÉ-DEFINIÇÕES) */}
+        {/* OVERRIDES SECTION */}
         {(activeTab === 'input' || activeTab === 'pdf' || activeTab === 'batch_images') && (
             <div className="max-w-4xl mx-auto mb-6 animate-in slide-in-from-top-4">
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -2024,7 +2049,7 @@ export default function App() {
             </div>
         )}
 
-        {/* BATCH IMAGES TAB (UNIFICADA) */}
+        {/* BATCH IMAGES TAB */}
         {activeTab === 'batch_images' && (
             <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4">
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
@@ -2048,7 +2073,6 @@ export default function App() {
                         </div>
                     </div>
 
-                    {/* DROPZONE MULTIPLE + PASTE SUPPORT */}
                     <div 
                         onPaste={handleBatchPaste}
                         className="w-full h-32 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -2093,14 +2117,12 @@ export default function App() {
                             )}
                         </div>
 
-                        {/* CONSOLE / LOGS (SEPARADO E CORRIGIDO) */}
+                        {/* CONSOLE / LOGS */}
                         <div className="w-full lg:w-1/3 flex flex-col h-[500px]">
                             <div className="bg-slate-900 rounded-xl overflow-hidden shadow-inner flex flex-col h-full">
-                                {/* Header no TOPO */}
                                 <div className="p-3 bg-slate-800 border-b border-slate-700 text-gray-400 text-xs font-bold flex items-center gap-2">
                                     <Terminal size={14}/> Console de Imagens
                                 </div>
-                                {/* Logs rolando abaixo */}
                                 <div className="flex-1 p-4 overflow-y-auto font-mono text-xs text-gray-300 space-y-1">
                                     {batchLogs.length === 0 && <span className="opacity-50">Aguardando logs de imagem...</span>}
                                     {batchLogs.map((log, i) => (
@@ -2222,7 +2244,7 @@ export default function App() {
                                 </div>
                             </div>
 
-                            {/* GRID DE CHUNKS - INTERATIVO SE PAUSADO */}
+                            {/* GRID DE CHUNKS */}
                             <div className="border border-gray-200 rounded-xl p-4 max-h-60 overflow-y-auto">
                                 <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
                                     <span>Timeline (Navegação)</span>
@@ -2250,7 +2272,7 @@ export default function App() {
                                 </div>
                             </div>
 
-                            {/* TERMINAL DE LOGS DO PDF (AGORA SEPARADO) */}
+                            {/* TERMINAL DE LOGS DO PDF */}
                             <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-gray-300 h-48 overflow-y-auto shadow-inner flex flex-col-reverse">
                                 {processingLogs.length === 0 && <span className="opacity-50">Aguardando logs...</span>}
                                 {processingLogs.map((log, i) => (
@@ -2267,7 +2289,7 @@ export default function App() {
             </div>
         )}
 
-        {/* REVIEW TAB */}
+        {/* REVIEW TAB (ATUALIZADA COM FILTROS MÚLTIPLOS) */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
                 {parsedQuestions.length > 0 && (
@@ -2276,26 +2298,59 @@ export default function App() {
                          {/* HEADER AND FILTER TOOLBAR */}
                          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-2 flex flex-col sm:flex-row justify-between items-center gap-4">
                             
-                            {/* FILTER PILLS */}
+                            {/* --- MUDANÇA 6: BOTÕES COM LÓGICA DE ARRAY (MULTI-SELECT) --- */}
                             <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto p-1">
-                                <button onClick={() => setFilterMode('all')} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${filterMode === 'all' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                <button 
+                                    onClick={() => toggleFilter('all')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border 
+                                    ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
                                     Todas ({parsedQuestions.length})
                                 </button>
-                                <button onClick={() => setFilterMode('verified')} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 ${filterMode === 'verified' ? 'bg-emerald-100 text-emerald-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                
+                                <button 
+                                    onClick={() => toggleFilter('verified')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
+                                    ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
                                     <ShieldCheck size={14}/> Verificadas
                                 </button>
-                                <button onClick={() => setFilterMode('source')} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 ${filterMode === 'source' ? 'bg-teal-100 text-teal-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                
+                                <button 
+                                    onClick={() => toggleFilter('source')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
+                                    ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
                                     <Globe size={14}/> Com Fonte
                                 </button>
-                                <button onClick={() => setFilterMode('suspicious')} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 ${filterMode === 'suspicious' ? 'bg-red-100 text-red-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+
+                                {/* NOVO BOTÃO: SEM FONTE */}
+                                <button 
+                                    onClick={() => toggleFilter('no_source')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
+                                    ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
+                                    <AlertOctagon size={14}/> Sem Fonte
+                                </button>
+                                
+                                <button 
+                                    onClick={() => toggleFilter('suspicious')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
+                                    ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
                                     <AlertTriangle size={14}/> Suspeitas
                                 </button>
-                                <button onClick={() => setFilterMode('duplicates')} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 ${filterMode === 'duplicates' ? 'bg-amber-100 text-amber-700' : 'text-gray-500 hover:bg-gray-100'}`}>
+                                
+                                <button 
+                                    onClick={() => toggleFilter('duplicates')} 
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1 border
+                                    ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-500 border-transparent hover:bg-gray-50'}`}
+                                >
                                     <Copy size={14}/> Duplicadas
                                 </button>
                             </div>
 
-                            {/* ACTION BUTTONS (CONTEXTUAL TO FILTER) */}
+                            {/* ACTION BUTTONS */}
                             <div className="flex items-center gap-2 w-full sm:w-auto">
                                 <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-2 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap">
                                     <Trash2 size={14} /> Descartar {currentFilteredList.length}
@@ -2307,7 +2362,7 @@ export default function App() {
                             </div>
                          </div>
 
-                         {/* SUB-TOOLBAR FOR BULK EDITING (APPLIES TO FILTERED) */}
+                         {/* SUB-TOOLBAR FOR BULK EDITING */}
                          <div className="flex items-center gap-2 px-1">
                             <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><ListFilter size={12}/> Ações em {currentFilteredList.length} itens:</span>
                             <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm">
