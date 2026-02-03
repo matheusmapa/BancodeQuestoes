@@ -232,10 +232,13 @@ export default function App() {
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
   
   // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
-  // ... outros estados
-  const [activeFilters, setActiveFilters] = useState(['all']); 
-  // ADICIONE ESTA LINHA:
-  const [filterLogic, setFilterLogic] = useState('OR'); // 'OR' (Soma) ou 'AND' (Restritivo)
+  const [activeFilters, setActiveFilters] = useState(['all']);
+  const [filterLogic, setFilterLogic] = useState('AND'); 
+
+  // --- NOVOS FILTROS SECUNDÁRIOS (Área, Tópico, Usuário) ---
+  const [subFilterArea, setSubFilterArea] = useState('all');
+  const [subFilterTopic, setSubFilterTopic] = useState('all');
+  const [subFilterUser, setSubFilterUser] = useState('all');
   
 
   // Override States (Pré-definições)
@@ -545,33 +548,40 @@ export default function App() {
   };
 
   // --- MUDANÇA 3: FILTRO COM LÓGICA 'OR' (SOMA) ---
-  const getFilteredQuestions = () => {
-    if (activeFilters.includes('all')) return parsedQuestions;
+ const getFilteredQuestions = () => {
+    // 1. Filtros Principais (Botões Coloridos)
+    let filtered = parsedQuestions;
     
-    return parsedQuestions.filter(q => {
-      // Regra Global: Se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde sempre
-      if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
+    if (!activeFilters.includes('all')) {
+        filtered = filtered.filter(q => {
+          // Regra Global: Se for duplicata e o filtro de duplicata NÃO estiver ativo, esconde
+          if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
 
-      // Define as condições baseadas nos filtros ativos
-      // Mapeia cada filtro ativo para um booleano (se a questão atende aquele filtro específico)
-      const results = activeFilters.map(filterKey => {
-          if (filterKey === 'verified') return q.verificationStatus === 'verified';
-          if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
-          if (filterKey === 'source') return !!q.sourceFound;
-          if (filterKey === 'no_source') return !q.sourceFound;
-          if (filterKey === 'duplicates') return !!q.isDuplicate;
-          return true; // Fallback
-      });
+          const results = activeFilters.map(filterKey => {
+              if (filterKey === 'verified') return q.verificationStatus === 'verified';
+              if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
+              if (filterKey === 'source') return !!q.sourceFound;
+              if (filterKey === 'no_source') return !q.sourceFound;
+              if (filterKey === 'duplicates') return !!q.isDuplicate;
+              // Se tiver implementado needs_image no futuro, entraria aqui
+              return true;
+          });
 
-      // Aplica a Lógica Selecionada
-      if (filterLogic === 'AND') {
-          // Lógica E: A questão precisa atender TODAS as condições dos filtros ativos
-          return results.every(r => r === true);
-      } else {
-          // Lógica OU (Padrão): A questão precisa atender PELO MENOS UMA condição
+          if (filterLogic === 'AND') return results.every(r => r === true);
           return results.some(r => r === true);
-      }
-    });
+        });
+    } else {
+        // Mesmo em 'all', esconde duplicatas se não solicitado explicitamente
+        filtered = filtered.filter(q => !q.isDuplicate || activeFilters.includes('duplicates')); 
+    }
+
+    // 2. Sub-Filtros (AQUI ESTÁ A NOVIDADE)
+    // Esses filtros são "Restritivos" (AND), ou seja, afunilam a busca
+    if (subFilterArea !== 'all') filtered = filtered.filter(q => q.area === subFilterArea);
+    if (subFilterTopic !== 'all') filtered = filtered.filter(q => q.topic === subFilterTopic);
+    if (subFilterUser !== 'all') filtered = filtered.filter(q => q.createdBy === subFilterUser);
+
+    return filtered;
   };
 
   // --- FILTER CONFIG (ATUALIZADA) ---
@@ -2318,19 +2328,19 @@ export default function App() {
             </div>
         )}
 
-        {/* REVIEW TAB (ATUALIZADA COM FILTROS MÚLTIPLOS) */}
+        {/* REVIEW TAB (ATUALIZADA COM SUB-FILTROS) */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-4">
                 {parsedQuestions.length > 0 && (
                     /* --- BARRA DE FERRAMENTAS (NOVO LAYOUT) --- */
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-4 sticky top-20 z-10">
                         
-                        {/* Linha 1: Filtros */}
+                        {/* Linha 1: Filtros Principais (Botões) */}
                         <div className="flex flex-col gap-2">
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1"><Filter size={12}/> Filtros Ativos</span>
                                 
-                                {/* --- NOVO: SWITCH DE LÓGICA --- */}
+                                {/* SWITCH DE LÓGICA (AND/OR) */}
                                 <button 
                                     onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
                                     className={`text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}
@@ -2339,25 +2349,73 @@ export default function App() {
                                     {filterLogic === 'AND' ? <ToggleRight size={14}/> : <ToggleLeft size={14}/>}
                                     Lógica: {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
                                 </button>
-                                {/* ------------------------------ */}
 
                                 <span className="text-xs text-gray-400">{currentFilteredList.length} questões</span>
                             </div>
                             
                             <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                {/* ... MANTENHA OS BOTÕES DE FILTRO EXISTENTES AQUI ... */}
                                 <button onClick={() => toggleFilter('all')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all border ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>Todas</button>
                                 <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ShieldCheck size={14}/> Verificadas</button>
                                 <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Globe size={14}/> Com Fonte</button>
                                 <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
                                 <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
                                 <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
+                                <button onClick={() => toggleFilter('needs_image')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('needs_image') ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ImagePlus size={14}/> Falta Imagem</button>
                             </div>
                         </div>
 
+                        {/* --- AQUI ENTRA O NOVO BLOCO (Sub-Filtros) --- */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-100 mt-2">
+                            {/* Filtro de Área */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-1">Filtrar Área</label>
+                                <select 
+                                    value={subFilterArea} 
+                                    onChange={e => setSubFilterArea(e.target.value)} 
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none focus:border-blue-300 transition-colors"
+                                >
+                                    <option value="all">Todas as Áreas</option>
+                                    {[...new Set(parsedQuestions.map(q => q.area).filter(Boolean))].sort().map(a => (
+                                        <option key={a} value={a}>{a}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            
+                            {/* Filtro de Tópico */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-1">Filtrar Tópico</label>
+                                <select 
+                                    value={subFilterTopic} 
+                                    onChange={e => setSubFilterTopic(e.target.value)} 
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none focus:border-blue-300 transition-colors"
+                                >
+                                    <option value="all">Todos os Tópicos</option>
+                                    {[...new Set(parsedQuestions.map(q => q.topic).filter(Boolean))].sort().map(t => (
+                                        <option key={t} value={t}>{t}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            
+                            {/* Filtro de Usuário */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1 block mb-1">Enviado Por</label>
+                                <select 
+                                    value={subFilterUser} 
+                                    onChange={e => setSubFilterUser(e.target.value)} 
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-md bg-white outline-none focus:border-blue-300 transition-colors"
+                                >
+                                    <option value="all">Todos os Usuários</option>
+                                    {[...new Set(parsedQuestions.map(q => q.createdBy).filter(Boolean))].sort().map(u => (
+                                        <option key={u} value={u}>{u}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        {/* ------------------------------------------- */}
+
                         <div className="h-px bg-gray-100 w-full"></div>
 
-                        {/* Linha 2: Ações */}
+                        {/* Linha 2: Ações (Limpar, Descartar, Aprovar) */}
                         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
                             <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
                                 <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap"><Eraser size={14}/> Limpar Inst.</button>
