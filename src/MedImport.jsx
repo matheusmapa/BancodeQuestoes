@@ -744,7 +744,11 @@ export default function App() {
               if (data.error) throw new Error(data.error.message);
 
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              return safeJsonParse(jsonString); // Usa o parser seguro
+              
+              // --- ALTERAÇÃO AQUI: TRAVA ANTI-DISCURSIVA ---
+              const parsed = safeJsonParse(jsonString);
+              // Só aceita se tiver options E se tiver 2 ou mais alternativas
+              return parsed.filter(q => q.options && q.options.length >= 2);
           });
 
           // 3. Pós-Processamento e Pesquisa Web (NOVO)
@@ -1174,7 +1178,10 @@ export default function App() {
               if (data.error) throw new Error(data.error.message);
 
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              return safeJsonParse(jsonString); // Usa o parser blindado
+              
+              // --- ALTERAÇÃO AQUI: TRAVA ANTI-DISCURSIVA ---
+              const parsed = safeJsonParse(jsonString);
+              return parsed.filter(q => q.options && q.options.length >= 2);
           });
 
           // --- PÓS-PROCESSAMENTO (PESQUISA + LIMPEZA + AUDITORIA) ---
@@ -1541,12 +1548,20 @@ export default function App() {
                 body: JSON.stringify({ contents: contentsPayload })
             });
 
+            // ... dentro de processWithAI ...
+            
             const data = await response.json();
             if (data.error) throw new Error(data.error.message);
 
             let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            return safeJsonParse(jsonString); // Uses safe parser
+            
+            // --- ALTERAÇÃO AQUI: TRAVA ANTI-DISCURSIVA ---
+            const parsed = safeJsonParse(jsonString);
+            return parsed.filter(q => q.options && q.options.length >= 2);
         });
+
+        // Pós-processamento e Auditoria
+        // ... continua o código igual ...
 
         // Pós-processamento e Auditoria
         let finalQuestions = await Promise.all(questions.map(async (q) => {
