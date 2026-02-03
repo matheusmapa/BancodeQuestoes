@@ -229,7 +229,7 @@ export default function App() {
   const [notification, setNotification] = useState(null);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
-  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false); // NOVO: Chavinha de busca
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
   
   // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
   const [activeFilters, setActiveFilters] = useState(['all']); // Array em vez de string
