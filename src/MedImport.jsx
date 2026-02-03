@@ -2363,7 +2363,7 @@ export default function App() {
                     </div>
                 )}
 
-                {/* --- LISTAGEM DAS QUESTÕES --- */}
+               {/* --- LISTAGEM DAS QUESTÕES (MODIFICADO) --- */}
                 {currentFilteredList.length === 0 ? (
                     <div className="text-center py-20 opacity-50">
                         <Database size={64} className="mx-auto mb-4 text-gray-300" />
@@ -2374,21 +2374,39 @@ export default function App() {
                     currentFilteredList.map((q, idx) => (
                         <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                             
-                            {/* STATUS BADGES */}
-                            <div className="absolute top-0 right-0 z-10 flex flex-col items-end gap-1">
-                                <div className={`p-2 rounded-bl-xl shadow-sm text-xs font-bold flex items-center gap-1 ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
-                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={14}/> Double-Checked</>}
-                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={14}/> Suspeita: {q.verificationReason}</>}
+                            {/* Loading Bar Visual */}
+                            <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
+                            
+                            {/* --- NOVA BARRA DE CABEÇALHO (SUBSTITUI AS TAGS FLUTUANTES) --- */}
+                            {/* Isso resolve o problema de sobreposição. As tags ficam numa linha dedicada. */}
+                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-end items-center gap-2 flex-wrap min-h-[40px]">
+                                
+                                {/* Tag: Status de Verificação (Com TRUNCATE para não quebrar) */}
+                                <div 
+                                    className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                    title={q.verificationReason || "Status da verificação"}
+                                >
+                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
+                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
                                     {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
                                 </div>
                                 
-                                {q.sourceFound && <div className="bg-teal-100 text-teal-800 p-2 rounded-l-lg shadow-sm text-xs font-bold flex items-center gap-1"><Globe size={14}/> FONTE ENCONTRADA</div>}
-                                {q.isDuplicate && <div className="bg-amber-100 text-amber-800 p-2 rounded-l-lg shadow-sm text-xs font-bold flex items-center gap-1 animate-pulse"><Copy size={14}/> JÁ CADASTRADA</div>}
+                                {/* Tag: Fonte Encontrada */}
+                                {q.sourceFound && (
+                                    <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
+                                        <Globe size={12}/> FONTE OK
+                                    </div>
+                                )}
+
+                                {/* Tag: Duplicada */}
+                                {q.isDuplicate && (
+                                    <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
+                                        <Copy size={12}/> DUPLICADA
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
-                            
-                            <div className="p-6 pt-10">
+                            <div className="p-6">
                                 {/* METADATA FIELDS */}
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                                     <div><label className="text-xs font-bold text-gray-500 uppercase">Inst</label><input value={q.institution} onChange={e=>updateQuestionField(idx,'institution',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
@@ -2418,13 +2436,14 @@ export default function App() {
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
                                 <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
                                 
-                                {q.isDuplicate ? (
-                                    <button disabled className="bg-amber-200 text-amber-700 font-bold text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 cursor-not-allowed opacity-70">
-                                        <Copy size={18}/> Questão Duplicada
-                                    </button>
-                                ) : (
-                                    <button onClick={()=>approveQuestion(q)} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2"><CheckCircle size={18}/> Aprovar e Publicar</button>
-                                )}
+                                {/* --- BOTÃO DE APROVAÇÃO UNIFICADO (FIX: Desbloqueado para Duplicadas) --- */}
+                                <button 
+                                    onClick={()=>approveQuestion(q)} 
+                                    className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                >
+                                    {q.isDuplicate ? <Copy size={18}/> : <CheckCircle size={18}/>} 
+                                    {q.isDuplicate ? 'Atualizar Duplicata' : 'Aprovar e Publicar'}
+                                </button>
                             </div>
                         </div>
                     ))
