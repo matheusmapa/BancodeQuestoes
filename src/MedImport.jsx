@@ -479,49 +479,39 @@ export default function App() {
         : questionText;
 
       return executeWithKeyRotation("Pesquisa Web", async (key) => {
-          const systemPrompt = const systemPrompt = `
-              Você é um especialista em banco de dados médicos (MedMaps).
-              Analise o conteúdo e gere um JSON ESTRITO.
-              
-              CONTEXTO (Informacional):
-              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+          const systemPrompt = `Você é um verificador de questões de residência médica.
 
-              REGRAS CRÍTICAS DE EXTRAÇÃO:
-              1. LIMPEZA DE INÍCIO:
-                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
-                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
-                 - Exemplo: Se o texto for "15) 3 pacientes chegaram...", salve apenas "3 pacientes chegaram...".
-                 - Comece o texto direto no conteúdo do caso clínico.
+          Sua missão: Identificar a origem da questão usando a Pesquisa Google.
 
-              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
-                 - O campo "text" DEVE TERMINAR antes das alternativas.
-                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
-                 - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
-                 - As alternativas DEVEM ser extraídas separadamente no array "options".
+          CRITÉRIOS DE ESCOLHA:
 
-              3. DETECÇÃO DE IMAGEM:
-                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
-                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
-                 - Se precisar, marque "needsImage": true.
+          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal sobre simulados).
 
-              4. CLASSIFICAÇÃO:
-                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
+          REGRAS DE FORMATAÇÃO DE NOME (CRÍTICO):
 
-              5. GABARITO:
-                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
-                 - Gere sempre "explanation".
+          - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
 
-              Formato Saída JSON:
-              [
-                {
-                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
-                  "text": "String", "options": [{"id": "a", "text": "String"}],
-                  "correctOptionId": "char", "explanation": "String",
-                  "needsImage": boolean
-                }
-              ]
-            `;
+          - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
+
+          - Exemplo Bom: "BA - SUS Bahia"
+
+          - Exemplo Bom: "SP - USP São Paulo"
+
+          - Exemplo Bom: "Nacional - ENARE"
+
+
+
+          SAÍDA OBRIGATÓRIA (JSON):
+
+          {
+
+            "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
+
+            "year": "Ano (apenas números, ou vazio se não achar)"
+
+          }
+
+          `;
 
           // 2. Força o modelo FLASH (Free Tier Friendly)
           const response = await fetch(
@@ -853,32 +843,48 @@ export default function App() {
           // 2. Chamar IA (Geração)
           const questions = await executeWithKeyRotation("Imagem Batch", async (key) => {
               const systemPrompt = `
-                Você é um especialista em banco de dados médicos (MedMaps).
-                Analise esta imagem (print de questão médica).
-                Extraia questões no formato JSON ESTRITO.
-                
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar da imagem)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar da imagem)"}
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-                REGRAS:
-                1. Retorne APENAS o JSON (sem markdown).
-                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão usando a lista abaixo.
-                   - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
-                3. GABARITO E COMENTÁRIO: 
-                   - Tente encontrar o gabarito visual na imagem. Se não houver, RESOLVA a questão.
-                   - Gere sempre um campo "explanation".
-                
-                Formato Saída:
-                [
-                  {
-                    "institution": "String", "year": Number|String, "area": "String", "topic": "String",
-                    "text": "String", "options": [{"id": "a", "text": "String"}],
-                    "correctOptionId": "char", "explanation": "String"
-                  }
-                ]
-              `;
+              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - Exemplo: Se o texto for "15) 3 pacientes chegaram...", salve apenas "3 pacientes chegaram...".
+                 - Comece o texto direto no conteúdo do caso clínico.
+
+              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
+
+              3. DETECÇÃO DE IMAGEM:
+                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
+                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
+                 - Se precisar, marque "needsImage": true.
+
+              4. CLASSIFICAÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
+
+              5. GABARITO:
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre "explanation".
+
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
 
               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
                   method: 'POST',
@@ -1299,50 +1305,49 @@ export default function App() {
           // USANDO ROTAÇÃO DE CHAVES PARA A GERAÇÃO PRINCIPAL
           const questions = await executeWithKeyRotation("Geração", async (key) => {
               const systemPrompt = `
-                Você é um especialista em provas de Residência Médica (MedMaps).
-                Analise o texto extraído de um PDF.
-                
-                CONTEXTO (Informacional):
-                - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
-                - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-                SUA MISSÃO:
-                1. Identificar questões (Enunciado + Alternativas).
-                
-                2. DETECÇÃO DE IMAGEM (NOVO):
-                   - Analise se o enunciado cita ou DEPENDE de uma imagem, gráfico, ECG, Radiografia ou Tabela que não está no texto.
-                   - Termos comuns: "Vide figura", "A imagem mostra", "Observe o ECG", "Raio-X anexo".
-                   - Se precisar de imagem, marque "needsImage": true. Caso contrário, false.
+              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - Exemplo: Se o texto for "15) 3 pacientes chegaram...", salve apenas "3 pacientes chegaram...".
+                 - Comece o texto direto no conteúdo do caso clínico.
 
-                3. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                   - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
-                   - É CRUCIAL que a classificação esteja correta.
-                   - LISTA DE CLASSIFICAÇÃO VÁLIDA:
-                   ${JSON.stringify(activeThemesMap)}
+              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
 
-                4. GABARITO E COMENTÁRIO:
-                   - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
-                   - Gere sempre um campo "explanation".
-                
-                5. DADOS DE CABEÇALHO:
-                   - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
-                   - Procure pelo nome do HOSPITAL ou BANCA.
-                   - Se não encontrar, deixe "".
+              3. DETECÇÃO DE IMAGEM:
+                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
+                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
+                 - Se precisar, marque "needsImage": true.
 
-                OBSERVAÇÃO SOBRE CONTEXTO:
-                - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
-                - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
-                - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
-                
-                Retorne JSON ESTRITO:
-                [{ 
-                    "institution": "String", "year": Number|"", "area": "String", "topic": "String", 
-                    "text": "String", "options": [{"id": "a", "text": "..."}], 
-                    "correctOptionId": "char", "explanation": "String",
-                    "needsImage": boolean
-                }]
-              `;
+              4. CLASSIFICAÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
 
+              5. GABARITO:
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre "explanation".
+
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
+            
               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1694,32 +1699,38 @@ export default function App() {
         const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
             const systemPrompt = `
               Você é um especialista em banco de dados médicos (MedMaps).
-              Extraia questões no formato JSON ESTRITO.
+              Analise o conteúdo e gere um JSON ESTRITO.
               
               CONTEXTO (Informacional):
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-              REGRAS:
-              1. Identificar questões (Enunciado + Alternativas).
+              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - Exemplo: Se o texto for "15) 3 pacientes chegaram...", salve apenas "3 pacientes chegaram...".
+                 - Comece o texto direto no conteúdo do caso clínico.
 
-              2. DETECÇÃO DE IMAGEM (NOVO):
-                 - Analise se o enunciado cita ou DEPENDE de uma imagem, gráfico, ECG, Radiografia ou Tabela que não está no texto.
-                 - Termos comuns: "Vide figura", "A imagem mostra", "Observe o ECG", "Raio-X anexo".
-                 - Se precisar de imagem, marque "needsImage": true. Caso contrário, false.
+              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
 
-              3. CLASSIFICAÇÃO (OBRIGATÓRIO):
-                 - Classifique CADA questão usando a lista abaixo.
-                 - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
+              3. DETECÇÃO DE IMAGEM:
+                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
+                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
+                 - Se precisar, marque "needsImage": true.
 
-              4. GABARITO E COMENTÁRIO: 
+              4. CLASSIFICAÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
+
+              5. GABARITO:
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
-                 - Gere sempre um campo "explanation".
+                 - Gere sempre "explanation".
 
-              5. DADOS DE CABEÇALHO:
-                 - IGNORE nomes de cursos preparatórios no campo "institution".
-              
-              Formato Saída:
+              Formato Saída JSON:
               [
                 {
                   "institution": "String", "year": Number|String, "area": "String", "topic": "String",
