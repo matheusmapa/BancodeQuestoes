@@ -24,7 +24,7 @@ import {
 
 // 3. Arquivos (Storage) - Onde ficam uploadBytes, getDownloadURL
 import { 
-  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject , arrayUnion, arrayRemove
 } from "firebase/storage";
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
@@ -638,7 +638,7 @@ export default function App() {
       'needs_image': 'Requer Imagem' // NOVO LABEL
   };
 
-  // --- UPLOAD MANUAL DE IMAGEM PARA QUESTÃO INDIVIDUAL ---
+  // --- UPLOAD MULTI-IMAGEM (COM PERMANÊNCIA NO FILTRO) ---
   const handleImageUploadToQuestion = async (e, idx, questionData) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -646,65 +646,66 @@ export default function App() {
       setUploadingImageId(questionData.id);
 
       try {
-          // 1. Otimizar Imagem
+          // 1. Otimiza
           const optimizedFile = await optimizeImageForWeb(file);
           
-          // 2. Definir caminho no Storage
-          const storageRef = ref(storage, `questions_images/${questionData.id}.webp`);
+          // 2. Nome Único
+          const timestamp = Date.now();
+          const fileName = `${questionData.id}_${timestamp}.webp`;
+          const storageRef = ref(storage, `questions_images/${fileName}`);
           
           // 3. Upload
           const snapshot = await uploadBytes(storageRef, optimizedFile);
-          
-          // 4. Obter URL
           const downloadURL = await getDownloadURL(snapshot.ref);
 
-          // 5. Atualizar Firestore
+          // 4. Atualiza Firestore (Adiciona ao array 'images')
           await updateDoc(doc(db, "draft_questions", questionData.id), {
-              imageUrl: downloadURL,
-              hasImage: true,
-              needsImage: false
+              images: arrayUnion(downloadURL), 
+              hasImage: true
+              // REMOVIDO: needsImage: false (Assim ela não sai do filtro)
           });
 
-          // 6. Atualizar Estado Local
+          // 5. Atualiza Estado Local
           const newQ = [...parsedQuestions];
-          // Garante que estamos atualizando o índice certo
           if (newQ[idx]) {
-              newQ[idx].imageUrl = downloadURL;
+              const currentImages = newQ[idx].images || [];
+              newQ[idx].images = [...currentImages, downloadURL];
               newQ[idx].hasImage = true;
-              newQ[idx].needsImage = false;
+              // REMOVIDO: newQ[idx].needsImage = false; (Mantém o alerta visual)
               setParsedQuestions(newQ);
           }
           
-          showNotification('success', 'Imagem anexada com sucesso!');
+          showNotification('success', 'Imagem adicionada à galeria!');
 
       } catch (error) {
           console.error(error);
-          showNotification('error', 'Erro ao enviar imagem: ' + error.message);
+          showNotification('error', 'Erro ao enviar: ' + error.message);
       } finally {
           setUploadingImageId(null);
       }
   };
-
-  const deleteImageFromQuestion = async (idx, questionData) => {
-      if (!questionData.imageUrl) return;
-      
-      if (!window.confirm("Tem certeza que deseja remover esta imagem?")) return;
+  
+  const deleteImageFromQuestion = async (idx, questionData, urlToDelete) => {
+      if (!window.confirm("Remover esta imagem específica?")) return;
 
       try {
+          // Tenta apagar do Storage
           try {
-              const fileRef = ref(storage, questionData.imageUrl);
+              const fileRef = ref(storage, urlToDelete);
               await deleteObject(fileRef);
-          } catch (e) { console.warn("Erro ao deletar do storage:", e); }
+          } catch (e) { console.warn("Erro storage:", e); }
 
+          // Remove do array no Firestore
           await updateDoc(doc(db, "draft_questions", questionData.id), {
-              imageUrl: "",
-              hasImage: false
+              images: arrayRemove(urlToDelete)
           });
 
+          // Atualiza Local
           const newQ = [...parsedQuestions];
           if (newQ[idx]) {
-              newQ[idx].imageUrl = "";
-              newQ[idx].hasImage = false;
+              newQ[idx].images = newQ[idx].images.filter(url => url !== urlToDelete);
+              // Se zerou as imagens, marca hasImage false
+              if (newQ[idx].images.length === 0) newQ[idx].hasImage = false;
               setParsedQuestions(newQ);
           }
           showNotification('success', 'Imagem removida.');
@@ -2565,33 +2566,37 @@ export default function App() {
                                 {/* QUESTION CONTENT */}
                                 <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
 
-                            {/* --- ÁREA DA IMAGEM (NOVA FUNCIONALIDADE) --- */}
+                            {/* --- ÁREA DA GALERIA DE IMAGENS --- */}
                             <div className="mb-6 p-4 bg-gray-50 border border-dashed border-gray-300 rounded-xl">
-                                <div className="flex justify-between items-center mb-2">
+                                <div className="flex justify-between items-center mb-3">
                                     <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                                        <ImageIcon size={12}/> Imagem de Apoio (Raio-X, ECG, etc)
+                                        <ImageIcon size={12}/> Galeria de Imagens ({q.images?.length || 0})
                                     </label>
-                                    {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Otimizando e Enviando...</span>}
+                                    {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Enviando...</span>}
                                 </div>
                                 
-                                {q.imageUrl ? (
-                                    <div className="relative group w-fit">
-                                        <img src={q.imageUrl} alt="Questão" className="max-h-64 rounded-lg border border-gray-200 shadow-sm bg-white" />
-                                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <a href={q.imageUrl} target="_blank" rel="noreferrer" className="bg-white/90 text-blue-600 p-1.5 rounded-full hover:bg-white shadow-md"><ExternalLink size={14}/></a>
-                                            <button onClick={() => deleteImageFromQuestion(idx, q)} className="bg-red-600 text-white p-1.5 rounded-full hover:bg-red-700 shadow-md">
-                                                <Trash2 size={14}/>
-                                            </button>
+                                <div className="flex flex-wrap gap-3 items-start">
+                                    {/* LISTA DE IMAGENS EXISTENTES */}
+                                    {q.images?.map((imgUrl, i) => (
+                                        <div key={i} className="relative group w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-lg border border-gray-200 shadow-sm flex-shrink-0">
+                                            <img src={imgUrl} alt={`Img ${i}`} className="w-full h-full object-cover rounded-lg" />
+                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
+                                                <a href={imgUrl} target="_blank" rel="noreferrer" className="text-white hover:text-blue-300"><ExternalLink size={16}/></a>
+                                                <button onClick={() => deleteImageFromQuestion(idx, q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
+                                            </div>
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex gap-2">
-                                        <label className={`cursor-pointer bg-white hover:bg-blue-50 text-gray-600 hover:text-blue-600 border border-gray-200 hover:border-blue-200 px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
-                                            <UploadCloud size={16}/> {uploadingImageId === q.id ? 'Enviando...' : 'Adicionar Imagem'}
-                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
-                                        </label>
-                                        {q.needsImage && <span className="text-xs text-purple-600 flex items-center self-center animate-pulse">Esta questão pede imagem!</span>}
-                                    </div>
+                                    ))}
+
+                                    {/* BOTÃO DE ADICIONAR (SEMPRE VISÍVEL) */}
+                                    <label className={`cursor-pointer w-24 h-24 sm:w-32 sm:h-32 bg-white hover:bg-blue-50 border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-blue-500 transition-all ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                                        <UploadCloud size={24}/>
+                                        <span className="text-[10px] font-bold uppercase">Adicionar</span>
+                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
+                                    </label>
+                                </div>
+                                
+                                {q.needsImage && (!q.images || q.images.length === 0) && (
+                                    <p className="mt-2 text-xs text-purple-600 flex items-center gap-1 animate-pulse font-bold"><AlertCircle size={12}/> Esta questão pede imagem!</p>
                                 )}
                             </div>
                               
