@@ -905,10 +905,19 @@ export default function App() {
                  - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
                  - As alternativas DEVEM ser extraídas separadamente no array "options".
 
-              3. DETECÇÃO DE IMAGEM:
-                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
-                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
-                 - Se precisar, marque "needsImage": true.
+              3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
+                 - O objetivo é detectar se a questão É IMPOSSÍVEL de responder sem ver o anexo.
+                 
+                 - MARQUE "needsImage": true SE:
+                   * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado", "Pela análise da lâmina".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que, forçando a olhar)", "Qual o diagnóstico da imagem?".
+
+                 - MARQUE "needsImage": false SE (CASOS DE PEGADINHA):
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura", "TC mostrou tumor".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia", "Paciente trouxe ultrassom anterior".
+
+                 - NO CASO ESPECÍFICO DO USUÁRIO: "De acordo com o caso descrito e com o exame de imagem" -> TRUE (Pois cria dependência explícita).
 
               4. CLASSIFICAÇÃO:
                  - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
