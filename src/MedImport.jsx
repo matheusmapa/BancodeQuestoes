@@ -18,7 +18,7 @@ import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 } from "firebase/auth";
 import { 
-  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc 
 } from "firebase/storage";
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
