@@ -17,6 +17,9 @@ import {
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 } from "firebase/auth";
+import { 
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
+} from "firebase/storage";
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
 const loadPdfJs = async () => {
@@ -48,6 +51,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const storage = getStorage(app);
 
 // --- DADOS DE REFERÊNCIA ---
 const areasBase = [
@@ -74,6 +78,48 @@ const themesMap = {
     'Preventiva': [
         'Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética'
     ]
+};
+
+// --- HELPER: OTIMIZADOR DE IMAGEM (WEB CLIENT-SIDE) ---
+const optimizeImageForWeb = (file) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                const MAX_WIDTH = 1920; // Padrão HD
+                
+                if (width > MAX_WIDTH) {
+                    height = Math.round((height * MAX_WIDTH) / width);
+                    width = MAX_WIDTH;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        const newFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".webp", {
+                            type: "image/webp",
+                            lastModified: Date.now(),
+                        });
+                        resolve(newFile);
+                    } else {
+                        reject(new Error("Falha na conversão para WebP"));
+                    }
+                }, 'image/webp', 0.90);
+            };
+            img.onerror = (err) => reject(err);
+        };
+        reader.onerror = (err) => reject(err);
+    });
 };
 
 // --- HELPER: HASH ID GENERATOR (DEDUPLICATION) ---
@@ -230,6 +276,9 @@ export default function App() {
   const [isValidatingKey, setIsValidatingKey] = useState(false);
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); 
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); 
+
+  // Estado para loading de imagem individual
+  const [uploadingImageId, setUploadingImageId] = useState(null);
   
   // --- Estado para Filtros Múltiplos ---
   const [activeFilters, setActiveFilters] = useState(['verified', 'source']); 
@@ -581,6 +630,81 @@ export default function App() {
       'suspicious': 'Suspeitas',
       'duplicates': 'Duplicadas',
       'needs_image': 'Requer Imagem' // NOVO LABEL
+  };
+
+  // --- UPLOAD MANUAL DE IMAGEM PARA QUESTÃO INDIVIDUAL ---
+  const handleImageUploadToQuestion = async (e, idx, questionData) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      setUploadingImageId(questionData.id);
+
+      try {
+          // 1. Otimizar Imagem
+          const optimizedFile = await optimizeImageForWeb(file);
+          
+          // 2. Definir caminho no Storage
+          const storageRef = ref(storage, `questions_images/${questionData.id}.webp`);
+          
+          // 3. Upload
+          const snapshot = await uploadBytes(storageRef, optimizedFile);
+          
+          // 4. Obter URL
+          const downloadURL = await getDownloadURL(snapshot.ref);
+
+          // 5. Atualizar Firestore
+          await updateDoc(doc(db, "draft_questions", questionData.id), {
+              imageUrl: downloadURL,
+              hasImage: true,
+              needsImage: false
+          });
+
+          // 6. Atualizar Estado Local
+          const newQ = [...parsedQuestions];
+          // Garante que estamos atualizando o índice certo
+          if (newQ[idx]) {
+              newQ[idx].imageUrl = downloadURL;
+              newQ[idx].hasImage = true;
+              newQ[idx].needsImage = false;
+              setParsedQuestions(newQ);
+          }
+          
+          showNotification('success', 'Imagem anexada com sucesso!');
+
+      } catch (error) {
+          console.error(error);
+          showNotification('error', 'Erro ao enviar imagem: ' + error.message);
+      } finally {
+          setUploadingImageId(null);
+      }
+  };
+
+  const deleteImageFromQuestion = async (idx, questionData) => {
+      if (!questionData.imageUrl) return;
+      
+      if (!window.confirm("Tem certeza que deseja remover esta imagem?")) return;
+
+      try {
+          try {
+              const fileRef = ref(storage, questionData.imageUrl);
+              await deleteObject(fileRef);
+          } catch (e) { console.warn("Erro ao deletar do storage:", e); }
+
+          await updateDoc(doc(db, "draft_questions", questionData.id), {
+              imageUrl: "",
+              hasImage: false
+          });
+
+          const newQ = [...parsedQuestions];
+          if (newQ[idx]) {
+              newQ[idx].imageUrl = "";
+              newQ[idx].hasImage = false;
+              setParsedQuestions(newQ);
+          }
+          showNotification('success', 'Imagem removida.');
+      } catch (error) {
+          showNotification('error', 'Erro ao remover imagem.');
+      }
   };
 
   // --- LOGIC: BATCH IMAGE PROCESSING ---
@@ -2435,6 +2559,36 @@ export default function App() {
                                 {/* QUESTION CONTENT */}
                                 <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
 
+                            {/* --- ÁREA DA IMAGEM (NOVA FUNCIONALIDADE) --- */}
+                            <div className="mb-6 p-4 bg-gray-50 border border-dashed border-gray-300 rounded-xl">
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                                        <ImageIcon size={12}/> Imagem de Apoio (Raio-X, ECG, etc)
+                                    </label>
+                                    {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Otimizando e Enviando...</span>}
+                                </div>
+                                
+                                {q.imageUrl ? (
+                                    <div className="relative group w-fit">
+                                        <img src={q.imageUrl} alt="Questão" className="max-h-64 rounded-lg border border-gray-200 shadow-sm bg-white" />
+                                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <a href={q.imageUrl} target="_blank" rel="noreferrer" className="bg-white/90 text-blue-600 p-1.5 rounded-full hover:bg-white shadow-md"><ExternalLink size={14}/></a>
+                                            <button onClick={() => deleteImageFromQuestion(idx, q)} className="bg-red-600 text-white p-1.5 rounded-full hover:bg-red-700 shadow-md">
+                                                <Trash2 size={14}/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <label className={`cursor-pointer bg-white hover:bg-blue-50 text-gray-600 hover:text-blue-600 border border-gray-200 hover:border-blue-200 px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            <UploadCloud size={16}/> {uploadingImageId === q.id ? 'Enviando...' : 'Adicionar Imagem'}
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
+                                        </label>
+                                        {q.needsImage && <span className="text-xs text-purple-600 flex items-center self-center animate-pulse">Esta questão pede imagem!</span>}
+                                    </div>
+                                )}
+                            </div>
+                              
                                 <div className="space-y-2 mb-6">
                                     {q.options?.map((opt, optIdx) => (
                                         <div key={opt.id} className="flex items-center gap-3">
