@@ -1606,6 +1606,26 @@ function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUp
                   </div>
               </div>
               <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6 font-medium whitespace-pre-line">{currentQuestion.text}</p>
+              
+              {/* --- ÁREA DE IMAGENS (NOVO) --- */}
+              {(currentQuestion.images?.length > 0 || currentQuestion.imageUrl) && (
+                  <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Suporte Híbrido: Exibe array novo OU string antiga */}
+                      {(currentQuestion.images || [currentQuestion.imageUrl]).map((img, idx) => (
+                          <div key={idx} className="relative group rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-gray-50">
+                              <img 
+                                  src={img} 
+                                  alt={`Anexo ${idx + 1}`} 
+                                  className="w-full h-64 object-contain hover:scale-105 transition-transform duration-300 cursor-zoom-in"
+                                  onClick={() => window.open(img, '_blank')} // Abre em nova aba ao clicar
+                              />
+                              <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                  Clique para ampliar
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
           </div>
           <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 md:p-5 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium text-base ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
           <div className="hidden md:flex justify-between items-center pt-4 mt-4 border-t border-gray-100"><button onClick={handlePrevious} disabled={currentIndex === 0} className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"><ArrowLeft size={20} /> Anterior</button>{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4">Responder</button>) : (<button onClick={handleRedo} className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"><RotateCcw size={18} /> Refazer</button>)}<button onClick={handleNext} className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors">{currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} /></button></div>
