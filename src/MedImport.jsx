@@ -12,9 +12,9 @@ import {
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 
-// 1. Banco de Dados (Firestore) - Onde fica o updateDoc
+// 1. Banco de Dados (Firestore) - CORRIGIDO: arrayUnion e arrayRemove adicionados aqui
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove 
 } from "firebase/firestore";
 
 // 2. Autenticação (Auth)
@@ -22,9 +22,9 @@ import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 } from "firebase/auth";
 
-// 3. Arquivos (Storage) - Onde ficam uploadBytes, getDownloadURL
+// 3. Arquivos (Storage) - CORRIGIDO: Removidos daqui
 import { 
-  getStorage, ref, uploadBytes, getDownloadURL, deleteObject
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
 } from "firebase/storage";
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
@@ -957,29 +957,26 @@ export default function App() {
                   verificationReason
               };
 
-              // 5. Hash & Duplicate Check
+              // 5. Hash & Duplicate Check (COM SMART FILL)
               const hashId = await generateQuestionHash(finalQ.text);
               let isDuplicate = false;
-              // CÓDIGO TURBINADO (SMART FILL)
-if (hashId) {
-    const existingDoc = await getDoc(doc(db, "questions", hashId));
-    if (existingDoc.exists()) {
-        isDuplicate = true;
-        const oldData = existingDoc.data();
-        
-        // A MÁGICA ACONTECE AQUI:
-        // Se a nova extração veio vazia (""), mas a antiga tinha dados, a gente "rouba" da antiga.
-        if (!finalInst && oldData.institution) {
-            finalInst = oldData.institution;
-            console.log(`SmartFill: Recuperando instituição antiga (${finalInst})`);
-        }
-        
-        if (!finalYear && oldData.year) {
-            finalYear = oldData.year;
-            console.log(`SmartFill: Recuperando ano antigo (${finalYear})`);
-        }
-    }
-}
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      
+                      // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
+                      const oldData = existingDoc.data();
+                      
+                      if (!finalQ.institution && oldData.institution) {
+                          finalQ.institution = oldData.institution;
+                      }
+                      
+                      if (!finalQ.year && oldData.year) {
+                          finalQ.year = oldData.year;
+                      }
+                  }
+              }
 
               return { ...finalQ, hashId, isDuplicate };
           }));
@@ -1409,29 +1406,26 @@ if (hashId) {
                   verificationReason
               };
 
-              // Hash & Duplicata
+              // Hash & Duplicata (COM SMART FILL)
               const hashId = await generateQuestionHash(finalQ.text);
               let isDuplicate = false;
-              // CÓDIGO TURBINADO (SMART FILL)
-if (hashId) {
-    const existingDoc = await getDoc(doc(db, "questions", hashId));
-    if (existingDoc.exists()) {
-        isDuplicate = true;
-        const oldData = existingDoc.data();
-        
-        // A MÁGICA ACONTECE AQUI:
-        // Se a nova extração veio vazia (""), mas a antiga tinha dados, a gente "rouba" da antiga.
-        if (!finalInst && oldData.institution) {
-            finalInst = oldData.institution;
-            console.log(`SmartFill: Recuperando instituição antiga (${finalInst})`);
-        }
-        
-        if (!finalYear && oldData.year) {
-            finalYear = oldData.year;
-            console.log(`SmartFill: Recuperando ano antigo (${finalYear})`);
-        }
-    }
-}
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      
+                      // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
+                      const oldData = existingDoc.data();
+                      
+                      if (!finalQ.institution && oldData.institution) {
+                          finalQ.institution = oldData.institution;
+                      }
+                      
+                      if (!finalQ.year && oldData.year) {
+                          finalQ.year = oldData.year;
+                      }
+                  }
+              }
 
               return { ...finalQ, hashId, isDuplicate };
           }));
@@ -1783,29 +1777,26 @@ if (hashId) {
                  verificationReason: auditResult.reason
              };
 
-             // 4. Hash Check
+             // 4. Hash Check (COM SMART FILL)
              const hashId = await generateQuestionHash(finalQ.text);
              let isDuplicate = false;
-             // CÓDIGO TURBINADO (SMART FILL)
-if (hashId) {
-    const existingDoc = await getDoc(doc(db, "questions", hashId));
-    if (existingDoc.exists()) {
-        isDuplicate = true;
-        const oldData = existingDoc.data();
-        
-        // A MÁGICA ACONTECE AQUI:
-        // Se a nova extração veio vazia (""), mas a antiga tinha dados, a gente "rouba" da antiga.
-        if (!finalInst && oldData.institution) {
-            finalInst = oldData.institution;
-            console.log(`SmartFill: Recuperando instituição antiga (${finalInst})`);
-        }
-        
-        if (!finalYear && oldData.year) {
-            finalYear = oldData.year;
-            console.log(`SmartFill: Recuperando ano antigo (${finalYear})`);
-        }
-    }
-}
+             if (hashId) {
+                 const existingDoc = await getDoc(doc(db, "questions", hashId));
+                 if (existingDoc.exists()) {
+                    isDuplicate = true;
+
+                    // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
+                    const oldData = existingDoc.data();
+                    
+                    if (!finalQ.institution && oldData.institution) {
+                        finalQ.institution = oldData.institution;
+                    }
+                    
+                    if (!finalQ.year && oldData.year) {
+                        finalQ.year = oldData.year;
+                    }
+                 }
+             }
 
              return { ...finalQ, hashId, isDuplicate };
         }));
@@ -1964,7 +1955,12 @@ if (hashId) {
                   const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
                   if (q.area && q.topic && q.text) {
                      // setDoc vai SOBRESCREVER se já existir (id = hash)
-                     await setDoc(doc(db, "questions", id), { ...finalData, updatedAt: new Date().toISOString(), approvedBy: user.email, hasImage: false });
+                     await setDoc(doc(db, "questions", id), { 
+                         ...finalData, 
+                         updatedAt: new Date().toISOString(), 
+                         approvedBy: user.email, 
+                         // REMOVIDO: hasImage: false (Correção do Bug) 
+                     });
                      await deleteDoc(doc(db, "draft_questions", id));
                      count++;
                   }
@@ -2003,6 +1999,7 @@ if (hashId) {
         ...finalData,
         updatedAt: new Date().toISOString(), // Marca atualização
         approvedBy: user.email,
+        // REMOVIDO: hasImage: false (Correção do Bug)
       });
       
       await deleteDoc(doc(db, "draft_questions", id));
