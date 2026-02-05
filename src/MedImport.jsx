@@ -539,85 +539,43 @@ export default function App() {
   };
 
   // --- LOGIC: VERIFICATION AGENT (DOUBLE CHECK) ---
-  // --- LOGIC: VERIFICATION AGENT (AUDITORIA HÍBRIDA: RIGOROSA NOS FATOS, TOLERANTE NAS CONDUTAS) ---
   const verifyQuestionWithAI = async (questionData) => {
       return executeWithKeyRotation("Auditoria", async (key) => {
-          // 1. Contexto da Banca (Jurisprudência)
-          const contextBanca = questionData.institution 
-            ? `PRIORIDADE MÁXIMA: Tente encontrar o entendimento específico da banca "${questionData.institution}" (${questionData.year || ''}).`
-            : "Baseie-se na literatura médica de referência (Harrison, Cecil, Sabiston).";
-
           const verifyPrompt = `
             Você é um Auditor Sênior de Questões Médicas.
-            Sua missão é validar se esta questão é SEGURA para um banco de dados de estudo.
+            Analise a questão abaixo gerada por uma IA.
             
-            DADOS DA QUESTÃO:
-            Banca: ${questionData.institution || "Não informada"}
-            Enunciado: "${questionData.text}"
+            QUESTÃO:
+            Enunciado: ${questionData.text}
             Alternativas: ${JSON.stringify(questionData.options)}
-            Gabarito Proposto: ${questionData.correctOptionId}
-            Explicação: "${questionData.explanation}"
+            Gabarito Indicado: ${questionData.correctOptionId}
+            Comentário Gerado: ${questionData.explanation}
             
-            PASSO A PASSO DA AUDITORIA:
-            1. Use o Google Search para buscar a questão ou o tema médico.
-            2. Aplique as REGRAS DE JULGAMENTO abaixo rigorosamente.
-
-            REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
-
-            [NÍVEL 1: FATOS OBJETIVOS - TOLERÂNCIA ZERO]
-            - Se a questão contém ERROS DE NÚMEROS (Doses, Artigos de Lei, Datas, Percentuais).
-            - Se a questão cita FATOS ERRADOS (Ex: "Lei 8.080 é de 2025", "Fêmur é no braço").
-            -> AÇÃO: REPROVE IMEDIATAMENTE ("isValid": false).
-            -> MOTIVO: "Erro fatual grave".
-
-            [NÍVEL 2: A JURISPRUDÊNCIA DA BANCA]
-            - Se você encontrar essa questão em uma prova real da banca citada.
-            - E o gabarito bater com o oficial da banca.
-            -> AÇÃO: APROVE ("isValid": true). (A banca é soberana, mesmo que polêmica).
-
-            [NÍVEL 3: CONDUTAS E ZONA CINZENTA - TOLERÂNCIA ALTA]
-            - Se for questão de conduta ("Qual a melhor cirurgia?", "Qual o diagnóstico mais provável?").
-            - E houver divergência na literatura (autores dizem coisas diferentes).
-            - Se o gabarito proposto for defendido por PELO MENOS UMA corrente séria.
-            -> AÇÃO: APROVE ("isValid": true).
-            -> MOTIVO: "Divergência aceitável".
-
-            [NÍVEL 4: "NA DÚVIDA"]
-            - Se não achar nada específico e não for erro fatual.
-            - Se a explicação fizer sentido fisiopatológico.
-            -> AÇÃO: APROVE.
+            TAREFA:
+            Verifique se a questão é medicamente correta, se o gabarito faz sentido e se não há alucinações graves.
             
-            SAÍDA OBRIGATÓRIA (JSON):
+            Retorne APENAS um JSON:
             {
-                "isValid": boolean, 
-                "reason": "Se false, explique o erro fatual ou a contradição absoluta. Se true, pode ser breve."
+                "isValid": boolean (true se aceitável, false se tiver erro grave/alucinação),
+                "reason": "Explicação curta se for false"
             }
           `;
 
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                contents: [{ parts: [{ text: verifyPrompt }] }],
-                tools: [{ google_search: {} }] 
-            })
+            body: JSON.stringify({ contents: [{ parts: [{ text: verifyPrompt }] }] })
           });
           
           const data = await response.json();
           if (data.error) throw new Error(data.error.message);
 
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
-          // Limpeza do JSON
-          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-          if (jsonMatch) jsonString = jsonMatch[0];
-
-          return safeJsonParse(jsonString); 
+          return safeJsonParse(jsonString); // Usa o parser blindado
       }).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
-              reason: result.reason || (result.isValid ? "Validado (Web/Lógica)" : "Erro Fatual ou Divergência Grave")
+              reason: result.reason || (result.isValid ? "Verificado por IA" : "Inconsistência detectada")
           };
       });
   };
