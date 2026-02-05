@@ -2003,7 +2003,6 @@ if (hashId) {
         ...finalData,
         updatedAt: new Date().toISOString(), // Marca atualização
         approvedBy: user.email,
-        hasImage: false
       });
       
       await deleteDoc(doc(db, "draft_questions", id));
