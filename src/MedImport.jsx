@@ -275,6 +275,7 @@ export default function App() {
   const [uploadingImageId, setUploadingImageId] = useState(null);
   
   // --- Estado para Filtros Múltiplos ---
+  // MUDANÇA: 'text_only' ativado por padrão
   const [activeFilters, setActiveFilters] = useState(['verified', 'source', 'text_only']); 
   const [filterLogic, setFilterLogic] = useState('AND'); 
   
@@ -438,7 +439,7 @@ export default function App() {
               return await requestFn(currentKey);
           } catch (error) {
               const msg = error.message || "";
-              const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429");
+              const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429") || msg.includes("Resource has been exhausted");
               
               if (isQuotaError) {
                   const logFn = operationName.includes("Imagem") ? addBatchLog : addLog;
@@ -450,116 +451,144 @@ export default function App() {
               }
           }
       }
-      throw lastError || new Error("Todas as chaves falharam.");
+      throw lastError || new Error("Todas as chaves falharam. Aguardando recarga...");
   };
 
-  // --- FUNÇÃO DE PESQUISA OTIMIZADA ---
+  // --- FUNÇÃO DE PESQUISA OTIMIZADA (COM BLINDAGEM) ---
   const searchQuestionSource = async (questionText) => {
       const searchPromptText = questionText.length > 400 
         ? questionText.substring(0, 400) + "..." 
         : questionText;
 
       return executeWithKeyRotation("Pesquisa Web", async (key) => {
-          const systemPrompt = `Você é um verificador de questões de residência médica.
-          Sua missão: Identificar a origem da questão usando a Pesquisa Google.
-          CRITÉRIOS DE ESCOLHA:
-          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE.
-          REGRAS DE FORMATAÇÃO DE NOME:
-          - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
-          SAÍDA OBRIGATÓRIA (JSON):
-          {
-            "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
-            "year": "Ano (apenas números, ou vazio se não achar)"
-          }`;
+          try {
+              const systemPrompt = `Você é um verificador de questões de residência médica.
+              Sua missão: Identificar a origem da questão usando a Pesquisa Google.
+              CRITÉRIOS DE ESCOLHA:
+              - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE.
+              REGRAS DE FORMATAÇÃO DE NOME:
+              - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
+              SAÍDA OBRIGATÓRIA (JSON):
+              {
+                "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
+                "year": "Ano (apenas números, ou vazio se não achar)"
+              }`;
 
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                tools: [{ google_search: {} }] 
-              })
-            }
-          );
+              const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                    tools: [{ google_search: {} }] 
+                  })
+                }
+              );
 
-          if (!response.ok) throw new Error("Erro na API Search");
-          
-          const data = await response.json();
-          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
-          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          try { return JSON.parse(jsonString); } 
-          catch(e) { return { institution: "", year: "" }; }
+              if (!response.ok) {
+                  const errData = await response.json().catch(() => ({}));
+                  throw new Error(errData.error?.message || "Erro na API Search");
+              }
+              
+              const data = await response.json();
+              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              
+              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+              try { return JSON.parse(jsonString); } 
+              catch(e) { return { institution: "", year: "" }; }
+              
+          } catch (err) {
+              const msg = err.message || "";
+              // BLINDAGEM: Se for cota, lança erro para cima para forçar retry
+              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) {
+                  throw err;
+              }
+              return { institution: "", year: "" }; // Erro normal (ex: timeout), segue sem fonte
+          }
       });
   };
 
-  // --- LOGIC: VERIFICATION AGENT ---
+  // --- LOGIC: VERIFICATION AGENT (COM BLINDAGEM) ---
   const verifyQuestionWithAI = async (questionData) => {
       return executeWithKeyRotation("Auditoria", async (key) => {
-          const verifyPrompt = `
-            Você é um Auditor Sênior de Questões Médicas.
-            Sua missão é validar se esta questão é SEGURA para um banco de dados de estudo.
-            
-            DADOS DA QUESTÃO:
-            Banca: ${questionData.institution || "Não informada"}
-            Enunciado: "${questionData.text}"
-            Alternativas: ${JSON.stringify(questionData.options)}
-            Gabarito Proposto: ${questionData.correctOptionId}
-            Explicação: "${questionData.explanation}"
-            
-            PASSO A PASSO DA AUDITORIA:
-            1. Use o Google Search para buscar a questão ou o tema médico.
-            2. Aplique as REGRAS DE JULGAMENTO abaixo rigorosamente.
+          try {
+              const verifyPrompt = `
+                Você é um Auditor Sênior de Questões Médicas.
+                Sua missão é validar se esta questão é SEGURA para um banco de dados de estudo.
+                
+                DADOS DA QUESTÃO:
+                Banca: ${questionData.institution || "Não informada"}
+                Enunciado: "${questionData.text}"
+                Alternativas: ${JSON.stringify(questionData.options)}
+                Gabarito Proposto: ${questionData.correctOptionId}
+                Explicação: "${questionData.explanation}"
+                
+                PASSO A PASSO DA AUDITORIA:
+                1. Use o Google Search para buscar a questão ou o tema médico.
+                2. Aplique as REGRAS DE JULGAMENTO abaixo rigorosamente.
 
-            REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
-            [NÍVEL 1: FATOS OBJETIVOS - TOLERÂNCIA ZERO]
-            - Se a questão contém ERROS DE NÚMEROS (Doses, Artigos de Lei, Datas, Percentuais).
-            - Se a questão cita FATOS ERRADOS.
-            -> AÇÃO: REPROVE IMEDIATAMENTE ("isValid": false).
+                REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
+                [NÍVEL 1: FATOS OBJETIVOS - TOLERÂNCIA ZERO]
+                - Se a questão contém ERROS DE NÚMEROS (Doses, Artigos de Lei, Datas, Percentuais).
+                - Se a questão cita FATOS ERRADOS.
+                -> AÇÃO: REPROVE IMEDIATAMENTE ("isValid": false).
 
-            [NÍVEL 2: A JURISPRUDÊNCIA DA BANCA]
-            - Se você encontrar essa questão em uma prova real da banca citada.
-            - E o gabarito bater com o oficial da banca.
-            -> AÇÃO: APROVE ("isValid": true).
+                [NÍVEL 2: A JURISPRUDÊNCIA DA BANCA]
+                - Se você encontrar essa questão em uma prova real da banca citada.
+                - E o gabarito bater com o oficial da banca.
+                -> AÇÃO: APROVE ("isValid": true).
 
-            [NÍVEL 3: CONDUTAS E ZONA CINZENTA - TOLERÂNCIA ALTA]
-            - Se for questão de conduta ("Qual a melhor cirurgia?").
-            - E houver divergência na literatura.
-            - Se o gabarito proposto for defendido por PELO MENOS UMA corrente séria.
-            -> AÇÃO: APROVE ("isValid": true).
+                [NÍVEL 3: CONDUTAS E ZONA CINZENTA - TOLERÂNCIA ALTA]
+                - Se for questão de conduta ("Qual a melhor cirurgia?").
+                - E houver divergência na literatura.
+                - Se o gabarito proposto for defendido por PELO MENOS UMA corrente séria.
+                -> AÇÃO: APROVE ("isValid": true).
 
-            [NÍVEL 4: "NA DÚVIDA"]
-            - Se não achar nada específico e não for erro fatual.
-            -> AÇÃO: APROVE.
-            
-            SAÍDA OBRIGATÓRIA (JSON):
-            {
-                "isValid": boolean, 
-                "reason": "Explicação breve"
-            }
-          `;
+                [NÍVEL 4: "NA DÚVIDA"]
+                - Se não achar nada específico e não for erro fatual.
+                -> AÇÃO: APROVE.
+                
+                SAÍDA OBRIGATÓRIA (JSON):
+                {
+                    "isValid": boolean, 
+                    "reason": "Explicação breve"
+                }
+              `;
 
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                contents: [{ parts: [{ text: verifyPrompt }] }],
-                tools: [{ google_search: {} }] 
-            })
-          });
-          
-          const data = await response.json();
-          if (data.error) throw new Error(data.error.message);
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    contents: [{ parts: [{ text: verifyPrompt }] }],
+                    tools: [{ google_search: {} }] 
+                })
+              });
+              
+              if (!response.ok) {
+                   const errData = await response.json().catch(() => ({}));
+                   throw new Error(errData.error?.message || "Erro na API Audit");
+              }
 
-          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-          if (jsonMatch) jsonString = jsonMatch[0];
+              const data = await response.json();
+              
+              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+              const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+              if (jsonMatch) jsonString = jsonMatch[0];
 
-          return safeJsonParse(jsonString); 
+              return safeJsonParse(jsonString);
+              
+          } catch (err) {
+              const msg = err.message || "";
+              // BLINDAGEM: Se for cota, lança erro para cima para forçar retry
+              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) {
+                  throw err;
+              }
+              // Erro de lógica, segue como não checado
+              return { isValid: true, reason: "Falha na auditoria (ignorado)" };
+          }
       }).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
@@ -609,7 +638,7 @@ export default function App() {
           if (filterKey === 'no_source') return !q.sourceFound;
           if (filterKey === 'duplicates') return !!q.isDuplicate;
           if (filterKey === 'needs_image') return !!q.needsImage; 
-          if (filterKey === 'text_only') return !q.needsImage; // NOVO FILTRO
+          if (filterKey === 'text_only') return !q.needsImage; 
           return true;
       });
 
@@ -630,7 +659,7 @@ export default function App() {
       'suspicious': 'Suspeitas',
       'duplicates': 'Duplicadas',
       'needs_image': 'Requer Imagem',
-      'text_only': 'Texto Puro (Sem Imagem)' // NOVO LABEL
+      'text_only': 'Texto Puro (Sem Imagem)' 
   };
 
   // --- UPLOAD MULTI-IMAGEM ---
@@ -865,9 +894,12 @@ export default function App() {
                   })
               });
 
-              const data = await response.json();
-              if (data.error) throw new Error(data.error.message);
+              if (!response.ok) {
+                   const errData = await response.json().catch(() => ({}));
+                   throw new Error(errData.error?.message || "Erro na API Gemini");
+              }
 
+              const data = await response.json();
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
               const parsed = safeJsonParse(jsonString);
               return parsed.filter(q => q.options && q.options.length >= 2);
@@ -904,7 +936,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
-                          } catch (err) { return null; }
+                          } catch (err) { 
+                              // BLINDAGEM: Se for cota, joga erro pra cima pra forçar retry do batch
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return null; 
+                          }
                       }
                       return null;
                   })();
@@ -914,7 +951,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 500)); 
                               return await verifyQuestionWithAI(q);
-                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
+                          } catch (err) { 
+                              // BLINDAGEM
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return { status: 'unchecked', reason: 'Audit failed' }; 
+                          }
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -989,12 +1031,13 @@ export default function App() {
           console.error(error);
           const errorMessage = error.message || "Erro desconhecido";
           
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
-              addBatchLog('warning', `Cota excedida. Aguardando 10s...`);
+          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429") || errorMessage.includes("Resource has been exhausted")) {
+              addBatchLog('warning', `Todas as chaves esgotadas. Aguardando recarga (60s)...`);
+              // MODO INFINITO: Não marca erro, tenta de novo a mesma imagem daqui a pouco
               setTimeout(() => {
                   batchProcessorRef.current = false;
                   processNextBatchImage();
-              }, 10000);
+              }, 60000);
           } else {
               addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
               setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
@@ -1278,9 +1321,12 @@ export default function App() {
                 })
               });
 
-              const data = await response.json();
-              if (data.error) throw new Error(data.error.message);
+              if (!response.ok) {
+                  const errData = await response.json().catch(() => ({}));
+                  throw new Error(errData.error?.message || "Erro na API Geração");
+              }
 
+              const data = await response.json();
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
               const parsed = safeJsonParse(jsonString);
               return parsed.filter(q => q.options && q.options.length >= 2);
@@ -1318,7 +1364,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
-                          } catch (err) { return null; }
+                          } catch (err) { 
+                              // BLINDAGEM: Throw erro se for cota
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return null; 
+                          }
                       }
                       return null;
                   })();
@@ -1328,7 +1379,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 500)); 
                               return await verifyQuestionWithAI(q);
-                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
+                          } catch (err) { 
+                              // BLINDAGEM: Throw erro se for cota
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return { status: 'unchecked', reason: 'Audit failed' }; 
+                          }
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -1435,7 +1491,7 @@ export default function App() {
           
           let delay = 3000;
 
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429")) {
+          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429") || errorMessage.includes("Resource has been exhausted")) {
               if (retrySeconds) {
                   delay = (retrySeconds * 1000) + 2000; 
                   addLog('warning', `Todas as chaves esgotadas. Aguardando ${Math.ceil(retrySeconds)}s...`);
@@ -1443,7 +1499,27 @@ export default function App() {
                   delay = 60000; 
                   addLog('warning', `Todas as chaves esgotadas. Aguardando 60s...`);
               }
-          } else if (errorMessage.includes("API key expired")) {
+              
+              // --- TRUQUE DO MODO INFINITO ---
+              // Zera os erros consecutivos para impedir a pausa automática de segurança.
+              // O sistema ficará preso neste loop (tentando a mesma fatia) até conseguir.
+              setConsecutiveErrors(0);
+              
+              setPdfChunks(prev => {
+                  const newChunks = [...prev];
+                  newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'pending' };
+                  return newChunks;
+              });
+
+              setTimeout(() => {
+                  processorRef.current = false;
+                  processNextChunk();
+              }, delay);
+
+              return; // Sai daqui para não rodar a lógica de erro comum abaixo
+          } 
+          
+          if (errorMessage.includes("API key expired")) {
               setPdfStatus('paused');
               addLog('error', `ERRO CRÍTICO: Chaves API Inválidas! Pausado.`);
               showNotification('error', 'Chaves API Inválidas.');
@@ -1474,7 +1550,7 @@ export default function App() {
 
           if (newConsecutiveErrors >= 10) { 
               setPdfStatus('paused'); 
-              addLog('error', 'PAUSADO: Muitos erros consecutivos.');
+              addLog('error', 'PAUSADO: Muitos erros consecutivos (não relacionados a cota).');
               processorRef.current = false;
               return; 
           }
@@ -1647,9 +1723,12 @@ export default function App() {
                 body: JSON.stringify({ contents: contentsPayload })
             });
             
-            const data = await response.json();
-            if (data.error) throw new Error(data.error.message);
+            if (!response.ok) {
+                 const errData = await response.json().catch(() => ({}));
+                 throw new Error(errData.error?.message || "Erro na API Geração");
+            }
 
+            const data = await response.json();
             let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
             const parsed = safeJsonParse(jsonString);
             return parsed.filter(q => q.options && q.options.length >= 2);
@@ -2392,7 +2471,7 @@ export default function App() {
             </div>
         )}
 
-        {/* REVIEW TAB (ATUALIZADA: Layout 2 Linhas + Filtro "Texto Puro") */}
+        {/* REVIEW TAB (ATUALIZADA) */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-4">
                 {parsedQuestions.length > 0 && (
