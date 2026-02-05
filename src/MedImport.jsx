@@ -2416,54 +2416,83 @@ export default function App() {
                             </div>
                             
                             {/* MUDANÇA: 'flex-wrap' em vez de scroll, para mostrar todos os botões juntos */}
-                            <div className="flex flex-wrap items-center gap-2 pb-2">
-                                <button onClick={() => toggleFilter('all')} className={`px-3 py-2 rounded-lg text-xs font-bold transition-all border ${activeFilters.includes('all') ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
+                            {/* --- BARRA DE FERRAMENTAS (LAYOUT OTIMIZADO 2 LINHAS) --- */}
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex flex-col gap-3 sticky top-20 z-10 animate-in slide-in-from-top-2">
+                        
+                        {/* CABEÇALHO: Título + Lógica + Contador */}
+                        <div className="flex justify-between items-center px-1">
+                            <div className="flex items-center gap-3">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1"><Filter size={10}/> Filtros</span>
+                                
+                                {/* SWITCH DE LÓGICA (Mais compacto) */}
+                                <button 
+                                    onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}
+                                    title={filterLogic === 'AND' ? "Mostra questões que têm TODAS as características" : "Mostra questões que têm QUALQUER uma das características"}
+                                >
+                                    {filterLogic === 'AND' ? <ToggleRight size={12}/> : <ToggleLeft size={12}/>}
+                                    {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
+                                </button>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">{currentFilteredList.length} questões</span>
+                        </div>
+                        
+                        {/* --- ÁREA DOS BOTÕES (DIVIDIDA EM 2 LINHAS FIXAS) --- */}
+                        <div className="flex flex-col gap-1.5">
+                            
+                            {/* LINHA 1: STATUS & VALIDAÇÃO */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <button onClick={() => toggleFilter('all')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold transition-all border ${activeFilters.includes('all') ? 'bg-blue-600 text-white border-blue-700 shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}>
                                     Todas
                                 </button>
-                                <button onClick={() => toggleFilter('verified')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <ShieldCheck size={14}/> Verificadas
+                                <div className="w-px h-4 bg-gray-200 mx-1"></div> {/* Separador Visual */}
+                                <button onClick={() => toggleFilter('verified')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <ShieldCheck size={12}/> Verificadas
                                 </button>
-                                <button onClick={() => toggleFilter('source')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <Globe size={14}/> Com Fonte
+                                <button onClick={() => toggleFilter('suspicious')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <AlertTriangle size={12}/> Suspeitas
                                 </button>
-                                <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <AlertOctagon size={14}/> Sem Fonte
+                                <button onClick={() => toggleFilter('duplicates')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <Copy size={12}/> Duplicadas
                                 </button>
-                                <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <AlertTriangle size={14}/> Suspeitas
+                            </div>
+
+                            {/* LINHA 2: CONTEÚDO & FONTE */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[9px] font-bold text-gray-300 uppercase mr-1 select-none">Tipo:</span>
+                                <button onClick={() => toggleFilter('source')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <Globe size={12}/> Com Fonte
                                 </button>
-                                <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <Copy size={14}/> Duplicadas
+                                <button onClick={() => toggleFilter('no_source')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <AlertOctagon size={12}/> Sem Fonte
                                 </button>
-                                <button onClick={() => toggleFilter('needs_image')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('needs_image') ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <ImageIcon size={14}/> Requer Imagem
+                                <button onClick={() => toggleFilter('needs_image')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('needs_image') ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <ImageIcon size={12}/> Requer Imagem
                                 </button>
-                                <button onClick={() => toggleFilter('text_only')} className={`px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1 transition-all ${activeFilters.includes('text_only') ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}>
-                                    <FileType size={14}/> Texto Puro
+                                <button onClick={() => toggleFilter('text_only')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('text_only') ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <FileType size={12}/> Texto Puro
                                 </button>
                             </div>
                         </div>
 
                         <div className="h-px bg-gray-100 w-full"></div>
 
-                        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                            <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-                                <button onClick={() => clearAllField('institution')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap"><Eraser size={14}/> Limpar Inst.</button>
-                                <button onClick={() => clearAllField('year')} className="text-xs bg-white border border-gray-200 text-slate-500 px-3 py-2 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-medium flex items-center gap-1 shadow-sm whitespace-nowrap"><Eraser size={14}/> Limpar Anos</button>
+                        {/* AÇÕES DE RODAPÉ (Limpas e compactas) */}
+                        <div className="flex justify-between items-center gap-2">
+                            <div className="flex items-center gap-1.5">
+                                <button onClick={() => clearAllField('institution')} className="text-[10px] bg-gray-50 border border-gray-200 text-slate-500 px-2 py-1.5 rounded hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-bold flex items-center gap-1 whitespace-nowrap"><Eraser size={10}/> Inst.</button>
+                                <button onClick={() => clearAllField('year')} className="text-[10px] bg-gray-50 border border-gray-200 text-slate-500 px-2 py-1.5 rounded hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-bold flex items-center gap-1 whitespace-nowrap"><Eraser size={10}/> Ano</button>
                             </div>
 
-                            <div className="flex items-center gap-2 w-full sm:w-auto">
-                                <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm">
-                                    <Trash2 size={16} /> Descartar {currentFilteredList.length}
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap">
+                                    <Trash2 size={14} /> Descartar
                                 </button>
                                 
-                                <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-2.5 rounded-lg shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50 whitespace-nowrap hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0">
-                                    {isBatchAction ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16} />} 
+                                <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-1.5 rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap">
+                                    {isBatchAction ? <Loader2 className="animate-spin" size={14}/> : <CheckCircle size={14} />} 
                                     Aprovar {currentFilteredList.length}
                                 </button>
-                            </div>
-                        </div>
-                    </div>
                 )}
 
                 {currentFilteredList.length === 0 ? (
