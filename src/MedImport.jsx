@@ -479,39 +479,49 @@ export default function App() {
         : questionText;
 
       return executeWithKeyRotation("Pesquisa Web", async (key) => {
-          const systemPrompt = `Você é um verificador de questões de residência médica.
+          const systemPrompt = const systemPrompt = `
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-          Sua missão: Identificar a origem da questão usando a Pesquisa Google.
+              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - Exemplo: Se o texto for "15) 3 pacientes chegaram...", salve apenas "3 pacientes chegaram...".
+                 - Comece o texto direto no conteúdo do caso clínico.
 
-          CRITÉRIOS DE ESCOLHA:
+              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - Se o texto original for "Qual a conduta? A) Realizar X...", o campo "text" deve ser apenas "Qual a conduta?".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
 
-          - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal sobre simulados).
+              3. DETECÇÃO DE IMAGEM:
+                 - Analise se o enunciado cita ou DEPENDE de uma imagem/gráfico/ECG não presente.
+                 - Termos: "Vide figura", "A imagem mostra", "Observe o ECG".
+                 - Se precisar, marque "needsImage": true.
 
-          REGRAS DE FORMATAÇÃO DE NOME (CRÍTICO):
+              4. CLASSIFICAÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
 
-          - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
+              5. GABARITO:
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre "explanation".
 
-          - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
-
-          - Exemplo Bom: "BA - SUS Bahia"
-
-          - Exemplo Bom: "SP - USP São Paulo"
-
-          - Exemplo Bom: "Nacional - ENARE"
-
-
-
-          SAÍDA OBRIGATÓRIA (JSON):
-
-          {
-
-            "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
-
-            "year": "Ano (apenas números, ou vazio se não achar)"
-
-          }
-
-          `;
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
 
           // 2. Força o modelo FLASH (Free Tier Friendly)
           const response = await fetch(
