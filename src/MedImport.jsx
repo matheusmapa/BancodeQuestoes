@@ -11,14 +11,20 @@ import {
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
+
+// 1. Banco de Dados (Firestore) - Onde fica o updateDoc
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch 
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc 
 } from "firebase/firestore";
+
+// 2. Autenticação (Auth)
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 } from "firebase/auth";
+
+// 3. Arquivos (Storage) - Onde ficam uploadBytes, getDownloadURL
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc 
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
 } from "firebase/storage";
 
 // --- PDF.JS IMPORT (Dynamic CDN) ---
