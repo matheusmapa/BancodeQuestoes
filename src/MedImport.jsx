@@ -471,37 +471,56 @@ export default function App() {
       }
       throw lastError || new Error("Todas as chaves falharam.");
   };
-
-  // --- NOVO: FUNÇÃO DE PESQUISA GOOGLE (BANCAS) ---
+  // --- FUNÇÃO DE PESQUISA OTIMIZADA (Flash + Truncate) ---
   const searchQuestionSource = async (questionText) => {
+      // 1. Trunca o texto para economizar tokens e focar no início da questão
+      const searchPromptText = questionText.length > 400 
+        ? questionText.substring(0, 400) + "..." 
+        : questionText;
+
       return executeWithKeyRotation("Pesquisa Web", async (key) => {
           const systemPrompt = `Você é um verificador de questões de residência médica.
+
           Sua missão: Identificar a origem da questão usando a Pesquisa Google.
-          
+
           CRITÉRIOS DE ESCOLHA:
+
           - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE (priorize a prova principal sobre simulados).
 
           REGRAS DE FORMATAÇÃO DE NOME (CRÍTICO):
+
           - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
+
           - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
+
           - Exemplo Bom: "BA - SUS Bahia"
+
           - Exemplo Bom: "SP - USP São Paulo"
+
           - Exemplo Bom: "Nacional - ENARE"
 
+
+
           SAÍDA OBRIGATÓRIA (JSON):
+
           {
+
             "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
+
             "year": "Ano (apenas números, ou vazio se não achar)"
+
           }
+
           `;
 
+          // 2. Força o modelo FLASH (Free Tier Friendly)
           const response = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                contents: [{ parts: [{ text: `QUESTÃO PARA IDENTIFICAR:\n${questionText}` }] }],
+                contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
                 systemInstruction: { parts: [{ text: systemPrompt }] },
                 tools: [{ google_search: {} }] 
               })
@@ -513,15 +532,9 @@ export default function App() {
           const data = await response.json();
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
           
-          // Tenta limpar e parsear
           jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-          try {
-              return JSON.parse(jsonString);
-          } catch(e) {
-              // Fallback se não vier JSON: Tenta extrair linhas
-              console.warn("Search não retornou JSON, tentando extrair texto:", jsonString);
-              return { institution: "", year: "" };
-          }
+          try { return JSON.parse(jsonString); } 
+          catch(e) { return { institution: "", year: "" }; }
       });
   };
 
@@ -882,71 +895,93 @@ export default function App() {
           });
 
           // 3. Pós-Processamento e Pesquisa Web (NOVO - AGORA PARALELO)
+         // --- PÓS-PROCESSAMENTO INTELIGENTE (ECONOMIA DE API) ---
           let processedQuestions = await Promise.all(questions.map(async (q) => {
-              // --- START PARALLEL TASKS ---
+              
+              // 1. GERA O HASH PRIMEIRO (Antes de gastar API)
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
+
+              // 2. CONSULTA O BANCO DE DADOS
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
+
+              // 3. DECIDE SE EXECUTA AS IAs (Search + Audit)
+              // Se for duplicata, PULA as APIs e economiza cota!
+              const shouldRunAPIs = !isDuplicate; 
+
               let finalInst = q.institution;
               let finalYear = q.year;
               let sourceFound = false;
               let verificationStatus = 'unchecked';
               let verificationReason = '';
 
-              // TASK A: SEARCH WEB (if enabled)
-              const searchPromise = (async () => {
-                  if (doWebSearch && (!q.institution || !q.year)) {
-                      try {
-                          // Random delay to spread API hits
-                          await new Promise(r => setTimeout(r, Math.random() * 1000));
-                          const searchResult = await searchQuestionSource(q.text);
-                          return searchResult;
-                      } catch (err) {
-                          console.warn("Search failed:", err);
-                          return null;
+              if (shouldRunAPIs) {
+                  // --- FLUXO NORMAL (Gasta API) ---
+                  const doWebSearch = webSearchRef.current; // (No processWithAI use isWebSearchEnabled direto)
+                  const doDoubleCheck = doubleCheckRef.current; // (No processWithAI use isDoubleCheckEnabled direto)
+
+                  // TASK A: SEARCH WEB
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!q.institution || !q.year)) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 1000));
+                              return await searchQuestionSource(q.text);
+                          } catch (err) { return null; }
                       }
-                  }
-                  return null;
-              })();
+                      return null;
+                  })();
 
-              // TASK B: AUDIT (Double Check) (if enabled)
-              const auditPromise = (async () => {
-                  if (doDoubleCheck) {
-                      try {
-                          // Random delay to spread API hits
-                          await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                          return await verifyQuestionWithAI(q);
-                      } catch (err) {
-                          console.error("Audit failed:", err);
-                          return { status: 'unchecked', reason: 'Audit failed' };
+                  // TASK B: AUDIT
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
+                              return await verifyQuestionWithAI(q);
+                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
                       }
-                  }
-                  return { status: 'unchecked', reason: '' };
-              })();
+                      return { status: 'unchecked', reason: '' };
+                  })();
 
-              // WAIT FOR BOTH
-              const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+                  // WAIT FOR BOTH
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
 
-              // --- MERGE RESULTS ---
-              
-              // 1. Apply Search Results
-              if (searchResult) {
-                  if (searchResult.institution) {
-                      finalInst = searchResult.institution;
-                      sourceFound = true;
+                  // APLICA RESULTADOS
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
                   }
-                  if (searchResult.year) finalYear = searchResult.year;
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
+
+              } else {
+                  // --- FLUXO ECONÔMICO (Recupera do Banco) ---
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; // Mantém histórico se já achou fonte antes
+                      
+                      // Opcional: Se quiser re-auditar duplicatas, mude aqui.
+                      // Mas para economia máxima, mantemos o status antigo:
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
               }
 
-              // 2. Apply Overrides
+              // APLICA OVERRIDES (Sempre vencem)
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; // Fallback para processWithAI
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
 
-              // 3. Clean
               finalInst = cleanInstitutionText(finalInst);
 
-              // 4. Verification Data
-              verificationStatus = auditResult.status;
-              verificationReason = auditResult.reason;
-
-              const finalQ = {
+              return {
                   ...q,
                   institution: finalInst,
                   year: finalYear,
@@ -954,33 +989,12 @@ export default function App() {
                   topic: ovr.overrideTopic || q.topic,
                   sourceFound,
                   verificationStatus,
-                  verificationReason
+                  verificationReason,
+                  hashId,
+                  isDuplicate
               };
-
-              // 5. Hash & Duplicate Check (COM SMART FILL)
-              const hashId = await generateQuestionHash(finalQ.text);
-              let isDuplicate = false;
-              if (hashId) {
-                  const existingDoc = await getDoc(doc(db, "questions", hashId));
-                  if (existingDoc.exists()) {
-                      isDuplicate = true;
-                      
-                      // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
-                      const oldData = existingDoc.data();
-                      
-                      if (!finalQ.institution && oldData.institution) {
-                          finalQ.institution = oldData.institution;
-                      }
-                      
-                      if (!finalQ.year && oldData.year) {
-                          finalQ.year = oldData.year;
-                      }
-                  }
-              }
-
-              return { ...finalQ, hashId, isDuplicate };
           }));
-
+        
           const batch = writeBatch(db);
           let savedCount = 0;
           
@@ -1340,94 +1354,104 @@ export default function App() {
           // --- PÓS-PROCESSAMENTO (PESQUISA + LIMPEZA + AUDITORIA PARALELA) ---
           addLog('info', `Pós-processando ${questions.length} questões (Search + Audit)...`);
 
+          // --- PÓS-PROCESSAMENTO INTELIGENTE (ECONOMIA DE API) ---
           let processedQuestions = await Promise.all(questions.map(async (q) => {
-              // --- START PARALLEL TASKS ---
+              
+              // 1. GERA O HASH PRIMEIRO (Antes de gastar API)
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
+
+              // 2. CONSULTA O BANCO DE DADOS
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
+
+              // 3. DECIDE SE EXECUTA AS IAs (Search + Audit)
+              // Se for duplicata, PULA as APIs e economiza cota!
+              const shouldRunAPIs = !isDuplicate; 
+
               let finalInst = q.institution;
               let finalYear = q.year;
               let sourceFound = false;
               let verificationStatus = 'unchecked';
               let verificationReason = '';
 
-              // TASK A: SEARCH WEB (if enabled)
-              const searchPromise = (async () => {
-                  if (doWebSearch && (!q.institution || !q.year)) {
-                      try {
-                          await new Promise(r => setTimeout(r, Math.random() * 1000));
-                          const searchResult = await searchQuestionSource(q.text);
-                          return searchResult;
-                      } catch (err) {
-                          return null;
+              if (shouldRunAPIs) {
+                  // --- FLUXO NORMAL (Gasta API) ---
+                  const doWebSearch = webSearchRef.current; // (No processWithAI use isWebSearchEnabled direto)
+                  const doDoubleCheck = doubleCheckRef.current; // (No processWithAI use isDoubleCheckEnabled direto)
+
+                  // TASK A: SEARCH WEB
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!q.institution || !q.year)) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 1000));
+                              return await searchQuestionSource(q.text);
+                          } catch (err) { return null; }
                       }
-                  }
-                  return null;
-              })();
+                      return null;
+                  })();
 
-              // TASK B: AUDIT (Double Check) (if enabled)
-              const auditPromise = (async () => {
-                  if (doDoubleCheck) {
-                      try {
-                          await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                          return await verifyQuestionWithAI(q);
-                      } catch (err) {
-                          return { status: 'unchecked', reason: 'Audit failed' };
+                  // TASK B: AUDIT
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
+                              return await verifyQuestionWithAI(q);
+                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
                       }
-                  }
-                  return { status: 'unchecked', reason: '' };
-              })();
+                      return { status: 'unchecked', reason: '' };
+                  })();
 
-              // WAIT FOR BOTH
-              const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+                  // WAIT FOR BOTH
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
 
-              // --- MERGE RESULTS ---
-              if (searchResult) {
-                  if (searchResult.institution) {
-                      finalInst = searchResult.institution;
-                      sourceFound = true;
+                  // APLICA RESULTADOS
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
                   }
-                  if (searchResult.year) finalYear = searchResult.year;
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
+
+              } else {
+                  // --- FLUXO ECONÔMICO (Recupera do Banco) ---
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; // Mantém histórico se já achou fonte antes
+                      
+                      // Opcional: Se quiser re-auditar duplicatas, mude aqui.
+                      // Mas para economia máxima, mantemos o status antigo:
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
               }
 
+              // APLICA OVERRIDES (Sempre vencem)
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; // Fallback para processWithAI
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
 
               finalInst = cleanInstitutionText(finalInst);
 
-              verificationStatus = auditResult.status;
-              verificationReason = auditResult.reason;
-
-              const finalQ = {
+              return {
                   ...q,
-                  institution: finalInst, 
+                  institution: finalInst,
                   year: finalYear,
                   area: ovr.overrideArea || q.area,
                   topic: ovr.overrideTopic || q.topic,
                   sourceFound,
                   verificationStatus,
-                  verificationReason
+                  verificationReason,
+                  hashId,
+                  isDuplicate
               };
-
-              // Hash & Duplicata (COM SMART FILL)
-              const hashId = await generateQuestionHash(finalQ.text);
-              let isDuplicate = false;
-              if (hashId) {
-                  const existingDoc = await getDoc(doc(db, "questions", hashId));
-                  if (existingDoc.exists()) {
-                      isDuplicate = true;
-                      
-                      // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
-                      const oldData = existingDoc.data();
-                      
-                      if (!finalQ.institution && oldData.institution) {
-                          finalQ.institution = oldData.institution;
-                      }
-                      
-                      if (!finalQ.year && oldData.year) {
-                          finalQ.year = oldData.year;
-                      }
-                  }
-              }
-
-              return { ...finalQ, hashId, isDuplicate };
           }));
 
           const batch = writeBatch(db);
@@ -1718,88 +1742,105 @@ export default function App() {
         // --- PÓS-PROCESSAMENTO PARALELO (NOVO) ---
         showNotification('info', `Pós-processando ${questions.length} questões...`);
 
-        let processedQuestions = await Promise.all(questions.map(async (q) => {
-             // TASK A: SEARCH WEB (if enabled)
-             const searchPromise = (async () => {
-                if (doWebSearch && (!q.institution || !q.year)) {
-                    try {
-                        await new Promise(r => setTimeout(r, Math.random() * 1000));
-                        return await searchQuestionSource(q.text);
-                    } catch (err) {
-                        return null;
-                    }
-                }
-                return null;
-            })();
+       // --- PÓS-PROCESSAMENTO INTELIGENTE (ECONOMIA DE API) ---
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
+              
+              // 1. GERA O HASH PRIMEIRO (Antes de gastar API)
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
 
-            // TASK B: AUDIT (Double Check) (if enabled)
-            const auditPromise = (async () => {
-                if (isDoubleCheckEnabled) {
-                    try {
-                        await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                        return await verifyQuestionWithAI(q);
-                    } catch (err) {
-                        return { status: 'unchecked', reason: 'Audit failed' };
-                    }
-                }
-                return { status: 'unchecked', reason: '' };
-            })();
+              // 2. CONSULTA O BANCO DE DADOS
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
 
-            // WAIT FOR BOTH
-            const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+              // 3. DECIDE SE EXECUTA AS IAs (Search + Audit)
+              // Se for duplicata, PULA as APIs e economiza cota!
+              const shouldRunAPIs = !isDuplicate; 
 
-             // --- MERGE RESULTS ---
-             let finalInst = q.institution;
-             let finalYear = q.year;
-             let sourceFound = false;
+              let finalInst = q.institution;
+              let finalYear = q.year;
+              let sourceFound = false;
+              let verificationStatus = 'unchecked';
+              let verificationReason = '';
 
-             if (searchResult) {
-                 if (searchResult.institution) {
-                     finalInst = searchResult.institution;
-                     sourceFound = true;
-                 }
-                 if (searchResult.year) finalYear = searchResult.year;
-             }
+              if (shouldRunAPIs) {
+                  // --- FLUXO NORMAL (Gasta API) ---
+                  const doWebSearch = webSearchRef.current; // (No processWithAI use isWebSearchEnabled direto)
+                  const doDoubleCheck = doubleCheckRef.current; // (No processWithAI use isDoubleCheckEnabled direto)
 
-             if (ovr.overrideInst) finalInst = ovr.overrideInst;
-             if (ovr.overrideYear) finalYear = ovr.overrideYear;
+                  // TASK A: SEARCH WEB
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!q.institution || !q.year)) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 1000));
+                              return await searchQuestionSource(q.text);
+                          } catch (err) { return null; }
+                      }
+                      return null;
+                  })();
 
-             finalInst = cleanInstitutionText(finalInst);
+                  // TASK B: AUDIT
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          try {
+                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
+                              return await verifyQuestionWithAI(q);
+                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
+                      }
+                      return { status: 'unchecked', reason: '' };
+                  })();
 
-             const finalQ = {
-                 ...q,
-                 institution: finalInst,
-                 year: finalYear,
-                 area: ovr.overrideArea || q.area,
-                 topic: ovr.overrideTopic || q.topic,
-                 sourceFound,
-                 verificationStatus: auditResult.status,
-                 verificationReason: auditResult.reason
-             };
+                  // WAIT FOR BOTH
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
 
-             // 4. Hash Check (COM SMART FILL)
-             const hashId = await generateQuestionHash(finalQ.text);
-             let isDuplicate = false;
-             if (hashId) {
-                 const existingDoc = await getDoc(doc(db, "questions", hashId));
-                 if (existingDoc.exists()) {
-                    isDuplicate = true;
+                  // APLICA RESULTADOS
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
+                  }
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
 
-                    // --- SMART FILL: RECUPERA DADOS ANTIGOS ---
-                    const oldData = existingDoc.data();
-                    
-                    if (!finalQ.institution && oldData.institution) {
-                        finalQ.institution = oldData.institution;
-                    }
-                    
-                    if (!finalQ.year && oldData.year) {
-                        finalQ.year = oldData.year;
-                    }
-                 }
-             }
+              } else {
+                  // --- FLUXO ECONÔMICO (Recupera do Banco) ---
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; // Mantém histórico se já achou fonte antes
+                      
+                      // Opcional: Se quiser re-auditar duplicatas, mude aqui.
+                      // Mas para economia máxima, mantemos o status antigo:
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
+              }
 
-             return { ...finalQ, hashId, isDuplicate };
-        }));
+              // APLICA OVERRIDES (Sempre vencem)
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; // Fallback para processWithAI
+              if (ovr.overrideInst) finalInst = ovr.overrideInst;
+              if (ovr.overrideYear) finalYear = ovr.overrideYear;
+
+              finalInst = cleanInstitutionText(finalInst);
+
+              return {
+                  ...q,
+                  institution: finalInst,
+                  year: finalYear,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic,
+                  sourceFound,
+                  verificationStatus,
+                  verificationReason,
+                  hashId,
+                  isDuplicate
+              };
+          }));
 
         let savedCount = 0;
         const batch = writeBatch(db);
