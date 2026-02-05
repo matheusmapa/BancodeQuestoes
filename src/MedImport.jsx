@@ -228,16 +228,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('input');
   const [notification, setNotification] = useState(null);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
-  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); // <-- AGORA PADRÃO LIGADO
-  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); // NOVO: Chavinha de busca
+  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); 
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); 
   
-  // --- MUDANÇA 1: Estado para Filtros Múltiplos ---
-  // ... outros estados
+  // --- Estado para Filtros Múltiplos ---
   const [activeFilters, setActiveFilters] = useState(['verified', 'source']); 
-  // ADICIONE ESTA LINHA:
   const [filterLogic, setFilterLogic] = useState('AND'); // 'OR' (Soma) ou 'AND' (Restritivo)
   
-
   // Override States (Pré-definições)
   const [overrideInst, setOverrideInst] = useState('');
   const [overrideYear, setOverrideYear] = useState('');
@@ -288,9 +285,9 @@ export default function App() {
   const apiKeysRef = useRef(apiKeys);
   const keyRotationIndex = useRef(0);
   const doubleCheckRef = useRef(isDoubleCheckEnabled); 
-  const webSearchRef = useRef(isWebSearchEnabled); // Ref para o novo toggle
+  const webSearchRef = useRef(isWebSearchEnabled); 
   const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
-  const currentChunkIndexRef = useRef(currentChunkIndex); // REF PARA O INDEX
+  const currentChunkIndexRef = useRef(currentChunkIndex); 
 
   const CHUNK_SIZE = 10; 
 
@@ -560,6 +557,7 @@ export default function App() {
           if (filterKey === 'source') return !!q.sourceFound;
           if (filterKey === 'no_source') return !q.sourceFound;
           if (filterKey === 'duplicates') return !!q.isDuplicate;
+          if (filterKey === 'needs_image') return !!q.needsImage; // NOVO
           return true; // Fallback
       });
 
@@ -579,9 +577,10 @@ export default function App() {
       'all': 'Todas',
       'verified': 'Verificadas',
       'source': 'Com Fonte',
-      'no_source': 'Sem Fonte', // NOVO LABEL
+      'no_source': 'Sem Fonte', 
       'suspicious': 'Suspeitas',
-      'duplicates': 'Duplicadas'
+      'duplicates': 'Duplicadas',
+      'needs_image': 'Requer Imagem' // NOVO LABEL
   };
 
   // --- LOGIC: BATCH IMAGE PROCESSING ---
@@ -1138,17 +1137,22 @@ export default function App() {
                 SUA MISSÃO:
                 1. Identificar questões (Enunciado + Alternativas).
                 
-                2. CLASSIFICAÇÃO (OBRIGATÓRIO):
+                2. DETECÇÃO DE IMAGEM (NOVO):
+                   - Analise se o enunciado cita ou DEPENDE de uma imagem, gráfico, ECG, Radiografia ou Tabela que não está no texto.
+                   - Termos comuns: "Vide figura", "A imagem mostra", "Observe o ECG", "Raio-X anexo".
+                   - Se precisar de imagem, marque "needsImage": true. Caso contrário, false.
+
+                3. CLASSIFICAÇÃO (OBRIGATÓRIO):
                    - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
                    - É CRUCIAL que a classificação esteja correta.
                    - LISTA DE CLASSIFICAÇÃO VÁLIDA:
                    ${JSON.stringify(activeThemesMap)}
 
-                3. GABARITO E COMENTÁRIO:
+                4. GABARITO E COMENTÁRIO:
                    - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
                    - Gere sempre um campo "explanation".
                 
-                4. DADOS DE CABEÇALHO:
+                5. DADOS DE CABEÇALHO:
                    - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
                    - Procure pelo nome do HOSPITAL ou BANCA.
                    - Se não encontrar, deixe "".
@@ -1162,7 +1166,8 @@ export default function App() {
                 [{ 
                     "institution": "String", "year": Number|"", "area": "String", "topic": "String", 
                     "text": "String", "options": [{"id": "a", "text": "..."}], 
-                    "correctOptionId": "char", "explanation": "String" 
+                    "correctOptionId": "char", "explanation": "String",
+                    "needsImage": boolean
                 }]
               `;
 
@@ -1519,14 +1524,22 @@ export default function App() {
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
               REGRAS:
-              1. Retorne APENAS o JSON (sem markdown).
-              2. CLASSIFICAÇÃO (OBRIGATÓRIO):
+              1. Identificar questões (Enunciado + Alternativas).
+
+              2. DETECÇÃO DE IMAGEM (NOVO):
+                 - Analise se o enunciado cita ou DEPENDE de uma imagem, gráfico, ECG, Radiografia ou Tabela que não está no texto.
+                 - Termos comuns: "Vide figura", "A imagem mostra", "Observe o ECG", "Raio-X anexo".
+                 - Se precisar de imagem, marque "needsImage": true. Caso contrário, false.
+
+              3. CLASSIFICAÇÃO (OBRIGATÓRIO):
                  - Classifique CADA questão usando a lista abaixo.
                  - LISTA VÁLIDA: ${JSON.stringify(activeThemesMap)}
-              3. GABARITO E COMENTÁRIO: 
+
+              4. GABARITO E COMENTÁRIO: 
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
                  - Gere sempre um campo "explanation".
-              4. DADOS DE CABEÇALHO:
+
+              5. DADOS DE CABEÇALHO:
                  - IGNORE nomes de cursos preparatórios no campo "institution".
               
               Formato Saída:
@@ -1534,7 +1547,8 @@ export default function App() {
                 {
                   "institution": "String", "year": Number|String, "area": "String", "topic": "String",
                   "text": "String", "options": [{"id": "a", "text": "String"}],
-                  "correctOptionId": "char", "explanation": "String"
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
                 }
               ]
             `;
@@ -1547,8 +1561,6 @@ export default function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: contentsPayload })
             });
-
-            // ... dentro de processWithAI ...
             
             const data = await response.json();
             if (data.error) throw new Error(data.error.message);
@@ -1559,9 +1571,6 @@ export default function App() {
             const parsed = safeJsonParse(jsonString);
             return parsed.filter(q => q.options && q.options.length >= 2);
         });
-
-        // Pós-processamento e Auditoria
-        // ... continua o código igual ...
 
         // Pós-processamento e Auditoria
         let finalQuestions = await Promise.all(questions.map(async (q) => {
@@ -2352,6 +2361,7 @@ export default function App() {
                                 <button onClick={() => toggleFilter('no_source')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertOctagon size={14}/> Sem Fonte</button>
                                 <button onClick={() => toggleFilter('suspicious')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><AlertTriangle size={14}/> Suspeitas</button>
                                 <button onClick={() => toggleFilter('duplicates')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><Copy size={14}/> Duplicadas</button>
+                                <button onClick={() => toggleFilter('needs_image')} className={`px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap border flex items-center gap-1 transition-all ${activeFilters.includes('needs_image') ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}><ImageIcon size={14}/> Requer Imagem</button>
                             </div>
                         </div>
 
@@ -2417,6 +2427,13 @@ export default function App() {
                                 {q.isDuplicate && (
                                     <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
                                         <Copy size={12}/> DUPLICADA
+                                    </div>
+                                )}
+
+                                {/* Tag: Precisa de Imagem (NOVO) */}
+                                {q.needsImage && (
+                                    <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse border border-purple-200">
+                                        <ImageIcon size={12}/> REQUER IMAGEM
                                     </div>
                                 )}
                             </div>
