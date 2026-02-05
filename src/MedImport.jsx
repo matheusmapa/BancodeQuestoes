@@ -924,7 +924,7 @@ export default function App() {
 
               if (shouldRunAPIs) {
                   // --- FLUXO NORMAL (Gasta API) ---
-                  const doWebSearch = webSearchRef.current; // (No processWithAI use isWebSearchEnabled direto)
+                  const doWebSearch = webSearchRef.current; 
                   const doDoubleCheck = doubleCheckRef.current; // (No processWithAI use isDoubleCheckEnabled direto)
 
                   // TASK A: SEARCH WEB
