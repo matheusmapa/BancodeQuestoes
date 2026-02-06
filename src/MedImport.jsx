@@ -469,15 +469,51 @@ export default function App() {
       throw lastError || new Error("Todas as chaves falharam. Aguardando recarga...");
   };
 
-  // --- FUNÇÃO DE PESQUISA OTIMIZADA (COM BLINDAGEM) ---
+  // --- HELPER: SLEEP ---
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // --- HELPER: EXECUTOR BLINDADO (RETRY INFINITO) ---
+  // Tenta executar a função indefinidamente até obter sucesso.
+  // Bloqueia o fluxo propositalmente para não pular etapas.
+  const executeBlindlyWithRetry = async (operationName, taskFn, setStatusLog) => {
+      let attempts = 0;
+      
+      while (true) { // Loop infinito até o return
+          try {
+              // Tenta usar o rotacionador de chaves existente
+              return await executeWithKeyRotation(operationName, taskFn);
+          } catch (error) {
+              attempts++;
+              const msg = error.message || "Erro desconhecido";
+              
+              // Definição do tempo de espera (Backoff Exponencial limitado a 30s)
+              // Tentativa 1: 2s, Tentativa 2: 4s, ... Max: 30s
+              const waitTime = Math.min(2000 * Math.pow(1.5, attempts), 30000); 
+              
+              // Loga no console do navegador e, se possível, na UI via callback
+              console.warn(`[${operationName}] Tentativa ${attempts} falhou. Retentando em ${waitTime/1000}s... Erro: ${msg}`);
+              
+              if (setStatusLog) {
+                  setStatusLog('warning', `[${operationName}] Falha na tentativa ${attempts}. Aguardando ${Math.ceil(waitTime/1000)}s...`);
+              }
+
+              // Pausa a execução aqui antes de tentar de novo
+              await sleep(waitTime);
+          }
+      }
+  };
+
+  // --- FUNÇÃO DE PESQUISA BLINDADA (LOOP INFINITO ATÉ EXECUTAR) ---
   const searchQuestionSource = async (questionText) => {
       const searchPromptText = questionText.length > 400 
         ? questionText.substring(0, 400) + "..." 
         : questionText;
 
-      return executeWithKeyRotation("Pesquisa Web", async (key) => {
-          try {
-              const systemPrompt = `Você é um verificador de questões de residência médica.
+      const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
+
+      // Chama o executor blindado. Ele SÓ retorna quando der certo.
+      return executeBlindlyWithRetry("Pesquisa Web", async (key) => {
+          const systemPrompt = `Você é um verificador de questões de residência médica.
               Sua missão: Identificar a origem da questão usando a Pesquisa Google.
               CRITÉRIOS DE ESCOLHA:
               - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE.
@@ -492,47 +528,48 @@ export default function App() {
                 "year": "Ano (apenas números, ou vazio se não achar)"
               }`;
 
-              const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
-                    systemInstruction: { parts: [{ text: systemPrompt }] },
-                    tools: [{ google_search: {} }] 
-                  })
-                }
-              );
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                tools: [{ google_search: {} }] 
+              })
+            }
+          );
 
-              if (!response.ok) {
-                  const errData = await response.json().catch(() => ({}));
-                  throw new Error(errData.error?.message || "Erro na API Search");
-              }
-              
-              const data = await response.json();
-              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              
-              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-              try { return JSON.parse(jsonString); } 
-              catch(e) { return { institution: "", year: "" }; }
-              
-          } catch (err) {
-              const msg = err.message || "";
-              // BLINDAGEM: Se for cota, lança erro para cima para forçar retry
-              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) {
-                  throw err;
-              }
-              return { institution: "", year: "" }; // Erro normal (ex: timeout), segue sem fonte
+          if (!response.ok) {
+              const errData = await response.json().catch(() => ({}));
+              throw new Error(errData.error?.message || "Erro HTTP na API Search");
           }
-      });
+          
+          const data = await response.json();
+          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          
+          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+          
+          // Se o JSON vier quebrado, isso lança erro e força o Retry (o que é bom!)
+          try { 
+              return JSON.parse(jsonString); 
+          } catch(e) { 
+              // Se a IA respondeu mas não veio JSON, retornamos vazio VÁLIDO (busca feita, nada encontrado)
+              // para não ficar num loop infinito de erro de sintaxe se a IA estiver "burra" hoje.
+              console.warn("JSON inválido na busca, assumindo não encontrado.");
+              return { institution: "", year: "" }; 
+          }
+      }, addLog); // Passamos addLog para ele avisar na UI se estiver travado tentando
   };
 
-  // --- LOGIC: VERIFICATION AGENT (COM BLINDAGEM) ---
+  // --- LOGIC: VERIFICATION AGENT BLINDADO ---
   const verifyQuestionWithAI = async (questionData) => {
-      return executeWithKeyRotation("Auditoria", async (key) => {
-          try {
-              const verifyPrompt = `
+      const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
+      
+      // Usa o executor blindado. Se falhar, tenta para sempre.
+      return executeBlindlyWithRetry("Auditoria", async (key) => {
+          const verifyPrompt = `
     Você é um Auditor Sênior de Questões Médicas.
     Sua missão é validar se esta questão é SEGURA e COERENTE para um banco de dados de estudo.
     ATENÇÃO: Você NÃO tem acesso à internet. Use exclusivamente seu conhecimento médico treinado.
@@ -578,38 +615,30 @@ export default function App() {
     }
 `;
 
-              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    contents: [{ parts: [{ text: verifyPrompt }] }], 
-                })
-              });
-              
-              if (!response.ok) {
-                   const errData = await response.json().catch(() => ({}));
-                   throw new Error(errData.error?.message || "Erro na API Audit");
-              }
-
-              const data = await response.json();
-              
-              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-              jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
-              const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-              if (jsonMatch) jsonString = jsonMatch[0];
-
-              return safeJsonParse(jsonString);
-              
-          } catch (err) {
-              const msg = err.message || "";
-              // BLINDAGEM: Se for cota, lança erro para cima para forçar retry
-              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) {
-                  throw err;
-              }
-              // Erro de lógica, segue como não checado
-              return { isValid: true, reason: "Falha na auditoria (ignorado)" };
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                contents: [{ parts: [{ text: verifyPrompt }] }], 
+            })
+          });
+          
+          if (!response.ok) {
+               const errData = await response.json().catch(() => ({}));
+               throw new Error(errData.error?.message || "Erro na API Audit");
           }
-      }).then(result => {
+
+          const data = await response.json();
+          
+          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+          const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+          if (jsonMatch) jsonString = jsonMatch[0];
+
+          // Se o JSON falhar, lança erro para o Retry pegar e tentar de novo
+          return safeJsonParse(jsonString);
+          
+      }, addLog).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
               reason: result.reason || (result.isValid ? "Validado (Web/Lógica)" : "Erro Fatual ou Divergência Grave")
@@ -951,30 +980,16 @@ export default function App() {
 
                   const searchPromise = (async () => {
                       if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 1000));
-                              return await searchQuestionSource(q.text);
-                          } catch (err) { 
-                              // BLINDAGEM: Se for cota, joga erro pra cima pra forçar retry do batch
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return null; 
-                          }
+                         // ATENÇÃO: Agora searchQuestionSource tem retry interno, então não precisamos de try/catch aqui
+                         return await searchQuestionSource(q.text);
                       }
                       return null;
                   })();
 
                   const auditPromise = (async () => {
                       if (doDoubleCheck) {
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                              return await verifyQuestionWithAI(q);
-                          } catch (err) { 
-                              // BLINDAGEM
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return { status: 'unchecked', reason: 'Audit failed' }; 
-                          }
+                          // ATENÇÃO: Agora verifyQuestionWithAI tem retry interno
+                          return await verifyQuestionWithAI(q);
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -1405,30 +1420,16 @@ export default function App() {
 
                   const searchPromise = (async () => {
                       if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 1000));
-                              return await searchQuestionSource(q.text);
-                          } catch (err) { 
-                              // BLINDAGEM: Throw erro se for cota
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return null; 
-                          }
+                         // ATENÇÃO: Agora com retry interno
+                         return await searchQuestionSource(q.text);
                       }
                       return null;
                   })();
 
                   const auditPromise = (async () => {
                       if (doDoubleCheck) {
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                              return await verifyQuestionWithAI(q);
-                          } catch (err) { 
-                              // BLINDAGEM: Throw erro se for cota
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return { status: 'unchecked', reason: 'Audit failed' }; 
-                          }
+                          // ATENÇÃO: Agora com retry interno
+                          return await verifyQuestionWithAI(q);
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -1804,30 +1805,16 @@ export default function App() {
 
                   const searchPromise = (async () => {
                       if (doWebSearch && (!preCleanedInst || !q.year)) { // VALOR LIMPO
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 1000));
-                              return await searchQuestionSource(q.text);
-                          } catch (err) { 
-                              // BLINDAGEM: Throw erro se for cota
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return null; 
-                          }
+                         // ATENÇÃO: Agora com retry interno
+                         return await searchQuestionSource(q.text);
                       }
                       return null;
                   })();
 
                   const auditPromise = (async () => {
                       if (doDoubleCheck) {
-                          try {
-                              await new Promise(r => setTimeout(r, Math.random() * 500)); 
-                              return await verifyQuestionWithAI(q);
-                          } catch (err) { 
-                              // BLINDAGEM: Throw erro se for cota
-                              const msg = err.message || "";
-                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
-                              return { status: 'unchecked', reason: 'Audit failed' }; 
-                          }
+                          // ATENÇÃO: Agora com retry interno
+                          return await verifyQuestionWithAI(q);
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
