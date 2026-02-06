@@ -472,46 +472,47 @@ export default function App() {
   // --- HELPER: SLEEP ---
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  // --- HELPER: EXECUTOR BLINDADO (RETRY INFINITO) ---
-  // Tenta executar a função indefinidamente até obter sucesso.
-  // Bloqueia o fluxo propositalmente para não pular etapas.
-  const executeBlindlyWithRetry = async (operationName, taskFn, setStatusLog) => {
+  // --- HELPER: EXECUTOR BLINDADO (RETRY INFINITO COM PAUSA) ---
+  const executeBlindlyWithRetry = async (operationName, taskFn, setStatusLog, shouldStopFn) => {
       let attempts = 0;
       
-      while (true) { // Loop infinito até o return
+      while (true) {
+          // 1. CHECAGEM PRÉVIA: Se o usuário pediu pausa, aborta ANTES de tentar
+          if (shouldStopFn && shouldStopFn()) {
+               throw new Error("ABORT_RETRY"); 
+          }
+
           try {
-              // Tenta usar o rotacionador de chaves existente
               return await executeWithKeyRotation(operationName, taskFn);
           } catch (error) {
+              // 2. CHECAGEM PÓS-ERRO: Se o usuário pediu pausa durante o erro, aborta
+              if (shouldStopFn && shouldStopFn()) {
+                   throw new Error("ABORT_RETRY");
+              }
+
               attempts++;
               const msg = error.message || "Erro desconhecido";
-              
-              // Definição do tempo de espera (Backoff Exponencial limitado a 30s)
-              // Tentativa 1: 2s, Tentativa 2: 4s, ... Max: 30s
               const waitTime = Math.min(2000 * Math.pow(1.5, attempts), 30000); 
               
-              // Loga no console do navegador e, se possível, na UI via callback
               console.warn(`[${operationName}] Tentativa ${attempts} falhou. Retentando em ${waitTime/1000}s... Erro: ${msg}`);
               
               if (setStatusLog) {
-                  setStatusLog('warning', `[${operationName}] Falha na tentativa ${attempts}. Aguardando ${Math.ceil(waitTime/1000)}s...`);
+                  setStatusLog('warning', `[${operationName}] Falha ${attempts}. Aguardando ${Math.ceil(waitTime/1000)}s... (Pause para cancelar)`);
               }
 
-              // Pausa a execução aqui antes de tentar de novo
               await sleep(waitTime);
           }
       }
   };
 
   // --- FUNÇÃO DE PESQUISA BLINDADA (LOOP INFINITO ATÉ EXECUTAR) ---
-  const searchQuestionSource = async (questionText) => {
+  const searchQuestionSource = async (questionText, checkStop) => {
       const searchPromptText = questionText.length > 400 
         ? questionText.substring(0, 400) + "..." 
         : questionText;
 
       const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
 
-      // Chama o executor blindado. Ele SÓ retorna quando der certo.
       return executeBlindlyWithRetry("Pesquisa Web", async (key) => {
           const systemPrompt = `Você é um verificador de questões de residência médica.
               Sua missão: Identificar a origem da questão usando a Pesquisa Google.
@@ -548,26 +549,21 @@ export default function App() {
           
           const data = await response.json();
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
           jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
           
-          // Se o JSON vier quebrado, isso lança erro e força o Retry (o que é bom!)
           try { 
               return JSON.parse(jsonString); 
           } catch(e) { 
-              // Se a IA respondeu mas não veio JSON, retornamos vazio VÁLIDO (busca feita, nada encontrado)
-              // para não ficar num loop infinito de erro de sintaxe se a IA estiver "burra" hoje.
               console.warn("JSON inválido na busca, assumindo não encontrado.");
               return { institution: "", year: "" }; 
           }
-      }, addLog); // Passamos addLog para ele avisar na UI se estiver travado tentando
+      }, addLog, checkStop); 
   };
 
   // --- LOGIC: VERIFICATION AGENT BLINDADO ---
-  const verifyQuestionWithAI = async (questionData) => {
+  const verifyQuestionWithAI = async (questionData, checkStop) => {
       const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
       
-      // Usa o executor blindado. Se falhar, tenta para sempre.
       return executeBlindlyWithRetry("Auditoria", async (key) => {
           const verifyPrompt = `
     Você é um Auditor Sênior de Questões Médicas.
@@ -629,16 +625,13 @@ export default function App() {
           }
 
           const data = await response.json();
-          
           let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
           jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
           const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
           if (jsonMatch) jsonString = jsonMatch[0];
-
-          // Se o JSON falhar, lança erro para o Retry pegar e tentar de novo
           return safeJsonParse(jsonString);
           
-      }, addLog).then(result => {
+      }, addLog, checkStop).then(result => {
           return {
               status: result.isValid ? 'verified' : 'suspicious',
               reason: result.reason || (result.isValid ? "Validado (Web/Lógica)" : "Erro Fatual ou Divergência Grave")
@@ -878,7 +871,10 @@ export default function App() {
           const base64Data = await fileToBase64(nextImg.file);
           const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
 
-          const questions = await executeWithKeyRotation("Imagem Batch", async (key) => {
+          // Define callback de parada para o Batch
+          const shouldStopBatch = () => batchStatusRef.current === 'pausing';
+
+          const questions = await executeBlindlyWithRetry("Imagem Batch", async (key) => {
               const systemPrompt = `
               Você é um especialista em banco de dados médicos (MedMaps).
               Analise o conteúdo e gere um JSON ESTRITO.
@@ -945,7 +941,7 @@ export default function App() {
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
               const parsed = safeJsonParse(jsonString);
               return parsed.filter(q => q.options && q.options.length >= 2);
-          });
+          }, addBatchLog, shouldStopBatch);
 
           // Pós-Processamento Inteligente
           let processedQuestions = await Promise.all(questions.map(async (q) => {
@@ -964,8 +960,6 @@ export default function App() {
               const shouldRunAPIs = !isDuplicate; 
 
               // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
-              // Limpa "Medcurso" ANTES de decidir se precisa pesquisar.
-              // Assim, se a IA extraiu lixo, vira "" e ativa o gatilho da pesquisa.
               let preCleanedInst = cleanInstitutionText(q.institution);
               
               let finalInst = preCleanedInst;
@@ -979,17 +973,15 @@ export default function App() {
                   const doDoubleCheck = doubleCheckRef.current; 
 
                   const searchPromise = (async () => {
-                      if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
-                         // ATENÇÃO: Agora searchQuestionSource tem retry interno, então não precisamos de try/catch aqui
-                         return await searchQuestionSource(q.text);
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { 
+                         return await searchQuestionSource(q.text, shouldStopBatch);
                       }
                       return null;
                   })();
 
                   const auditPromise = (async () => {
                       if (doDoubleCheck) {
-                          // ATENÇÃO: Agora verifyQuestionWithAI tem retry interno
-                          return await verifyQuestionWithAI(q);
+                          return await verifyQuestionWithAI(q, shouldStopBatch);
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -1013,7 +1005,6 @@ export default function App() {
                   }
               }
 
-              // Limpeza final (garantia)
               finalInst = cleanInstitutionText(finalInst);
 
               const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic };
@@ -1063,26 +1054,23 @@ export default function App() {
 
       } catch (error) {
           console.error(error);
-          const errorMessage = error.message || "Erro desconhecido";
           
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429") || errorMessage.includes("Resource has been exhausted")) {
-              addBatchLog('warning', `Todas as chaves esgotadas. Aguardando recarga (60s)...`);
-              // MODO INFINITO: Não marca erro, tenta de novo a mesma imagem daqui a pouco
-              setConsecutiveErrors(0);
-              
-              setTimeout(() => {
-                  batchProcessorRef.current = false;
-                  processNextBatchImage();
-              }, 60000);
-          } else {
-              addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
-              setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
-              
-              setTimeout(() => {
-                  batchProcessorRef.current = false;
-                  processNextBatchImage();
-              }, 1000);
+          if (error.message === 'ABORT_RETRY') {
+              addBatchLog('warning', `Processamento interrompido manualmente pelo usuário.`);
+              setBatchStatus('paused');
+              batchProcessorRef.current = false;
+              showNotification('info', 'Pausado! Agora você pode remover a imagem se desejar.');
+              return;
           }
+
+          const errorMessage = error.message || "Erro desconhecido";
+          addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
+          setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
+          
+          setTimeout(() => {
+              batchProcessorRef.current = false;
+              processNextBatchImage();
+          }, 1000);
       }
   };
 
@@ -1277,18 +1265,15 @@ export default function App() {
       const currentFile = pdfFile; 
       const activeIndex = currentChunkIndexRef.current;
 
-      // --- FIX: CHECKPOINT DE PAUSA (O Guarda de Trânsito) ---
-      // Se o usuário clicou em Pausar enquanto o sistema esperava a cota, ele para AQUI.
       if (currentStatus === 'pausing' || currentStatus === 'paused') {
           if (currentStatus === 'pausing') {
               setPdfStatus('paused');
               addLog('warning', 'Pausa solicitada. Sistema parado com segurança.');
           }
-          processorRef.current = false; // Libera o processador
-          return; // Aborta a execução
+          processorRef.current = false; 
+          return; 
       }
-      // -------------------------------------------------------
-
+      
       if (processorRef.current) return; 
       if (currentStatus === 'completed') return;
       
@@ -1309,7 +1294,10 @@ export default function App() {
       try {
           const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
 
-          const questions = await executeWithKeyRotation("Geração", async (key) => {
+          // Define callback de parada para o PDF
+          const shouldStopPdf = () => pdfStatusRef.current === 'pausing';
+
+          const questions = await executeBlindlyWithRetry("Geração", async (key) => {
               const systemPrompt = `
               Você é um especialista em banco de dados médicos (MedMaps).
               Analise o conteúdo e gere um JSON ESTRITO.
@@ -1384,7 +1372,7 @@ export default function App() {
               let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
               const parsed = safeJsonParse(jsonString);
               return parsed.filter(q => q.options && q.options.length >= 2);
-          });
+          }, addLog, shouldStopPdf);
 
           addLog('info', `Pós-processando ${questions.length} questões (Search + Audit)...`);
 
@@ -1403,11 +1391,7 @@ export default function App() {
 
               const shouldRunAPIs = !isDuplicate; 
 
-              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
-              // Limpa "Medcurso" ANTES de decidir se precisa pesquisar.
-              // Assim, se a IA extraiu lixo, vira "" e ativa o gatilho da pesquisa.
               let preCleanedInst = cleanInstitutionText(q.institution);
-
               let finalInst = preCleanedInst;
               let finalYear = q.year;
               let sourceFound = false;
@@ -1419,17 +1403,15 @@ export default function App() {
                   const doDoubleCheck = doubleCheckRef.current; 
 
                   const searchPromise = (async () => {
-                      if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
-                         // ATENÇÃO: Agora com retry interno
-                         return await searchQuestionSource(q.text);
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { 
+                         return await searchQuestionSource(q.text, shouldStopPdf);
                       }
                       return null;
                   })();
 
                   const auditPromise = (async () => {
                       if (doDoubleCheck) {
-                          // ATENÇÃO: Agora com retry interno
-                          return await verifyQuestionWithAI(q);
+                          return await verifyQuestionWithAI(q, shouldStopPdf);
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
@@ -1448,13 +1430,11 @@ export default function App() {
                       finalInst = oldData.institution || q.institution;
                       finalYear = oldData.year || q.year;
                       sourceFound = oldData.sourceFound || false; 
-                      
                       verificationStatus = oldData.verificationStatus || 'unchecked';
                       verificationReason = oldData.verificationReason || 'Duplicata recuperada';
                   }
               }
 
-              // Limpeza final (garantia)
               finalInst = cleanInstitutionText(finalInst);
 
               const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; 
@@ -1532,79 +1512,30 @@ export default function App() {
 
       } catch (error) {
           console.error(error);
-          const errorMessage = error.message || "";
-          const retrySeconds = extractRetryTime(errorMessage);
           
-          let delay = 3000;
+          if (error.message === 'ABORT_RETRY') {
+              addLog('warning', `Processamento interrompido manualmente pelo usuário.`);
+              setPdfStatus('paused');
+              processorRef.current = false;
+              return;
+          }
 
-          if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429") || errorMessage.includes("Resource has been exhausted")) {
-              if (retrySeconds) {
-                  delay = (retrySeconds * 1000) + 2000; 
-                  addLog('warning', `Todas as chaves esgotadas. Aguardando ${Math.ceil(retrySeconds)}s...`);
-              } else {
-                  delay = 60000; 
-                  addLog('warning', `Todas as chaves esgotadas. Aguardando 60s...`);
-              }
-              
-              // --- TRUQUE DO MODO INFINITO ---
-              // Zera os erros consecutivos para impedir a pausa automática de segurança.
-              // O sistema ficará preso neste loop (tentando a mesma fatia) até conseguir.
-              setConsecutiveErrors(0);
-              
+          const errorMessage = error.message || "";
+          const newErrorCount = chunk.errorCount + 1;
+          const delay = 3000 * Math.pow(2, newErrorCount);
+          
+          if (newErrorCount >= 3) {
+              addLog('error', `Fatia ${chunk.pages} marcada com ERRO APÓS 3 TENTATIVAS.`);
               setPdfChunks(prev => {
                   const newChunks = [...prev];
-                  newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'pending' };
+                  newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'error', errorCount: newErrorCount };
                   return newChunks;
               });
-
-              setTimeout(() => {
-                  processorRef.current = false;
-                  processNextChunk();
-              }, delay);
-
-              return; // Sai daqui para não rodar a lógica de erro comum abaixo
-          } 
-          
-          if (errorMessage.includes("API key expired")) {
-              setPdfStatus('paused');
-              addLog('error', `ERRO CRÍTICO: Chaves API Inválidas! Pausado.`);
-              showNotification('error', 'Chaves API Inválidas.');
+              setConsecutiveErrors(0);
               processorRef.current = false;
-              return; 
-          } else {
-              const newErrorCount = chunk.errorCount + 1;
-              delay = 3000 * Math.pow(2, newErrorCount);
               
-              if (newErrorCount >= 3) {
-                  addLog('error', `Fatia ${chunk.pages} marcada com ERRO APÓS 3 TENTATIVAS.`);
-                  setPdfChunks(prev => {
-                      const newChunks = [...prev];
-                      newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'error', errorCount: newErrorCount };
-                      return newChunks;
-                  });
-                  setConsecutiveErrors(0);
-                  processorRef.current = false;
-                  
-                  setCurrentChunkIndex(prev => prev + 1);
-                  setTimeout(() => processNextChunk(), 1000); 
-                  return;
-              }
-          }
-
-          const newConsecutiveErrors = consecutiveErrors + 1;
-          setConsecutiveErrors(newConsecutiveErrors);
-
-          if (newConsecutiveErrors >= 10) { 
-              setPdfStatus('paused'); 
-              addLog('error', 'PAUSADO: Muitos erros consecutivos (não relacionados a cota).');
-              processorRef.current = false;
-              return; 
-          }
-
-          if (pdfStatusRef.current === 'pausing') {
-              setPdfStatus('paused');
-              addLog('warning', 'Pausa solicitada durante erro. Sistema pausado.');
-              processorRef.current = false;
+              setCurrentChunkIndex(prev => prev + 1);
+              setTimeout(() => processNextChunk(), 1000); 
               return;
           }
 
