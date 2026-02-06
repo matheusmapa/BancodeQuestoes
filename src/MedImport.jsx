@@ -144,14 +144,14 @@ const generateQuestionHash = async (text) => {
     
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
 };
-// --- HELPER: CLEAN INSTITUTION (ATUALIZADO) ---
+
+// --- HELPER: CLEAN INSTITUTION (ATUALIZADO - ANTI-CURSINHO) ---
 const cleanInstitutionText = (inst) => {
     if (!inst) return "";
     let text = inst.toString().trim();
     const lower = text.toLowerCase();
 
     // 1. Lista Negra de Cursinhos (Meta-dados que não são bancas)
-    // Adicione aqui qualquer outro nome que costuma vazar
     const blockList = [
         "medcurso", "medgrupo", "medcel", "medcof", 
         "sanar", "estrategia", "hardwork", "sic", "residencia médica"
@@ -173,6 +173,7 @@ const cleanInstitutionText = (inst) => {
 
     return text;
 };
+
 // --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
 const extractRetryTime = (message) => {
     const match = message.match(/retry in ([0-9\.]+)s/);
@@ -289,8 +290,7 @@ export default function App() {
   // Estado para loading de imagem individual
   const [uploadingImageId, setUploadingImageId] = useState(null);
   
-  // --- Estado para Filtros Múltiplos ---
-  // MUDANÇA: 'text_only' ativado por padrão
+  // --- Estado para Filtros Múltiplos (ATUALIZADO: text_only por padrão) ---
   const [activeFilters, setActiveFilters] = useState(['verified', 'source', 'text_only']); 
   const [filterLogic, setFilterLogic] = useState('AND'); 
   
@@ -853,35 +853,33 @@ export default function App() {
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
+              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
+              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
+              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
               1. LIMPEZA DE INÍCIO:
                  - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
-                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
                  - Comece o texto direto no conteúdo do caso clínico.
 
-              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
                  - O campo "text" DEVE TERMINAR antes das alternativas.
                  - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
                  - As alternativas DEVEM ser extraídas separadamente no array "options".
 
               3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
-                 - O objetivo é detectar se a questão É IMPOSSÍVEL de responder sem ver o anexo.
-                 
                  - MARQUE "needsImage": true SE:
                    * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
-                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado", "Pela análise da lâmina".
-                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que, forçando a olhar)", "Qual o diagnóstico da imagem?".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
 
-                 - MARQUE "needsImage": false SE (CASOS DE PEGADINHA):
-                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura", "TC mostrou tumor".
-                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia", "Paciente trouxe ultrassom anterior".
-
-                 - NO CASO ESPECÍFICO DO USUÁRIO: "De acordo com o caso descrito e com o exame de imagem" -> TRUE (Pois cria dependência explícita).
-
-              4. CLASSIFICAÇÃO:
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
                  - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
-
-              5. GABARITO:
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
                  - Gere sempre "explanation".
 
@@ -1049,6 +1047,8 @@ export default function App() {
           if (errorMessage.includes("Quota exceeded") || errorMessage.includes("429") || errorMessage.includes("Resource has been exhausted")) {
               addBatchLog('warning', `Todas as chaves esgotadas. Aguardando recarga (60s)...`);
               // MODO INFINITO: Não marca erro, tenta de novo a mesma imagem daqui a pouco
+              setConsecutiveErrors(0);
+              
               setTimeout(() => {
                   batchProcessorRef.current = false;
                   processNextBatchImage();
@@ -1256,6 +1256,18 @@ export default function App() {
       const currentFile = pdfFile; 
       const activeIndex = currentChunkIndexRef.current;
 
+      // --- FIX: CHECKPOINT DE PAUSA (O Guarda de Trânsito) ---
+      // Se o usuário clicou em Pausar enquanto o sistema esperava a cota, ele para AQUI.
+      if (currentStatus === 'pausing' || currentStatus === 'paused') {
+          if (currentStatus === 'pausing') {
+              setPdfStatus('paused');
+              addLog('warning', 'Pausa solicitada. Sistema parado com segurança.');
+          }
+          processorRef.current = false; // Libera o processador
+          return; // Aborta a execução
+      }
+      // -------------------------------------------------------
+
       if (processorRef.current) return; 
       if (currentStatus === 'completed') return;
       
@@ -1285,35 +1297,33 @@ export default function App() {
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
+              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
+              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
+              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
               1. LIMPEZA DE INÍCIO:
                  - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
-                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
                  - Comece o texto direto no conteúdo do caso clínico.
 
-              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
                  - O campo "text" DEVE TERMINAR antes das alternativas.
                  - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
                  - As alternativas DEVEM ser extraídas separadamente no array "options".
 
               3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
-                 - O objetivo é detectar se a questão É IMPOSSÍVEL de responder sem ver o anexo.
-                 
                  - MARQUE "needsImage": true SE:
                    * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
-                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado", "Pela análise da lâmina".
-                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que, forçando a olhar)", "Qual o diagnóstico da imagem?".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
 
-                 - MARQUE "needsImage": false SE (CASOS DE PEGADINHA):
-                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura", "TC mostrou tumor".
-                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia", "Paciente trouxe ultrassom anterior".
-
-                 - NO CASO ESPECÍFICO DO USUÁRIO: "De acordo com o caso descrito e com o exame de imagem" -> TRUE (Pois cria dependência explícita).
-
-              4. CLASSIFICAÇÃO:
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
                  - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
-
-              5. GABARITO:
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
                  - Gere sempre "explanation".
 
@@ -1686,35 +1696,33 @@ export default function App() {
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
 
-              REGRAS CRÍTICAS DE EXTRAÇÃO:
+              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
+              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
+              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
+              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
               1. LIMPEZA DE INÍCIO:
                  - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
-                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes deram entrada...", "40 anos é a idade...").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
                  - Comece o texto direto no conteúdo do caso clínico.
 
-              2. SEPARAÇÃO DAS ALTERNATIVAS (IMPORTANTE):
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
                  - O campo "text" DEVE TERMINAR antes das alternativas.
                  - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
                  - As alternativas DEVEM ser extraídas separadamente no array "options".
 
               3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
-                 - O objetivo é detectar se a questão É IMPOSSÍVEL de responder sem ver o anexo.
-                 
                  - MARQUE "needsImage": true SE:
                    * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
-                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado", "Pela análise da lâmina".
-                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que, forçando a olhar)", "Qual o diagnóstico da imagem?".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
 
-                 - MARQUE "needsImage": false SE (CASOS DE PEGADINHA):
-                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura", "TC mostrou tumor".
-                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia", "Paciente trouxe ultrassom anterior".
-
-                 - NO CASO ESPECÍFICO DO USUÁRIO: "De acordo com o caso descrito e com o exame de imagem" -> TRUE (Pois cria dependência explícita).
-
-              4. CLASSIFICAÇÃO:
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
                  - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
-
-              5. GABARITO:
                  - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
                  - Gere sempre "explanation".
 
@@ -1781,7 +1789,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
-                          } catch (err) { return null; }
+                          } catch (err) { 
+                              // BLINDAGEM: Throw erro se for cota
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return null; 
+                          }
                       }
                       return null;
                   })();
@@ -1791,7 +1804,12 @@ export default function App() {
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 500)); 
                               return await verifyQuestionWithAI(q);
-                          } catch (err) { return { status: 'unchecked', reason: 'Audit failed' }; }
+                          } catch (err) { 
+                              // BLINDAGEM: Throw erro se for cota
+                              const msg = err.message || "";
+                              if (msg.includes("429") || msg.includes("Quota") || msg.includes("Resource has been exhausted")) throw err;
+                              return { status: 'unchecked', reason: 'Audit failed' }; 
+                          }
                       }
                       return { status: 'unchecked', reason: '' };
                   })();
