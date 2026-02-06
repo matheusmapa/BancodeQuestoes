@@ -483,7 +483,10 @@ export default function App() {
               - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE.
               REGRAS DE FORMATAÇÃO DE NOME:
               - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
-              SAÍDA OBRIGATÓRIA (JSON):
+              - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
+              - Exemplo Bom: "BA - SUS Bahia"
+              - Exemplo Bom: "SP - USP São Paulo"
+              - Exemplo Bom: "Nacional - ENARE"
               {
                 "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
                 "year": "Ano (apenas números, ou vazio se não achar)"
@@ -852,11 +855,6 @@ export default function App() {
               CONTEXTO (Informacional):
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
-              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
-              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
-              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
-              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
 
               REGRAS DE EXTRAÇÃO E LIMPEZA:
               1. LIMPEZA DE INÍCIO:
@@ -1707,11 +1705,6 @@ export default function App() {
               CONTEXTO (Informacional):
               - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
               - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
-
-              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
-              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
-              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
-              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
 
               REGRAS DE EXTRAÇÃO E LIMPEZA:
               1. LIMPEZA DE INÍCIO:
