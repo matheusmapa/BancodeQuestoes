@@ -7,7 +7,7 @@ import {
   AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
   ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
   SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter,
-  FileType
+  FileType, BarChart3
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -15,7 +15,7 @@ import { initializeApp } from "firebase/app";
 
 // 1. Banco de Dados (Firestore)
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove 
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment 
 } from "firebase/firestore";
 
 // 2. Autenticação (Auth)
@@ -287,6 +287,11 @@ export default function App() {
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); 
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); 
 
+  // --- NOVA BLINDAGEM: COTA GLOBAL ---
+  const [searchQuota, setSearchQuota] = useState({ count: 0, lastReset: '' });
+  const [isSearchLimitEnabled, setIsSearchLimitEnabled] = useState(true); // O "Safe Mode"
+  const DAILY_SEARCH_LIMIT = 1400; // Margem de segurança (Max 1500)
+
   // Estado para loading de imagem individual
   const [uploadingImageId, setUploadingImageId] = useState(null);
   
@@ -346,6 +351,8 @@ export default function App() {
   const webSearchRef = useRef(isWebSearchEnabled); 
   const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
   const currentChunkIndexRef = useRef(currentChunkIndex); 
+  const searchQuotaRef = useRef(searchQuota);
+  const isSearchLimitEnabledRef = useRef(isSearchLimitEnabled);
 
   const CHUNK_SIZE = 10; 
 
@@ -386,6 +393,8 @@ export default function App() {
   useEffect(() => { webSearchRef.current = isWebSearchEnabled; }, [isWebSearchEnabled]);
   useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
   useEffect(() => { currentChunkIndexRef.current = currentChunkIndex; }, [currentChunkIndex]);
+  useEffect(() => { searchQuotaRef.current = searchQuota; }, [searchQuota]);
+  useEffect(() => { isSearchLimitEnabledRef.current = isSearchLimitEnabled; }, [isSearchLimitEnabled]);
 
   // --- SYNC CHAVES API ---
   useEffect(() => {
@@ -403,6 +412,10 @@ export default function App() {
               if (JSON.stringify(uniqueKeys) !== JSON.stringify(apiKeysRef.current)) {
                   setApiKeys(uniqueKeys);
                   localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
+              }
+              // Sync Search Limit Toggle Global
+              if (data.isSearchLimitEnabled !== undefined) {
+                  setIsSearchLimitEnabled(data.isSearchLimitEnabled);
               }
           }
       }, (error) => console.error("Erro ao sincronizar chaves:", error));
@@ -431,6 +444,32 @@ export default function App() {
               setLastSessionData(docSnap.data());
           } else {
               setLastSessionData(null);
+          }
+      });
+      return () => unsubscribe();
+  }, [user]);
+
+  // --- SYNC COTA DE PESQUISA (NOVO) ---
+  useEffect(() => {
+      if (!user) return;
+      
+      const unsubscribe = onSnapshot(doc(db, "settings", "search_quota"), (docSnap) => {
+          const today = new Date().toISOString().split('T')[0];
+
+          if (!docSnap.exists()) {
+              // Cria se não existe
+              setDoc(doc(db, "settings", "search_quota"), { count: 0, lastReset: today });
+          } else {
+              const data = docSnap.data();
+              
+              // Reset Diário Automático (First-win logic)
+              if (data.lastReset !== today) {
+                  setDoc(doc(db, "settings", "search_quota"), { count: 0, lastReset: today }, { merge: true })
+                      .then(() => console.log("Cota diária resetada!"));
+                  setSearchQuota({ count: 0, lastReset: today });
+              } else {
+                  setSearchQuota(data);
+              }
           }
       });
       return () => unsubscribe();
@@ -490,9 +529,15 @@ export default function App() {
                    throw new Error("ABORT_RETRY");
               }
 
+              // Se for erro de COTA GLOBAL, repassa o erro para parar o fluxo
+              if (error.message.includes("Cota de Pesquisa Diária Atingida")) {
+                  throw error;
+              }
+
               attempts++;
               const msg = error.message || "Erro desconhecido";
-              const waitTime = Math.min(2000 * Math.pow(2, attempts), 120000);
+              // O limite máximo de espera será de 2 minutos (120000 ms)
+              const waitTime = Math.min(2000 * Math.pow(2, attempts), 120000); 
               
               console.warn(`[${operationName}] Tentativa ${attempts} falhou. Retentando em ${waitTime/1000}s... Erro: ${msg}`);
               
@@ -505,15 +550,33 @@ export default function App() {
       }
   };
 
-  // --- FUNÇÃO DE PESQUISA BLINDADA (LOOP INFINITO ATÉ EXECUTAR) ---
+  // --- INCREMENTO ATÔMICO DE COTA ---
+  const incrementSearchCount = async () => {
+      try {
+          const ref = doc(db, "settings", "search_quota");
+          await updateDoc(ref, { count: increment(1) });
+      } catch (e) {
+          console.warn("Falha ao incrementar cota:", e);
+      }
+  };
+
+  // --- FUNÇÃO DE PESQUISA BLINDADA (COM CONTROLE DE COTA) ---
   const searchQuestionSource = async (questionText, checkStop) => {
+      // 1. VERIFICAÇÃO DE COTA ANTES DE GASTAR
+      if (isSearchLimitEnabledRef.current) {
+          const quota = searchQuotaRef.current;
+          if (quota.count >= DAILY_SEARCH_LIMIT) {
+              throw new Error(`Cota de Pesquisa Diária Atingida (${quota.count}/${DAILY_SEARCH_LIMIT}). Pause ou desative o Limite.`);
+          }
+      }
+
       const searchPromptText = questionText.length > 400 
         ? questionText.substring(0, 400) + "..." 
         : questionText;
 
       const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
 
-      return executeBlindlyWithRetry("Pesquisa Web", async (key) => {
+      const result = await executeBlindlyWithRetry("Pesquisa Web", async (key) => {
           const systemPrompt = `Você é um verificador de questões de residência médica.
               Sua missão: Identificar a origem da questão usando a Pesquisa Google.
               CRITÉRIOS DE ESCOLHA:
@@ -557,7 +620,12 @@ export default function App() {
               console.warn("JSON inválido na busca, assumindo não encontrado.");
               return { institution: "", year: "" }; 
           }
-      }, addLog, checkStop); 
+      }, addLog, checkStop);
+
+      // 2. INCREMENTO ATÔMICO APÓS SUCESSO
+      await incrementSearchCount();
+
+      return result;
   };
 
   // --- LOGIC: VERIFICATION AGENT BLINDADO ---
@@ -1062,6 +1130,14 @@ export default function App() {
               showNotification('info', 'Pausado! Agora você pode remover a imagem se desejar.');
               return;
           }
+          
+          if (error.message.includes("Cota de Pesquisa")) {
+              addBatchLog('error', error.message);
+              setBatchStatus('paused');
+              batchProcessorRef.current = false;
+              showNotification('error', error.message);
+              return;
+          }
 
           const errorMessage = error.message || "Erro desconhecido";
           addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
@@ -1520,6 +1596,14 @@ export default function App() {
               return;
           }
 
+          if (error.message.includes("Cota de Pesquisa")) {
+              addLog('error', error.message);
+              setPdfStatus('paused');
+              processorRef.current = false;
+              showNotification('error', error.message);
+              return;
+          }
+
           const errorMessage = error.message || "";
           const newErrorCount = chunk.errorCount + 1;
           const delay = 3000 * Math.pow(2, newErrorCount);
@@ -1596,6 +1680,18 @@ export default function App() {
           showNotification('error', 'Erro ao salvar: ' + error.message);
       } finally {
           setIsSavingKey(false);
+      }
+  };
+  
+  // Função para salvar o estado do toggle globalmente
+  const toggleSearchLimit = async () => {
+      const newState = !isSearchLimitEnabled;
+      setIsSearchLimitEnabled(newState);
+      
+      try {
+          await setDoc(doc(db, "settings", "global"), { isSearchLimitEnabled: newState }, { merge: true });
+      } catch (e) {
+          console.error("Erro ao salvar toggle:", e);
       }
   };
 
@@ -2033,6 +2129,24 @@ export default function App() {
           
           <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
             
+            {/* --- DISPLAY DA COTA DIÁRIA (NOVO) --- */}
+            <div className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold ${searchQuota.count >= DAILY_SEARCH_LIMIT ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`} title="Contador Global de Pesquisas Google (Todos os Admins)">
+                <BarChart3 size={16}/>
+                <span>Cota Hoje: {searchQuota.count} / {DAILY_SEARCH_LIMIT}</span>
+            </div>
+
+            <div 
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isSearchLimitEnabled ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}
+                onClick={toggleSearchLimit}
+                title="Ativar/Desativar Limite Seguro de 1400 Pesquisas/Dia"
+            >
+                {isSearchLimitEnabled ? <ToggleRight size={24} className="text-emerald-600"/> : <ToggleLeft size={24}/>}
+                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
+                    {isSearchLimitEnabled ? <ShieldCheck size={16}/> : <AlertTriangle size={16}/>}
+                    Limite 1400 {isSearchLimitEnabled ? 'ON' : 'OFF'}
+                </span>
+            </div>
+
             <div 
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isWebSearchEnabled ? 'bg-teal-50 border-teal-200 text-teal-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
                 onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
@@ -2041,7 +2155,7 @@ export default function App() {
                 {isWebSearchEnabled ? <ToggleRight size={24} className="text-teal-600"/> : <ToggleLeft size={24}/>}
                 <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
                     {isWebSearchEnabled ? <Globe size={16}/> : null}
-                    Busca Web (Bancas)
+                    Busca Web
                 </span>
             </div>
 
@@ -2053,7 +2167,7 @@ export default function App() {
                 {isDoubleCheckEnabled ? <ToggleRight size={24} className="text-indigo-600"/> : <ToggleLeft size={24}/>}
                 <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
                     {isDoubleCheckEnabled ? <ShieldCheck size={16}/> : null}
-                    Auditoria IA {isDoubleCheckEnabled ? 'ON' : 'OFF'}
+                    Auditoria
                 </span>
             </div>
 
