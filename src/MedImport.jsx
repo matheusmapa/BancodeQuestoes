@@ -582,8 +582,7 @@ export default function App() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                    contents: [{ parts: [{ text: verifyPrompt }] }],
-                    tools: [{ google_search: {} }] 
+                    contents: [{ parts: [{ text: verifyPrompt }] }], 
                 })
               });
               
