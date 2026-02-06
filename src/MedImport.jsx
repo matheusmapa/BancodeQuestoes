@@ -492,7 +492,7 @@ export default function App() {
 
               attempts++;
               const msg = error.message || "Erro desconhecido";
-              const waitTime = Math.min(2000 * Math.pow(1.5, attempts), 30000); 
+              const waitTime = Math.min(2000 * Math.pow(1.5, attempts), 120000);
               
               console.warn(`[${operationName}] Tentativa ${attempts} falhou. Retentando em ${waitTime/1000}s... Erro: ${msg}`);
               
