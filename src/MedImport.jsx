@@ -154,7 +154,7 @@ const cleanInstitutionText = (inst) => {
     // 1. Lista Negra de Cursinhos (Meta-dados que não são bancas)
     const blockList = [
         "medcurso", "medgrupo", "medcel", "medcof", 
-        "sanar", "estrategia", "hardwork", "sic", "residencia médica"
+        "sanar", "estrategia", "hardwork", "sic", "residencia médica", "medicina livre"
     ];
 
     // Se o texto for EXATAMENTE um desses, limpa.
@@ -1311,7 +1311,7 @@ export default function App() {
                  - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
                  - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
                  - Comece o texto direto no conteúdo do caso clínico.
-
+                 
               2. SEPARAÇÃO DAS ALTERNATIVAS:
                  - O campo "text" DEVE TERMINAR antes das alternativas.
                  - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
@@ -1327,9 +1327,17 @@ export default function App() {
                    * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
 
               4. CLASSIFICAÇÃO E RESOLUÇÃO:
-                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
-                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
-                 - Gere sempre "explanation".
+                - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
+                - Gere sempre um campo "explanation".
+                 - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
+                  - É CRUCIAL que a classificação esteja correta.
+                  - LISTA DE CLASSIFICAÇÃO VÁLIDA:
+                   ${JSON.stringify(activeThemesMap)}
+
+              5. DADOS DE CABEÇALHO:
+                  - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
+                  - Procure pelo nome do HOSPITAL ou BANCA.
+                  - Se não encontrar, deixe "".
 
               Formato Saída JSON:
               [
