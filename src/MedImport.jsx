@@ -144,20 +144,35 @@ const generateQuestionHash = async (text) => {
     
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
 };
-
-// --- HELPER: CLEAN INSTITUTION ---
+// --- HELPER: CLEAN INSTITUTION (ATUALIZADO) ---
 const cleanInstitutionText = (inst) => {
     if (!inst) return "";
-    const lower = inst.toString().toLowerCase();
+    let text = inst.toString().trim();
+    const lower = text.toLowerCase();
+
+    // 1. Lista Negra de Cursinhos (Meta-dados que não são bancas)
+    // Adicione aqui qualquer outro nome que costuma vazar
+    const blockList = [
+        "medcurso", "medgrupo", "medcel", "medcof", 
+        "sanar", "estrategia", "hardwork", "sic", "residencia médica"
+    ];
+
+    // Se o texto for EXATAMENTE um desses, limpa.
+    if (blockList.includes(lower)) return "";
+    
+    // Se começar com termos de material de estudo
+    if (lower.startsWith("apostila") || lower.startsWith("simulado") || lower.includes("banco de questões")) return "";
+
+    // 2. Termos genéricos de erro da IA
     if (
         lower.includes("não informado") || 
         lower.includes("nao informado") || 
         lower.includes("detectar") ||
         lower.includes("nao consta")
     ) return "";
-    return inst;
-};
 
+    return text;
+};
 // --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
 const extractRetryTime = (message) => {
     const match = message.match(/retry in ([0-9\.]+)s/);
