@@ -2143,7 +2143,7 @@ export default function App() {
                 {isSearchLimitEnabled ? <ToggleRight size={24} className="text-emerald-600"/> : <ToggleLeft size={24}/>}
                 <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
                     {isSearchLimitEnabled ? <ShieldCheck size={16}/> : <AlertTriangle size={16}/>}
-                    Limite 1400 {isSearchLimitEnabled ? 'ON' : 'OFF'}
+                    Limite
                 </span>
             </div>
 
