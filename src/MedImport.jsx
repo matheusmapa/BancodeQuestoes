@@ -934,7 +934,12 @@ export default function App() {
 
               const shouldRunAPIs = !isDuplicate; 
 
-              let finalInst = q.institution;
+              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
+              // Limpa "Medcurso" ANTES de decidir se precisa pesquisar.
+              // Assim, se a IA extraiu lixo, vira "" e ativa o gatilho da pesquisa.
+              let preCleanedInst = cleanInstitutionText(q.institution);
+              
+              let finalInst = preCleanedInst;
               let finalYear = q.year;
               let sourceFound = false;
               let verificationStatus = 'unchecked';
@@ -945,7 +950,7 @@ export default function App() {
                   const doDoubleCheck = doubleCheckRef.current; 
 
                   const searchPromise = (async () => {
-                      if (doWebSearch && (!q.institution || !q.year)) {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
@@ -993,11 +998,12 @@ export default function App() {
                   }
               }
 
+              // Limpeza final (garantia)
+              finalInst = cleanInstitutionText(finalInst);
+
               const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic };
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-              finalInst = cleanInstitutionText(finalInst);
 
               return {
                   ...q,
@@ -1374,7 +1380,12 @@ export default function App() {
 
               const shouldRunAPIs = !isDuplicate; 
 
-              let finalInst = q.institution;
+              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
+              // Limpa "Medcurso" ANTES de decidir se precisa pesquisar.
+              // Assim, se a IA extraiu lixo, vira "" e ativa o gatilho da pesquisa.
+              let preCleanedInst = cleanInstitutionText(q.institution);
+
+              let finalInst = preCleanedInst;
               let finalYear = q.year;
               let sourceFound = false;
               let verificationStatus = 'unchecked';
@@ -1385,7 +1396,7 @@ export default function App() {
                   const doDoubleCheck = doubleCheckRef.current; 
 
                   const searchPromise = (async () => {
-                      if (doWebSearch && (!q.institution || !q.year)) {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { // USA O VALOR LIMPO
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
@@ -1434,11 +1445,12 @@ export default function App() {
                   }
               }
 
+              // Limpeza final (garantia)
+              finalInst = cleanInstitutionText(finalInst);
+
               const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; 
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-              finalInst = cleanInstitutionText(finalInst);
 
               return {
                   ...q,
@@ -1774,7 +1786,10 @@ export default function App() {
 
               const shouldRunAPIs = !isDuplicate; 
 
-              let finalInst = q.institution;
+              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
+              let preCleanedInst = cleanInstitutionText(q.institution);
+
+              let finalInst = preCleanedInst;
               let finalYear = q.year;
               let sourceFound = false;
               let verificationStatus = 'unchecked';
@@ -1785,7 +1800,7 @@ export default function App() {
                   const doDoubleCheck = doubleCheckRef.current; 
 
                   const searchPromise = (async () => {
-                      if (doWebSearch && (!q.institution || !q.year)) {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { // VALOR LIMPO
                           try {
                               await new Promise(r => setTimeout(r, Math.random() * 1000));
                               return await searchQuestionSource(q.text);
@@ -1834,11 +1849,12 @@ export default function App() {
                   }
               }
 
+              // Limpeza Final
+              finalInst = cleanInstitutionText(finalInst);
+
               const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; 
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
-
-              finalInst = cleanInstitutionText(finalInst);
 
               return {
                   ...q,
