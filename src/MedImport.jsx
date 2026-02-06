@@ -2132,7 +2132,7 @@ export default function App() {
             {/* --- DISPLAY DA COTA DIÁRIA (NOVO) --- */}
             <div className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold ${searchQuota.count >= DAILY_SEARCH_LIMIT ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`} title="Contador Global de Pesquisas Google (Todos os Admins)">
                 <BarChart3 size={16}/>
-                <span>Cota Hoje: {searchQuota.count} / {DAILY_SEARCH_LIMIT}</span>
+                <span>{searchQuota.count} / {DAILY_SEARCH_LIMIT}</span>
             </div>
 
             <div 
