@@ -2060,15 +2060,20 @@ export default function App() {
     }
   };
 
-  const updateQuestionField = (idx, field, val) => {
-      const newQ = [...parsedQuestions];
-      newQ[idx][field] = val;
-      setParsedQuestions(newQ);
+  // --- FUNÇÕES DE ATUALIZAÇÃO (CORRIGIDO PARA USAR ID) ---
+  const updateQuestionField = (id, field, val) => {
+      setParsedQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
   };
-  const updateOptionText = (qIdx, optIdx, val) => {
-      const newQ = [...parsedQuestions];
-      newQ[qIdx].options[optIdx].text = val;
-      setParsedQuestions(newQ);
+
+  const updateOptionText = (qId, optIdx, val) => {
+      setParsedQuestions(prev => prev.map(q => {
+          if (q.id === qId) {
+              const newOptions = [...q.options];
+              newOptions[optIdx].text = val;
+              return { ...q, options: newOptions };
+          }
+          return q;
+      }));
   };
 
   const currentFilteredList = getFilteredQuestions();
@@ -2603,7 +2608,7 @@ export default function App() {
                     </div>
                 )}
 
-                {/* --- LISTAGEM DAS QUESTÕES --- */}
+                {/* --- LISTAGEM DAS QUESTÕES (CORRIGIDO: Passando q.id em vez de idx) --- */}
                 {currentFilteredList.length === 0 ? (
                     <div className="text-center py-20 opacity-50">
                         <Database size={64} className="mx-auto mb-4 text-gray-300" />
@@ -2617,98 +2622,67 @@ export default function App() {
                             <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
                             
                             <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-end items-center gap-2 flex-wrap min-h-[40px]">
-                                
-                                <div 
-                                    className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}
-                                    title={q.verificationReason || "Status da verificação"}
-                                >
+                                <div className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`} title={q.verificationReason || "Status da verificação"}>
                                     {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
                                     {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
                                     {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
                                 </div>
-                                
-                                {q.sourceFound && (
-                                    <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
-                                        <Globe size={12}/> FONTE OK
-                                    </div>
-                                )}
-
-                                {q.isDuplicate && (
-                                    <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse">
-                                        <Copy size={12}/> DUPLICADA
-                                    </div>
-                                )}
-
-                                {q.needsImage && (
-                                    <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse border border-purple-200">
-                                        <ImageIcon size={12}/> REQUER IMAGEM
-                                    </div>
-                                )}
+                                {q.sourceFound && <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1"><Globe size={12}/> FONTE OK</div>}
+                                {q.isDuplicate && <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse"><Copy size={12}/> DUPLICADA</div>}
+                                {q.needsImage && <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse border border-purple-200"><ImageIcon size={12}/> REQUER IMAGEM</div>}
                             </div>
 
                             <div className="p-6">
                                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Inst</label><input value={q.institution} onChange={e=>updateQuestionField(idx,'institution',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Ano</label><input type="number" value={q.year} onChange={e=>updateQuestionField(idx,'year',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Área</label><select value={q.area} onChange={e=>updateQuestionField(idx,'area',e.target.value)} className="w-full p-2 bg-blue-50 border border-blue-100 rounded-lg text-sm font-bold text-blue-800"><option value="">Selecione...</option>{areasBase.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
-                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(idx,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Inst</label><input value={q.institution} onChange={e=>updateQuestionField(q.id,'institution',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Ano</label><input type="number" value={q.year} onChange={e=>updateQuestionField(q.id,'year',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Área</label><select value={q.area} onChange={e=>updateQuestionField(q.id,'area',e.target.value)} className="w-full p-2 bg-blue-50 border border-blue-100 rounded-lg text-sm font-bold text-blue-800"><option value="">Selecione...</option>{areasBase.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(q.id,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
                                 </div>
 
-                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(idx,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
+                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(q.id,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
 
-                            <div className="mb-6 p-4 bg-gray-50 border border-dashed border-gray-300 rounded-xl">
-                                <div className="flex justify-between items-center mb-3">
-                                    <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                                        <ImageIcon size={12}/> Galeria de Imagens ({q.images?.length || 0})
-                                    </label>
-                                    {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Enviando...</span>}
-                                </div>
-                                
-                                <div className="flex flex-wrap gap-3 items-start">
-                                    {q.images?.map((imgUrl, i) => (
-                                        <div key={i} className="relative group w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-lg border border-gray-200 shadow-sm flex-shrink-0">
-                                            <img src={imgUrl} alt={`Img ${i}`} className="w-full h-full object-cover rounded-lg" />
-                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
-                                                <a href={imgUrl} target="_blank" rel="noreferrer" className="text-white hover:text-blue-300"><ExternalLink size={16}/></a>
-                                                <button onClick={() => deleteImageFromQuestion(idx, q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
+                                <div className="mb-6 p-4 bg-gray-50 border border-dashed border-gray-300 rounded-xl">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><ImageIcon size={12}/> Galeria de Imagens ({q.images?.length || 0})</label>
+                                        {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Enviando...</span>}
+                                    </div>
+                                    <div className="flex flex-wrap gap-3 items-start">
+                                        {q.images?.map((imgUrl, i) => (
+                                            <div key={i} className="relative group w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-lg border border-gray-200 shadow-sm flex-shrink-0">
+                                                <img src={imgUrl} alt={`Img ${i}`} className="w-full h-full object-cover rounded-lg" />
+                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
+                                                    <a href={imgUrl} target="_blank" rel="noreferrer" className="text-white hover:text-blue-300"><ExternalLink size={16}/></a>
+                                                    <button onClick={() => deleteImageFromQuestion(idx, q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
-
-                                    <label className={`cursor-pointer w-24 h-24 sm:w-32 sm:h-32 bg-white hover:bg-blue-50 border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-blue-500 transition-all ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
-                                        <UploadCloud size={24}/>
-                                        <span className="text-[10px] font-bold uppercase">Adicionar</span>
-                                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
-                                    </label>
+                                        ))}
+                                        <label className={`cursor-pointer w-24 h-24 sm:w-32 sm:h-32 bg-white hover:bg-blue-50 border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-blue-500 transition-all ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            <UploadCloud size={24}/> <span className="text-[10px] font-bold uppercase">Adicionar</span>
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
+                                        </label>
+                                    </div>
+                                    {q.needsImage && (!q.images || q.images.length === 0) && <p className="mt-2 text-xs text-purple-600 flex items-center gap-1 animate-pulse font-bold"><AlertCircle size={12}/> Esta questão pede imagem!</p>}
                                 </div>
-                                
-                                {q.needsImage && (!q.images || q.images.length === 0) && (
-                                    <p className="mt-2 text-xs text-purple-600 flex items-center gap-1 animate-pulse font-bold"><AlertCircle size={12}/> Esta questão pede imagem!</p>
-                                )}
-                            </div>
                               
                                 <div className="space-y-2 mb-6">
                                     {q.options?.map((opt, optIdx) => (
                                         <div key={opt.id} className="flex items-center gap-3">
-                                            <div onClick={()=>updateQuestionField(idx,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id.toUpperCase()}</div>
-                                            <input value={opt.text} onChange={e=>updateOptionText(idx,optIdx,e.target.value)} className={`w-full p-2 border rounded-lg text-sm ${q.correctOptionId===opt.id?'border-emerald-200 bg-emerald-50':'bg-white'}`}/>
+                                            <div onClick={()=>updateQuestionField(q.id,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id.toUpperCase()}</div>
+                                            <input value={opt.text} onChange={e=>updateOptionText(q.id,optIdx,e.target.value)} className={`w-full p-2 border rounded-lg text-sm ${q.correctOptionId===opt.id?'border-emerald-200 bg-emerald-50':'bg-white'}`}/>
                                         </div>
                                     ))}
                                 </div>
                                 
                                 <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
                                     <label className="text-xs font-bold text-amber-700 uppercase flex items-center gap-1 mb-2"><Brain size={12}/> Comentário IA</label>
-                                    <textarea value={q.explanation} onChange={e=>updateQuestionField(idx,'explanation',e.target.value)} rows={3} className="w-full p-3 bg-white/50 border border-amber-200/50 rounded-lg text-slate-700 text-sm focus:bg-white focus:ring-2 focus:ring-amber-400 outline-none"/>
+                                    <textarea value={q.explanation} onChange={e=>updateQuestionField(q.id,'explanation',e.target.value)} rows={3} className="w-full p-3 bg-white/50 border border-amber-200/50 rounded-lg text-slate-700 text-sm focus:bg-white focus:ring-2 focus:ring-amber-400 outline-none"/>
                                 </div>
                             </div>
 
                             <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
                                 <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
-                                
-                                <button 
-                                    onClick={()=>approveQuestion(q)} 
-                                    className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
-                                >
+                                <button onClick={()=>approveQuestion(q)} className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
                                     {q.isDuplicate ? <Copy size={18}/> : <CheckCircle size={18}/>} 
                                     {q.isDuplicate ? 'Atualizar Duplicata' : 'Aprovar e Publicar'}
                                 </button>
