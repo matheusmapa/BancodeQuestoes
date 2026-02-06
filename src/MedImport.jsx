@@ -493,7 +493,7 @@ export default function App() {
               }`;
 
               const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`,
                 {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -533,49 +533,52 @@ export default function App() {
       return executeWithKeyRotation("Auditoria", async (key) => {
           try {
               const verifyPrompt = `
-                Você é um Auditor Sênior de Questões Médicas.
-                Sua missão é validar se esta questão é SEGURA para um banco de dados de estudo.
-                
-                DADOS DA QUESTÃO:
-                Banca: ${questionData.institution || "Não informada"}
-                Enunciado: "${questionData.text}"
-                Alternativas: ${JSON.stringify(questionData.options)}
-                Gabarito Proposto: ${questionData.correctOptionId}
-                Explicação: "${questionData.explanation}"
-                
-                PASSO A PASSO DA AUDITORIA:
-                1. Use o Google Search para buscar a questão ou o tema médico.
-                2. Aplique as REGRAS DE JULGAMENTO abaixo rigorosamente.
+    Você é um Auditor Sênior de Questões Médicas.
+    Sua missão é validar se esta questão é SEGURA e COERENTE para um banco de dados de estudo.
+    ATENÇÃO: Você NÃO tem acesso à internet. Use exclusivamente seu conhecimento médico treinado.
 
-                REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
-                [NÍVEL 1: FATOS OBJETIVOS - TOLERÂNCIA ZERO]
-                - Se a questão contém ERROS DE NÚMEROS (Doses, Artigos de Lei, Datas, Percentuais).
-                - Se a questão cita FATOS ERRADOS.
-                -> AÇÃO: REPROVE IMEDIATAMENTE ("isValid": false).
+    DADOS DA QUESTÃO:
+    Banca: ${questionData.institution || "Não informada"}
+    Ano: ${questionData.year || "Não informado"}
+    Enunciado: "${questionData.text}"
+    Alternativas: ${JSON.stringify(questionData.options)}
+    Gabarito Proposto: ${questionData.correctOptionId}
+    Explicação Gerada: "${questionData.explanation}"
 
-                [NÍVEL 2: A JURISPRUDÊNCIA DA BANCA]
-                - Se você encontrar essa questão em uma prova real da banca citada.
-                - E o gabarito bater com o oficial da banca.
-                -> AÇÃO: APROVE ("isValid": true).
+    PASSO A PASSO DA AUDITORIA:
+    1. Analise se o gabarito faz sentido clinicamente.
+    2. Verifique se a "Explicação Gerada" realmente justifica o gabarito.
+    3. Aplique as REGRAS DE JULGAMENTO abaixo.
 
-                [NÍVEL 3: CONDUTAS E ZONA CINZENTA - TOLERÂNCIA ALTA]
-                - Se for questão de conduta ("Qual a melhor cirurgia?").
-                - E houver divergência na literatura.
-                - Se o gabarito proposto for defendido por PELO MENOS UMA corrente séria.
-                -> AÇÃO: APROVE ("isValid": true).
+    REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
 
-                [NÍVEL 4: "NA DÚVIDA"]
-                - Se não achar nada específico e não for erro fatual.
-                -> AÇÃO: APROVE.
-                
-                SAÍDA OBRIGATÓRIA (JSON):
-                {
-                    "isValid": boolean, 
-                    "reason": "Explicação breve"
-                }
-              `;
+    [NÍVEL 1: FATOS OBJETIVOS E ABSURDOS - TOLERÂNCIA ZERO]
+    - Se a questão contém ERROS GRAVES de números (Doses letais, Anatomia impossível).
+    - Se o gabarito é ABSURDAMENTE errado (ex: tratar parada cardíaca com dipirona).
+    - Se a Explicação contradiz o próprio Gabarito.
+    -> AÇÃO: REPROVE ("isValid": false).
 
-              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+    [NÍVEL 2: ANACRONISMO (IMPORTANTE)]
+    - Se a questão parece "errada" hoje, mas estava CERTA no Ano da questão (mudança de diretriz/protocolo).
+    -> AÇÃO: APROVE com ressalva no motivo ("isValid": true, "reason": "Correto para a época").
+
+    [NÍVEL 3: ZONA CINZENTA E CONDUTAS]
+    - Se houver divergência na literatura médica.
+    - Se o gabarito for defendido por PELO MENOS UMA corrente bibliográfica (Harrison, Cecil, MS, UpToDate).
+    -> AÇÃO: APROVE ("isValid": true).
+
+    [NÍVEL 4: "NA DÚVIDA"]
+    - Se não for um erro médico grosseiro.
+    -> AÇÃO: APROVE ("isValid": true).
+
+    SAÍDA OBRIGATÓRIA (JSON):
+    {
+        "isValid": boolean, 
+        "reason": "Explicação breve e direta (máx 15 palavras)"
+    }
+`;
+
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
