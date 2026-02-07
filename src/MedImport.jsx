@@ -574,11 +574,7 @@ export default function App() {
         ? questionText.substring(0, 400) + "..." 
         : questionText;
 
-      // Se eu quiser pegar do seletor:
-      // const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
-
-      // Fixado no PRO por que ele valida melhor:
-      const modelNameClean = "gemini-2.5-pro";
+      const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
 
       const result = await executeBlindlyWithRetry("Pesquisa Web", async (key) => {
           const systemPrompt = `Você é um verificador de questões de residência médica.
