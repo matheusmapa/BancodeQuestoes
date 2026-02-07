@@ -630,6 +630,8 @@ export default function App() {
 
   // --- LOGIC: VERIFICATION AGENT BLINDADO ---
   const verifyQuestionWithAI = async (questionData, checkStop) => {
+      //Fixado no PRO por que ele valida melhor (Tirar o // e colocar no de baixo se quiser habilitar o PRO fixo pra pesquisa:
+      //const modelNameClean = "gemini-2.5-pro";
       const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
       
       return executeBlindlyWithRetry("Auditoria", async (key) => {
