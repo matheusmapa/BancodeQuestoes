@@ -15,7 +15,7 @@ import { initializeApp } from "firebase/app";
 
 // 1. Banco de Dados (Firestore)
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment 
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment, limit 
 } from "firebase/firestore";
 
 // 2. Autenticação (Auth)
@@ -425,7 +425,15 @@ export default function App() {
   // --- SYNC RASCUNHOS ---
   useEffect(() => {
       if (!user) { setParsedQuestions([]); return; }
-      const q = query(collection(db, "draft_questions"), orderBy("createdAt", "desc"));
+      
+      // ALTERAÇÃO AQUI: Adicionei o limit(50)
+      // Isso cria uma "fila". Você vê 50, resolve, e as próximas aparecem sozinhas.
+      const q = query(
+          collection(db, "draft_questions"), 
+          orderBy("createdAt", "desc"), 
+          limit(50) 
+      );
+
       const unsubscribe = onSnapshot(q, (snapshot) => {
           const drafts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, status: 'draft' }));
           setParsedQuestions(drafts);
