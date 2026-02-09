@@ -270,10 +270,10 @@ export default function App() {
   
   // Modelos
   const [availableModels, setAvailableModels] = useState([
-      { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (Padrão)' },
-      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }
+      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash (Padrão)' },
+      { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' }
   ]);
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-pro');
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-flash');
   
   // Estados UI Básicos
   const [rawText, setRawText] = useState('');
