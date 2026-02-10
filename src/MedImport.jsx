@@ -15,8 +15,7 @@ import { initializeApp } from "firebase/app";
 
 // 1. Banco de Dados (Firestore)
 import { 
-  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment,
-  where, limit // <--- ADICIONADO AQUI
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment 
 } from "firebase/firestore";
 
 // 2. Autenticação (Auth)
@@ -287,9 +286,6 @@ export default function App() {
   const [isValidatingKey, setIsValidatingKey] = useState(false);
   const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); 
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); 
-  
-  // --- NOVO: Estado para controlar o que o Firebase busca ---
-  const [dbFilterMode, setDbFilterMode] = useState('all'); // 'all' ou 'ready'
 
   // --- NOVA BLINDAGEM: COTA GLOBAL ---
   const [searchQuota, setSearchQuota] = useState({ count: 0, lastReset: '' });
@@ -426,50 +422,16 @@ export default function App() {
       return () => unsubscribe();
   }, [user]);
 
-  // --- SYNC RASCUNHOS (COM FILTRO INTELIGENTE) ---
+  // --- SYNC RASCUNHOS ---
   useEffect(() => {
       if (!user) { setParsedQuestions([]); return; }
-      
-      const colRef = collection(db, "draft_questions");
-      let q;
-
-      try {
-          if (dbFilterMode === 'ready') {
-              // MODO "APROVAÇÃO RÁPIDA": Busca apenas o que já está pronto
-              // Isso ignora o "lixo" e traz 50 questões perfeitas
-              q = query(
-                  colRef,
-                  where("verificationStatus", "==", "verified"),
-                  where("sourceFound", "==", true),
-                  where("needsImage", "==", false), // Texto puro
-                  limit(50)
-              );
-          } else {
-              // MODO PADRÃO: Traz as últimas 50 (misturado)
-              q = query(
-                  colRef,
-                  orderBy("createdAt", "desc"),
-                  limit(50)
-              );
-          }
-
-          const unsubscribe = onSnapshot(q, (snapshot) => {
-              const drafts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, status: 'draft' }));
-              setParsedQuestions(drafts);
-          }, (error) => {
-              console.error("Erro no Sync:", error);
-              if (error.message.includes("index")) {
-                  showNotification('error', 'Falta criar Índice! Abra o Console (F12) e clique no link do Firebase.');
-              } else {
-                  showNotification('error', 'Erro ao buscar questões: ' + error.message);
-              }
-          });
-          return () => unsubscribe();
-          
-      } catch (err) {
-          console.error("Erro ao montar query:", err);
-      }
-  }, [user, dbFilterMode]); // Recarrega quando você muda o modo
+      const q = query(collection(db, "draft_questions"), orderBy("createdAt", "desc"));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+          const drafts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, status: 'draft' }));
+          setParsedQuestions(drafts);
+      });
+      return () => unsubscribe();
+  }, [user]);
 
   // --- SYNC PROGRESSO DO PDF ---
   useEffect(() => {
@@ -1115,7 +1077,7 @@ export default function App() {
 
               finalInst = cleanInstitutionText(finalInst);
 
-              const ovr = overridesRef.current;
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic };
               if (ovr.overrideInst) finalInst = ovr.overrideInst;
               if (ovr.overrideYear) finalYear = ovr.overrideYear;
 
@@ -2603,32 +2565,6 @@ export default function App() {
         {/* REVIEW TAB (ATUALIZADA) */}
         {activeTab === 'review' && (
             <div className="max-w-4xl mx-auto space-y-4">
-                
-                {/* --- SELETOR DE MODO DE BANCO DE DADOS --- */}
-                <div className="bg-slate-800 text-white p-3 rounded-xl mb-4 flex items-center justify-between shadow-lg">
-                    <div className="flex items-center gap-3">
-                        <Database size={20} className="text-blue-400"/>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">Modo de Carregamento (Server-Side)</p>
-                            <p className="text-sm font-medium">O que o Firebase deve buscar?</p>
-                        </div>
-                    </div>
-                    <div className="flex bg-slate-700 rounded-lg p-1">
-                        <button 
-                            onClick={() => setDbFilterMode('all')}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${dbFilterMode === 'all' ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            Tudo (Recentes)
-                        </button>
-                        <button 
-                            onClick={() => setDbFilterMode('ready')}
-                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${dbFilterMode === 'ready' ? 'bg-emerald-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                        >
-                            <CheckCircle size={12}/> Só "Prontas"
-                        </button>
-                    </div>
-                </div>
-
                 {parsedQuestions.length > 0 && (
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex flex-col gap-3 sticky top-20 z-10 animate-in slide-in-from-top-2">
                         
