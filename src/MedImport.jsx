@@ -454,7 +454,7 @@ export default function App() {
       if (!user) return;
       
       const unsubscribe = onSnapshot(doc(db, "settings", "search_quota"), (docSnap) => {
-          const today = new Date().toISOString().split('T')[0];
+          const today = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString().split('T')[0];
 
           if (!docSnap.exists()) {
               // Cria se não existe
