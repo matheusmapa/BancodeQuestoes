@@ -774,8 +774,8 @@ export default function App() {
       'text_only': 'Texto Puro (Sem Imagem)' 
   };
 
-  // --- UPLOAD MULTI-IMAGEM ---
-  const handleImageUploadToQuestion = async (e, idx, questionData) => {
+  // --- UPLOAD MULTI-IMAGEM (CORRIGIDO: BUSCA POR ID) ---
+  const handleImageUploadToQuestion = async (e, questionData) => {
       const file = e.target.files[0];
       if (!file) return;
 
@@ -795,13 +795,20 @@ export default function App() {
               hasImage: true
           });
 
-          const newQ = [...parsedQuestions];
-          if (newQ[idx]) {
-              const currentImages = newQ[idx].images || [];
-              newQ[idx].images = [...currentImages, downloadURL];
-              newQ[idx].hasImage = true;
-              setParsedQuestions(newQ);
-          }
+          // CORREÇÃO: Busca o índice real na lista completa usando o ID
+          setParsedQuestions(prev => {
+              const index = prev.findIndex(p => p.id === questionData.id);
+              if (index === -1) return prev;
+
+              const newQ = [...prev];
+              const currentImages = newQ[index].images || [];
+              newQ[index] = {
+                  ...newQ[index],
+                  images: [...currentImages, downloadURL],
+                  hasImage: true
+              };
+              return newQ;
+          });
           
           showNotification('success', 'Imagem adicionada à galeria!');
 
@@ -813,7 +820,7 @@ export default function App() {
       }
   };
   
-  const deleteImageFromQuestion = async (idx, questionData, urlToDelete) => {
+  const deleteImageFromQuestion = async (questionData, urlToDelete) => {
       if (!window.confirm("Remover esta imagem específica?")) return;
 
       try {
@@ -826,12 +833,23 @@ export default function App() {
               images: arrayRemove(urlToDelete)
           });
 
-          const newQ = [...parsedQuestions];
-          if (newQ[idx]) {
-              newQ[idx].images = newQ[idx].images.filter(url => url !== urlToDelete);
-              if (newQ[idx].images.length === 0) newQ[idx].hasImage = false;
-              setParsedQuestions(newQ);
-          }
+          // CORREÇÃO: Busca o índice real na lista completa usando o ID
+          setParsedQuestions(prev => {
+              const index = prev.findIndex(p => p.id === questionData.id);
+              if (index === -1) return prev;
+
+              const newQ = [...prev];
+              const currentImages = newQ[index].images || [];
+              const newImages = currentImages.filter(url => url !== urlToDelete);
+              
+              newQ[index] = {
+                  ...newQ[index],
+                  images: newImages,
+                  hasImage: newImages.length > 0
+              };
+              return newQ;
+          });
+
           showNotification('success', 'Imagem removida.');
       } catch (error) {
           showNotification('error', 'Erro ao remover imagem.');
@@ -2685,18 +2703,18 @@ export default function App() {
                                         {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Enviando...</span>}
                                     </div>
                                     <div className="flex flex-wrap gap-3 items-start">
-                                        {q.images?.map((imgUrl, i) => (
+                                        {(Array.isArray(q.images) ? q.images : []).map((imgUrl, i) => (
                                             <div key={i} className="relative group w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-lg border border-gray-200 shadow-sm flex-shrink-0">
                                                 <img src={imgUrl} alt={`Img ${i}`} className="w-full h-full object-cover rounded-lg" />
                                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
                                                     <a href={imgUrl} target="_blank" rel="noreferrer" className="text-white hover:text-blue-300"><ExternalLink size={16}/></a>
-                                                    <button onClick={() => deleteImageFromQuestion(idx, q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
+                                                    <button onClick={() => deleteImageFromQuestion(q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
                                                 </div>
                                             </div>
                                         ))}
                                         <label className={`cursor-pointer w-24 h-24 sm:w-32 sm:h-32 bg-white hover:bg-blue-50 border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-blue-500 transition-all ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
                                             <UploadCloud size={24}/> <span className="text-[10px] font-bold uppercase">Adicionar</span>
-                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, q)} disabled={uploadingImageId === q.id}/>
                                         </label>
                                     </div>
                                     {q.needsImage && (!q.images || q.images.length === 0) && <p className="mt-2 text-xs text-purple-600 flex items-center gap-1 animate-pulse font-bold"><AlertCircle size={12}/> Esta questão pede imagem!</p>}
