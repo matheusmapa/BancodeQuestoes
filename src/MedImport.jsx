@@ -28,6 +28,55 @@ import {
   getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
 } from "firebase/storage";
 
+// --- CLASSE DE DIAGNÓSTICO DE ERRO (NOVO) ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    this.setState({ error, errorInfo });
+    console.error("ERRO CAPTURADO:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-red-50 p-8 flex flex-col items-center justify-center text-left font-sans">
+          <div className="max-w-3xl w-full bg-white rounded-xl shadow-2xl overflow-hidden border border-red-200">
+            <div className="bg-red-600 p-4 text-white font-bold flex items-center gap-2">
+              <AlertOctagon size={24} /> Ocorreu um Crash na Aplicação
+            </div>
+            <div className="p-6">
+              <p className="text-gray-700 mb-4 font-bold">Por favor, copie o erro abaixo e envie para o suporte:</p>
+              
+              <div className="bg-slate-900 text-red-300 p-4 rounded-lg overflow-auto max-h-96 font-mono text-xs mb-6 border border-slate-700">
+                <p className="font-bold text-lg mb-2 text-white">{this.state.error && this.state.error.toString()}</p>
+                <pre className="whitespace-pre-wrap opacity-70">
+                  {this.state.errorInfo && this.state.errorInfo.componentStack}
+                </pre>
+              </div>
+
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-6 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+              >
+                <RefreshCcw size={18}/> Tentar Recarregar Página
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- PDF.JS IMPORT (Dynamic CDN) ---
 const loadPdfJs = async () => {
     if (window.pdfjsLib) return window.pdfjsLib;
@@ -2137,6 +2186,7 @@ export default function App() {
   );
 
   return (
+    <ErrorBoundary>
     <div className="min-h-screen bg-gray-50 font-sans text-slate-800 pb-20">
       
       {/* HEADER */}
@@ -2749,5 +2799,6 @@ export default function App() {
         )}
       </main>
     </div>
+    </ErrorBoundary>
   );
 }
