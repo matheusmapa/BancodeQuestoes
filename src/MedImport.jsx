@@ -2705,7 +2705,7 @@ export default function App() {
                                 <div className="space-y-2 mb-6">
                                     {q.options?.map((opt, optIdx) => (
                                         <div key={opt.id} className="flex items-center gap-3">
-                                            <div onClick={()=>updateQuestionField(q.id,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id.toUpperCase()}</div>
+                                            <div onClick={()=>updateQuestionField(q.id,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id ? opt.id.toUpperCase() : '?'}</div>
                                             <input value={opt.text} onChange={e=>updateOptionText(q.id,optIdx,e.target.value)} className={`w-full p-2 border rounded-lg text-sm ${q.correctOptionId===opt.id?'border-emerald-200 bg-emerald-50':'bg-white'}`}/>
                                         </div>
                                     ))}
