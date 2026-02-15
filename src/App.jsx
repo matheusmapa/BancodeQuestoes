@@ -1285,9 +1285,9 @@ function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
 }
 
 function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExam, onBack }) {
-    const [scope, setScope] = useState('Todas'); // 'Todas' or Area Title
+    const [scope, setScope] = useState('Todas'); 
     const [topicSort, setTopicSort] = useState('worst'); // 'worst' or 'best'
-    const [areaSort, setAreaSort] = useState('default'); // 'default', 'best', 'worst'
+    const [areaSort, setAreaSort] = useState('default');
     const [filteredTopics, setFilteredTopics] = useState([]);
     const [isAnalyzing, setIsAnalyzing] = useState(true);
 
@@ -1304,7 +1304,6 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         const today = new Date();
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(today.getDate() - 7);
-        // Resetar horas para garantir comparação justa de data
         sevenDaysAgo.setHours(0,0,0,0);
 
         let total = 0;
@@ -1312,8 +1311,6 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
 
         simulations.forEach(sim => {
             if (sim.status !== 'finished' || !sim.answersData || !sim.date) return;
-            
-            // Parse da data DD/MM/YYYY
             const parts = sim.date.split('/');
             if(parts.length !== 3) return;
             const simDate = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
@@ -1343,7 +1340,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                 
                 questions.forEach((q, idx) => {
                     const userAnswer = sim.answersData[idx];
-                    if (!userAnswer) return; // Só conta respondidas
+                    if (!userAnswer) return; 
 
                     const isCorrect = userAnswer === q.correctOptionId;
                     const key = q.topic;
@@ -1372,7 +1369,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
 
             setFilteredTopics(filtered.slice(0, 5));
             setIsAnalyzing(false);
-        }, 600); // Pequeno delay artificial para mostrar o "Analisando..."
+        }, 600); 
 
         return () => clearTimeout(timer);
     }, [simulations, allQuestions, scope, topicSort]);
@@ -1387,12 +1384,12 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
 
         if (areaSort === 'best') return areasWithStats.sort((a, b) => b.percentage - a.percentage);
         if (areaSort === 'worst') return areasWithStats.sort((a, b) => a.percentage - b.percentage);
-        return areasWithStats; // default
+        return areasWithStats;
     }, [detailedStats, areaSort]);
 
     const handleOpenTrainModal = () => {
-        setSelectedTrainTopics(filteredTopics.map(t => t.name)); // Seleciona todos por padrão
-        setTrainQuantity(10); // Padrão
+        setSelectedTrainTopics(filteredTopics.map(t => t.name));
+        setTrainQuantity(10);
         setTrainModalOpen(true);
     };
 
@@ -1486,26 +1483,39 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                 </div>
              </div>
 
-             {/* RADAR DE DESEMPENHO */}
+             {/* RADAR DE DESEMPENHO (ALTERADO) */}
              <div className="mb-10 bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
-                <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-                    <div>
-                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-2"><Activity size={24} className="text-blue-600" /> Radar de Desempenho</h2>
-                        <button onClick={() => setTopicSort(prev => prev === 'worst' ? 'best' : 'worst')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-xs border transition-colors ${topicSort === 'worst' ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}>
-                            {topicSort === 'worst' ? <><TrendingDown size={14}/> Visualizando 5 Piores</> : <><TrendingUp size={14}/> Visualizando 5 Melhores</>}
-                        </button>
-                    </div>
+                
+                {/* TÍTULO */}
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-6">
+                    <Activity size={24} className="text-blue-600" /> 
+                    Radar de Desempenho
+                </h2>
+
+                {/* CONTROLES: SELETOR + BOTÃO LADO A LADO */}
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
                     
                     {/* SCOPE SELECTOR */}
-                    <div className="flex bg-gray-100/50 rounded-xl p-1 overflow-x-auto max-w-full">
-                            <button onClick={() => setScope('Todas')} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === 'Todas' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Todas</button>
-                            {areasBase.map(a => (
-                                <button key={a.id} onClick={() => setScope(a.title)} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === a.title ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{a.title}</button>
-                            ))}
+                    <div className="flex bg-gray-100/50 rounded-xl p-1 overflow-x-auto max-w-full no-scrollbar">
+                        <button onClick={() => setScope('Todas')} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === 'Todas' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Todas</button>
+                        {areasBase.map(a => (
+                            <button key={a.id} onClick={() => setScope(a.title)} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === a.title ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{a.title}</button>
+                        ))}
                     </div>
+
+                    {/* BOTÃO MELHORES/PIORES */}
+                    <button 
+                        onClick={() => setTopicSort(prev => prev === 'worst' ? 'best' : 'worst')} 
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border transition-colors ${topicSort === 'worst' ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}
+                    >
+                        {topicSort === 'worst' ? 
+                            <><TrendingDown size={18}/> Piores temas</> : 
+                            <><TrendingUp size={18}/> Melhores temas</>
+                        }
+                    </button>
                 </div>
 
-                {/* TOPIC LIST OR LOADER */}
+                {/* LISTA DE TÓPICOS OU LOADER */}
                 <div className="bg-gray-50 rounded-2xl border border-gray-200 overflow-hidden mb-6 min-h-[200px]">
                     {isAnalyzing ? (
                         <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 gap-3">
@@ -1537,7 +1547,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                     )}
                 </div>
 
-                {/* ACTION BUTTON */}
+                {/* BOTÃO DE AÇÃO */}
                 <button 
                     onClick={handleOpenTrainModal}
                     disabled={isAnalyzing || filteredTopics.length === 0}
