@@ -5,7 +5,8 @@ import {
   CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
-  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine
+  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
+  Clock, RotateCcw
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -31,7 +32,7 @@ const firebaseConfig = {
   measurementId: "G-XNHXB5BCGF"
 };
 
-// Evita reinicialização múltipla em desenvolvimento
+// Evita reinicialização múltipla
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
@@ -95,6 +96,7 @@ export default function MedManager() {
   const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
+  const [usingFallbackSort, setUsingFallbackSort] = useState(false);
   
   const [students, setStudents] = useState([]); 
   const [lastStudentDoc, setLastStudentDoc] = useState(null);
@@ -154,6 +156,7 @@ export default function MedManager() {
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
                     // Não carrega automaticamente se tiver filtros residuais, espera o useEffect de filtros
+                    // MAS agora queremos carregar de cara
                     loadQuestions(true);
                 } else {
                     await signOut(auth);
@@ -220,42 +223,58 @@ export default function MedManager() {
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS (NAVEGAÇÃO E FILTROS PADRÃO) ---
-  const loadQuestions = async (reset = false) => {
-      // Se houver um termo de pesquisa ativo, ignoramos o loadQuestions padrão para não misturar lógicas
-      if (searchTerm && !reset) return; 
-
+  // --- LOAD QUESTIONS (LÓGICA BLINDADA) ---
+  const loadQuestions = async (reset = false, forceFallback = false) => {
+      if (searchTerm && !reset) return; // Se tem busca de texto, não mistura as lógicas
       if (loadingQuestions) return;
       if (!reset && !hasMoreQuestions) return;
 
       setLoadingQuestions(true);
       setMissingIndexLink(null); 
+      
+      if (reset) {
+          if (forceFallback) setUsingFallbackSort(true);
+          else setUsingFallbackSort(false);
+      }
 
       try {
           let q = collection(db, "questions");
           let constraints = [];
 
-          // Se estiver resetando (clicou em Limpar ou mudou filtro), limpa a busca textual
-          if (reset && !searchTerm) {
-             // Mantém lógica normal
-          }
+          // -- AUDITORIA --
+          if (auditFilter !== 'none') {
+             if (auditFilter === 'missing_meta') { constraints.push(orderBy("institution")); constraints.push(where("institution", "==", "")); }
+             else if (auditFilter === 'missing_topic') { constraints.push(where("area", "==", "")); }
+             else if (auditFilter === 'has_image') { constraints.push(orderBy("image")); constraints.push(startAfter("")); }
+          } 
+          // -- MODO NORMAL (FILTROS DE ÁREA/TÓPICO) --
+          else {
+              const hasAreaFilter = selectedArea !== 'Todas';
+              const hasTopicFilter = selectedTopic !== 'Todos';
 
-          // -- Lógica de Filtros de Auditoria --
-          if (auditFilter === 'missing_meta') {
-              constraints.push(orderBy("institution")); 
-              constraints.push(where("institution", "==", ""));
-          } else if (auditFilter === 'missing_topic') {
-              constraints.push(where("area", "==", ""));
-          } else if (auditFilter === 'has_image') {
-              constraints.push(orderBy("image"));
-              constraints.push(startAfter(""));
-          } else {
-              // -- Modo Normal --
-              // Só aplica ordenação por data se não tivermos fazendo uma busca textual complexa (que faremos no handleServerSearch)
-              constraints.push(orderBy("createdAt", "desc"));
+              // 1. APLICA FILTROS (Sem OrderBy por enquanto)
+              if (hasAreaFilter) constraints.push(where("area", "==", selectedArea));
+              if (hasTopicFilter) constraints.push(where("topic", "==", selectedTopic));
+
+              // 2. LÓGICA DE ORDENAÇÃO SEGURA
+              // Se estamos filtrando por Área/Tópico, NÃO ordenamos por data para evitar erro de índice.
+              // Se estamos vendo "Todas", tentamos ordenar por data (padrão) ou fallback (ID).
               
-              if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
-              if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
+              if (!hasAreaFilter && !hasTopicFilter) {
+                  // Apenas na tela "Geral" tentamos ordenar
+                  if (forceFallback || usingFallbackSort) {
+                      // Modo Fallback: Ordena por ID (garante que mostra algo se createdAt estiver faltando)
+                      // Não colocamos orderBy explícito, Firestore ordena por __name__ por padrão se não houver orderBy
+                      // Ou podemos por orderBy('__name__')
+                  } else {
+                      // Modo Padrão: Tenta por Data
+                      constraints.push(orderBy("createdAt", "desc"));
+                  }
+              } else {
+                  // Se tem filtro de área, NÃO adiciona orderBy("createdAt")
+                  // Isso permite usar índices simples (single-field) que o Firestore cria automático.
+                  // A desvantagem: a ordem fica meio aleatória (por ID), mas PELO MENOS APARECE.
+              }
           }
 
           // Paginação
@@ -269,6 +288,16 @@ export default function MedManager() {
           const snapshot = await getDocs(finalQuery);
           
           const newQuestions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+          // -- DETECÇÃO DE FALHA SILENCIOSA --
+          // Se estamos no reset (primeira carga), pedimos ordenação por data, E veio vazio,
+          // pode ser que as questões não tenham o campo createdAt. Vamos tentar o fallback automático.
+          if (reset && newQuestions.length === 0 && !forceFallback && auditFilter === 'none' && selectedArea === 'Todas') {
+             console.log("Lista vazia com ordenação por data. Tentando fallback...");
+             setLoadingQuestions(false);
+             loadQuestions(true, true); // Chama recursivo forçando fallback
+             return;
+          }
           
           if (reset) {
               setQuestions(newQuestions);
@@ -284,8 +313,16 @@ export default function MedManager() {
           if (error.message.includes("requires an index")) {
               const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
               const link = linkMatch ? linkMatch[0] : null;
+              
+              // Se deu erro de índice e estamos tentando ordenar por data, tenta fallback
+              if (!forceFallback && selectedArea === 'Todas') {
+                  setLoadingQuestions(false);
+                  loadQuestions(true, true);
+                  return;
+              }
+
               setMissingIndexLink(link);
-              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro.', link);
+              showNotification('error', 'O Firestore exige um índice composto para essa combinação.', link);
           } else {
               showNotification('error', 'Erro ao carregar dados: ' + error.message);
           }
@@ -294,11 +331,9 @@ export default function MedManager() {
       }
   };
 
-  // --- SERVER SIDE SEARCH (A CORREÇÃO PRINCIPAL) ---
+  // --- SERVER SIDE SEARCH ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
-      
-      // Se limpou o campo, volta a carregar tudo normalmente
       if (!term) {
           handleClearQuestionFilters();
           return;
@@ -308,51 +343,42 @@ export default function MedManager() {
       setLoadingQuestions(true);
       setMissingIndexLink(null);
       
-      // 1. IMPORTANTE: Reseta os filtros visuais para "Todas"
-      // Isso garante que o resultado da busca não seja filtrado localmente
+      // Reseta filtros visuais para não confundir
       setSelectedArea('Todas');
       setSelectedTopic('Todos');
       setAuditFilter('none');
-      setHasMoreQuestions(false); // Desativa paginação infinita durante busca textual
+      setHasMoreQuestions(false);
       
       let foundDocs = [];
 
       try {
-          // 2. Tenta buscar por ID exato primeiro
+          // 1. Busca ID
           try {
             const docRef = doc(db, "questions", term);
             const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                foundDocs.push({ id: docSnap.id, ...docSnap.data() });
-            }
+            if (docSnap.exists()) foundDocs.push({ id: docSnap.id, ...docSnap.data() });
           } catch(e) { }
 
-          // 3. Se não achou ID, busca por texto (Começa com...)
-          // Nota: Firestore 'startAt' é Case Sensitive. 
+          // 2. Busca Texto (StartAt)
           if (foundDocs.length === 0) {
               const qText = query(
                   collection(db, "questions"),
                   orderBy("text"),
                   startAt(term),
                   endAt(term + '\uf8ff'),
-                  limit(20) // Limite seguro para não gastar muito
+                  limit(20)
               );
               
               const textSnap = await getDocs(qText);
               textSnap.forEach(d => {
-                  if (!foundDocs.some(f => f.id === d.id)) {
-                      foundDocs.push({ id: d.id, ...d.data() });
-                  }
+                  if (!foundDocs.some(f => f.id === d.id)) foundDocs.push({ id: d.id, ...d.data() });
               });
           }
 
           setQuestions(foundDocs); 
           
-          if (foundDocs.length > 0) {
-              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
-          } else {
-              showNotification('error', 'Nada encontrado. Dica: O Firestore diferencia Maiúsculas de minúsculas.');
-          }
+          if (foundDocs.length > 0) showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
+          else showNotification('error', 'Nada encontrado. Dica: O Firestore diferencia Maiúsculas de minúsculas.');
 
       } catch (error) {
           console.error("Erro na busca:", error);
@@ -371,9 +397,7 @@ export default function MedManager() {
   };
 
   const handleKeyDownSearch = (e) => {
-      if (e.key === 'Enter') {
-          handleServerSearch();
-      }
+      if (e.key === 'Enter') handleServerSearch();
   };
 
   // --- LOAD STUDENTS ---
@@ -386,26 +410,16 @@ export default function MedManager() {
           let q = collection(db, "users");
           let constraints = [orderBy("name")]; 
 
-          if (studentRoleFilter !== 'all') {
-              constraints.push(where("role", "==", studentRoleFilter));
-          }
-
-          if (!reset && lastStudentDoc) {
-              constraints.push(startAfter(lastStudentDoc));
-          }
+          if (studentRoleFilter !== 'all') constraints.push(where("role", "==", studentRoleFilter));
+          if (!reset && lastStudentDoc) constraints.push(startAfter(lastStudentDoc));
 
           constraints.push(limit(ITEMS_PER_PAGE));
-
           const finalQuery = query(q, ...constraints);
           const snapshot = await getDocs(finalQuery);
-
           const newStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-          if (reset) {
-              setStudents(newStudents);
-          } else {
-              setStudents(prev => [...prev, ...newStudents]);
-          }
+          if (reset) setStudents(newStudents);
+          else setStudents(prev => [...prev, ...newStudents]);
 
           setLastStudentDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreStudents(snapshot.docs.length === ITEMS_PER_PAGE);
@@ -419,15 +433,12 @@ export default function MedManager() {
   };
 
   useEffect(() => {
-      if (activeView === 'students' && students.length === 0) {
-          loadStudents(true);
-      }
+      if (activeView === 'students' && students.length === 0) loadStudents(true);
   }, [activeView]);
 
-  // Listener para mudança de Área/Tópico - Só recarrega se NÃO tiver busca textual ativa
+  // Listener para mudança de Área/Tópico
   useEffect(() => {
       if(user && !searchTerm) {
-          // Pequeno delay para evitar flood ao trocar filtros
           const timer = setTimeout(() => {
              loadQuestions(true);
           }, 500);
@@ -436,9 +447,7 @@ export default function MedManager() {
   }, [selectedArea, selectedTopic, auditFilter]); 
 
   useEffect(() => {
-      if(user && activeView === 'students') {
-          loadStudents(true);
-      }
+      if(user && activeView === 'students') loadStudents(true);
   }, [studentRoleFilter]);
 
   // --- HELPER DATA ---
@@ -478,21 +487,14 @@ export default function MedManager() {
 
       // 2. Filtra
       let result = allQuestions.filter(q => {
-          // Busca Textual Local (Fallback para resultados já carregados)
           const term = searchTerm.toLowerCase().trim();
-          
-          // Se tiver termo de busca, priorizamos ele e IGNORAMOS área/tópico se o user não for explícito
-          // Isso resolve o problema de "busca retorna mas filtro esconde"
           if (term) {
              const inText = (q.text || '').toLowerCase().includes(term);
-             const inId = q.id === term; // ID exato já tratado no server, mas mantém aqui
+             const inId = q.id === term; 
              const inInst = (q.institution || '').toLowerCase().includes(term);
              return inText || inId || inInst;
           }
 
-          // Se NÃO tiver termo, aplica filtros rígidos
-          
-          // Lógica Audit
           let matchesAudit = true;
           if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
           if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
@@ -512,15 +514,14 @@ export default function MedManager() {
           return matchesArea && matchesTopic && matchesInstitution && matchesYear;
       });
 
-      // 3. Ordena
+      // 3. Ordena Localmente (Para quando o Firestore não ordena)
       result.sort((a, b) => {
-          // Reportados primeiro
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
           if (countA > 0 || countB > 0) {
               if (countA !== countB) return countB - countA; 
           }
-          // Depois data
+          // Se tiver createdAt, usa, senão mantém
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
           return dateB - dateA;
@@ -578,7 +579,7 @@ export default function MedManager() {
       setSelectedInstitution('Todas'); 
       setSelectedYear('Todos'); 
       setAuditFilter('none');
-      setQuestions([]); // Limpa lista para forçar reload limpo
+      setQuestions([]); 
       setTimeout(() => loadQuestions(true), 100); 
   };
 
@@ -803,7 +804,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.6</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.7</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -842,7 +843,7 @@ export default function MedManager() {
                     
                     {auditFilter === 'none' && !searchTerm && (
                         <>
-                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Filtrar por Tópico requer índice no Firebase.</div>
+                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico desativa ordenação por Data (Index Safety).</div>
                             <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                             <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                         </>
@@ -925,15 +926,24 @@ export default function MedManager() {
                        </div>
                   )}
 
-                  {searchTerm && (
-                       <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center justify-between text-sm font-bold mb-4">
-                           <div className="flex items-center gap-2">
-                               <Search size={16}/>
-                               Resultado da busca textual por: "{searchTerm}"
-                           </div>
-                           <button onClick={handleClearQuestionFilters} className="text-blue-600 underline hover:text-blue-800">Limpar Busca</button>
-                       </div>
-                  )}
+                  <div className="flex gap-2 mb-2">
+                     {/* BADGES DE STATUS */}
+                     {searchTerm && (
+                         <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <Search size={12}/> Busca Textual
+                         </div>
+                     )}
+                     {!searchTerm && auditFilter === 'none' && selectedArea === 'Todas' && !usingFallbackSort && (
+                         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <Clock size={12}/> Ordenado por Data
+                         </div>
+                     )}
+                     {!searchTerm && usingFallbackSort && (
+                         <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <RotateCcw size={12}/> Modo Fallback (Ordenação por ID) - Campo de data pode estar ausente
+                         </div>
+                     )}
+                  </div>
 
                   {auditFilter !== 'none' && (
                        <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold mb-4">
@@ -948,7 +958,6 @@ export default function MedManager() {
                       <>
                         {filteredQuestions.map(q => {
                             const reportCount = reportsCountByQuestion[q.id] || 0;
-                            // Checagens Rápidas
                             const missingTopic = !q.area || !q.topic || q.area === 'Todas';
                             
                             return (
