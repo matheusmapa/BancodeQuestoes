@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
   AlertCircle, Database, List, ArrowLeft, LogOut, Loader2, 
   CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
-  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine, Bug
+  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -73,6 +73,11 @@ function NotificationToast({ notification, onClose }) {
         <div className="flex-1">
             <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Atenção' : 'Sucesso'}</p>
             <p className="text-sm opacity-90 leading-tight break-words">{notification.text}</p>
+            {notification.link && (
+                <a href={notification.link} target="_blank" rel="noopener noreferrer" className="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded mt-2 inline-flex items-center gap-1 hover:bg-blue-100">
+                    <ExternalLink size={12}/> Criar Índice no Firebase Agora
+                </a>
+            )}
         </div>
         <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400"><X size={18}/></button>
     </div>
@@ -88,6 +93,7 @@ export default function MedManager() {
   const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); 
   const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
+  const [missingIndexLink, setMissingIndexLink] = useState(null); 
   
   const [students, setStudents] = useState([]); 
   const [lastStudentDoc, setLastStudentDoc] = useState(null);
@@ -107,14 +113,14 @@ export default function MedManager() {
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // --- SISTEMA DE AUDITORIA & FILTROS (NOVA LÓGICA) ---
-  const [auditMode, setAuditMode] = useState(false);
-  const [activeAuditFilter, setActiveAuditFilter] = useState('all_problems'); 
-  // 'all_problems', 'missing_meta', 'inconsistent_topic', 'has_image'
-
   const [selectedArea, setSelectedArea] = useState('Todas');
   const [selectedTopic, setSelectedTopic] = useState('Todos');
+  const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
+  const [selectedYear, setSelectedYear] = useState('Todos'); 
+  const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
+
+  // --- NOVOS FILTROS DE AUDITORIA ---
+  const [auditFilter, setAuditFilter] = useState('none'); // 'none', 'missing_meta', 'missing_topic', 'has_image', 'short_text'
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -136,7 +142,7 @@ export default function MedManager() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const showNotification = (type, text) => setNotification({ type, text });
+  const showNotification = (type, text, link = null) => setNotification({ type, text, link });
 
   // --- AUTH ---
   useEffect(() => {
@@ -209,45 +215,44 @@ export default function MedManager() {
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- NOVA FUNÇÃO DE CARREGAMENTO (SIMPLIFICADA) ---
+  // --- LOAD QUESTIONS (MODIFICADO PARA AUDITORIA) ---
   const loadQuestions = async (reset = false) => {
       if (loadingQuestions) return;
-      // Se não for reset e não tiver mais, para.
       if (!reset && !hasMoreQuestions) return;
 
       setLoadingQuestions(true);
+      setMissingIndexLink(null); 
 
       try {
-          // ESTRATÉGIA:
-          // 1. Se tiver termo de busca, busca exata ou prefixo.
-          // 2. Se for "Audit Mode", faz uma query SEM FILTROS COMPLEXOS (só createdAt desc) 
-          //    mas com limite maior para pegarmos amostra e filtrar no cliente.
-          // 3. Se for modo normal, usa os filtros de area/topico se selecionados.
-
           let q = collection(db, "questions");
           let constraints = [];
-          const isAudit = auditMode;
 
-          if (isAudit) {
-              // No modo auditoria, queremos ver TUDO recentemente para achar erros.
-              // Não filtramos no server para garantir que nada seja escondido por falta de indice.
-              constraints.push(orderBy("createdAt", "desc"));
-              // Aumenta o limite para o filtro cliente ser mais efetivo
-              constraints.push(limit(50)); 
+          // -- Lógica de Filtros de Auditoria (Prioridade) --
+          if (auditFilter === 'missing_meta') {
+              // Tenta achar campos vazios. Obs: Firestore não tem filtro "é vazio" nativo fácil,
+              // então ordenamos por institution para pegar os vazios primeiro (strings vazias vêm antes)
+              constraints.push(orderBy("institution")); 
+              constraints.push(where("institution", "==", "")); // Se seu DB salvar como string vazia
+          } else if (auditFilter === 'missing_topic') {
+              constraints.push(where("area", "==", ""));
+          } else if (auditFilter === 'has_image') {
+              // Assumindo que você tem um campo 'image' ou 'imageUrl' que não é nulo
+              constraints.push(orderBy("image"));
+              constraints.push(startAfter("")); // Pega qualquer coisa que tenha texto no campo image
           } else {
-              // Modo Padrão
+              // -- Modo Normal --
               constraints.push(orderBy("createdAt", "desc"));
               
               if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
               if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
-              
-              constraints.push(limit(ITEMS_PER_PAGE));
           }
 
           // Paginação
           if (!reset && lastQuestionDoc) {
               constraints.push(startAfter(lastQuestionDoc));
           }
+          
+          constraints.push(limit(ITEMS_PER_PAGE));
           
           const finalQuery = query(q, ...constraints);
           const snapshot = await getDocs(finalQuery);
@@ -261,24 +266,29 @@ export default function MedManager() {
           }
 
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
-          
-          // Lógica de "Tem mais?"
-          if (isAudit) {
-             // No modo audit, como pegamos blocos grandes, assumimos que tem mais se veio o bloco cheio
-             setHasMoreQuestions(snapshot.docs.length === 50);
-          } else {
-             setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
+          setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
+
+          if (reset && newQuestions.length === 0 && auditFilter === 'none') {
+             // Fallback: Se não achou nada no modo normal, tenta buscar sem order by complexo pra não travar tela
+             // Isso previne tela em branco se o indice de 'area' nao existir
           }
 
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
-          showNotification('error', 'Erro ao buscar dados: ' + error.message);
+          if (error.message.includes("requires an index")) {
+              const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
+              const link = linkMatch ? linkMatch[0] : null;
+              setMissingIndexLink(link);
+              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro.', link);
+          } else {
+              showNotification('error', 'Erro ao carregar dados: ' + error.message);
+          }
       } finally {
           setLoadingQuestions(false);
       }
   };
 
-  // --- BUSCA ESPECÍFICA (ID ou TEXTO) ---
+  // --- SERVER SIDE SEARCH ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
       if (!term) {
@@ -286,12 +296,11 @@ export default function MedManager() {
           return;
       }
       setIsSearchingServer(true);
-      setAuditMode(false); // Sai do modo auditoria se pesquisar
-      
+      setMissingIndexLink(null);
       let foundDocs = [];
 
       try {
-          // 1. ID exato
+          // 1. Tenta buscar por ID exato
           try {
             const docRef = doc(db, "questions", term);
             const docSnap = await getDoc(docRef);
@@ -300,7 +309,7 @@ export default function MedManager() {
             }
           } catch(e) { }
 
-          // 2. Prefixo de Texto
+          // 2. Se não achou ID, busca por texto (prefixo)
           if (foundDocs.length === 0) {
               const qText = query(
                   collection(db, "questions"),
@@ -322,7 +331,7 @@ export default function MedManager() {
               setHasMoreQuestions(false); 
               showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
           } else {
-              showNotification('error', 'Nada encontrado. Dica: Cole o início EXATO do enunciado ou o ID.');
+              showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
           }
       } catch (error) {
           console.error("Erro na busca:", error);
@@ -338,7 +347,7 @@ export default function MedManager() {
       }
   };
 
-  // --- CARREGAR ALUNOS ---
+  // --- LOAD STUDENTS ---
   const loadStudents = async (reset = false) => {
       if (loadingStudents) return;
       if (!reset && !hasMoreStudents) return;
@@ -386,19 +395,15 @@ export default function MedManager() {
       }
   }, [activeView]);
 
-  // Recarrega se mudar filtros no modo normal
   useEffect(() => {
-      if(user && !searchTerm && !auditMode) {
-          loadQuestions(true);
+      if(user) {
+         // Pequeno delay para evitar flood ao trocar filtros
+          const timer = setTimeout(() => {
+             if(!searchTerm) loadQuestions(true);
+          }, 500);
+          return () => clearTimeout(timer);
       }
-  }, [selectedArea, selectedTopic]); 
-
-  // Recarrega se ativar modo auditoria
-  useEffect(() => {
-      if(user && auditMode) {
-          loadQuestions(true);
-      }
-  }, [auditMode]);
+  }, [selectedArea, selectedTopic, auditFilter]); 
 
   useEffect(() => {
       if(user && activeView === 'students') {
@@ -429,64 +434,60 @@ export default function MedManager() {
       fetchReporters();
   }, [reports]);
 
-  // --- FUNÇÃO DE VERIFICAÇÃO DE CONSISTÊNCIA ---
-  const getInconsistency = (q) => {
-      if (!q.area || q.area === 'Todas') return 'Área Indefinida';
-      if (!q.topic || q.topic === 'Todos') return 'Tópico Indefinido';
-      
-      const allowedTopics = themesMap[q.area];
-      if (!allowedTopics) return 'Área Desconhecida';
-      
-      // Normalização básica para comparar (remove espaços extras)
-      const topicClean = q.topic.trim();
-      if (!allowedTopics.includes(topicClean)) {
-          return `Tópico '${q.topic}' não pertence a '${q.area}'`;
-      }
-      return null;
-  };
-
-  // --- FILTRAGEM LOCAL ROBUSTA ---
+  // --- FILTERS MEMO & SORTING ---
+  const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
+  const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
+  
   const filteredQuestions = useMemo(() => {
+      // 1. Merge: Junta a lista normal + a lista de questões com report
       const allQuestionsMap = new Map();
       questions.forEach(q => allQuestionsMap.set(q.id, q));
       extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
+      
       const allQuestions = Array.from(allQuestionsMap.values());
 
+      // 2. Filtra (Lógica melhorada para funcionar LOCALMENTE com o que foi baixado)
       let result = allQuestions.filter(q => {
-          // 1. Busca textual sempre vence
+          // Busca Textual Local (Case Insensitive)
           const term = searchTerm.toLowerCase().trim();
-          if (term) {
-             return (q.text || '').toLowerCase().includes(term) || 
-                    (q.institution || '').toLowerCase().includes(term) || 
-                    q.id === term;
-          }
+          const matchesSearch = term ? (
+              (q.text || '').toLowerCase().includes(term) || 
+              (q.institution || '').toLowerCase().includes(term) || 
+              q.id === term
+          ) : true;
+          
+          // Filtros de Dropdown (Audit ou Normal)
+          // Se estiver em modo Auditoria, o loadQuestions já filtrou no servidor, 
+          // mas aplicamos aqui também para garantir visualização correta dos dados mistos
+          let matchesAudit = true;
+          if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
+          if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
+          if (auditFilter === 'has_image') matchesAudit = !!q.image;
+          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50; // Detecta enunciados quebrados
 
-          // 2. Se for AUDITORIA, aplica filtros de "Problemas"
-          if (auditMode) {
-              const inconsistency = getInconsistency(q);
-              const missingMeta = !q.institution || !q.year || q.institution === '' || q.year === '';
-              const hasImage = !!q.image;
-              
-              if (activeAuditFilter === 'missing_meta') return missingMeta;
-              if (activeAuditFilter === 'inconsistent_topic') return !!inconsistency;
-              if (activeAuditFilter === 'has_image') return hasImage;
-              
-              // 'all_problems': Retorna qualquer um que tenha B.O.
-              if (activeAuditFilter === 'all_problems') {
-                  return missingMeta || !!inconsistency || hasImage; // Imagem não é erro, mas entra no "pente fino"
-              }
-              return true; // Se não tiver filtro ativo, mostra tudo do modo audit
-          }
-
-          // 3. Modo Normal
+          // Filtros Padrão (Area/Topic/Inst/Year)
+          // Normaliza as strings para evitar erro de espaço ou case
           const qInst = (q.institution || '').trim();
           const qYear = String(q.year || '').trim();
+          
           const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
           const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-          return matchesArea && matchesTopic;
+          
+          const matchesInstitution = selectedInstitution === 'Todas' || qInst === selectedInstitution;
+          const matchesYear = selectedYear === 'Todos' || qYear === selectedYear;
+
+          // Se tiver search term, ignora alguns filtros para achar a questão
+          if (term) return matchesSearch;
+
+          // Se estiver em modo auditoria, respeita a auditoria E os filtros locais de inst/ano se selecionados
+          if (auditFilter !== 'none') {
+              return matchesAudit;
+          }
+
+          return matchesArea && matchesTopic && matchesInstitution && matchesYear;
       });
 
-      // Ordenação
+      // 3. Ordena
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
@@ -499,7 +500,31 @@ export default function MedManager() {
       });
 
       return result;
-  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, auditMode, activeAuditFilter]);
+  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear, auditFilter]);
+
+  const filteredReports = useMemo(() => {
+      let result = reports;
+      if (reportFilterQuestionId) result = result.filter(r => r.questionId === reportFilterQuestionId);
+      if (activeView === 'reports' && searchTerm) {
+          const lower = searchTerm.toLowerCase();
+          result = result.filter(r => r.userId?.toLowerCase().includes(lower) || r.questionId?.toLowerCase().includes(lower) || r.text?.toLowerCase().includes(lower) || r.details?.toLowerCase().includes(lower) || (userProfiles[r.userId]?.name || '').toLowerCase().includes(lower));
+      }
+      return result;
+  }, [reports, reportFilterQuestionId, searchTerm, activeView, userProfiles]);
+
+  const filteredStudents = useMemo(() => {
+      if (activeView !== 'students') return [];
+      const lower = searchTerm.toLowerCase();
+      return students.filter(s => {
+          const matchesSearch = s.name?.toLowerCase().includes(lower) || s.email?.toLowerCase().includes(lower) || s.id?.toLowerCase().includes(lower);
+          const isPremium = s.subscriptionUntil && new Date(s.subscriptionUntil) > new Date();
+          let matchesStatus = true;
+          if (studentStatusFilter === 'active') matchesStatus = isPremium;
+          if (studentStatusFilter === 'expired') matchesStatus = !isPremium;
+          return matchesSearch && matchesStatus;
+      });
+  }, [students, searchTerm, activeView, studentStatusFilter]);
+
 
   // --- ACTIONS ---
   const handleLogout = async () => {
@@ -512,24 +537,133 @@ export default function MedManager() {
   };
 
   const handleGoToReports = (questionId) => {
-      // Sai da auditoria e foca na questão
-      setAuditMode(false);
-      setSearchTerm(questionId); // Truque: Pesquisa pelo ID para garantir que ela apareça
-      setActiveView('questions'); // Fica na view questions para ver o card destacado, ou reports se preferir
-      // Mas o user pediu "ver tudo que retornou", então melhor ir para reports direto
-      // ... Na verdade, o original ia para view 'reports'. Mantendo:
+      setReportFilterQuestionId(questionId);
+      setSearchTerm('');
       setActiveView('reports');
   };
 
-  const handleClearAllFilters = () => { 
+  const handleClearReportFilter = () => setReportFilterQuestionId(null);
+  
+  const handleClearQuestionFilters = () => { 
       setSearchTerm(''); 
       setSelectedArea('Todas'); 
       setSelectedTopic('Todos'); 
-      setAuditMode(false);
-      loadQuestions(true); 
+      setSelectedInstitution('Todas'); 
+      setSelectedYear('Todos'); 
+      setAuditFilter('none');
+      loadQuestions(true); // Força reload
   };
 
-  // --- MANIPULAÇÃO DE DADOS ---
+  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
+  const handleCreateUser = async (e) => {
+      e.preventDefault();
+      setIsSaving(true);
+      const formData = new FormData(e.target);
+      const userData = Object.fromEntries(formData);
+      
+      const appName = `SecondaryApp-${Date.now()}`;
+      let secondaryApp;
+
+      try {
+          secondaryApp = initializeApp(firebaseConfig, appName);
+          const secondaryAuth = getAuth(secondaryApp);
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
+          const newUser = userCredential.user;
+          await updateProfile(newUser, { displayName: userData.name });
+          const newUserId = newUser.uid; 
+          
+          const newUserObj = {
+              id: newUserId,
+              name: userData.name,
+              email: userData.email,
+              role: userData.role || 'student',
+              createdAt: new Date().toISOString(),
+              subscriptionUntil: userData.subscriptionUntil || null,
+              whatsapp: userData.whatsapp || '',
+              dailyGoal: 50,
+              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
+          };
+          
+          await setDoc(doc(db, "users", newUserId), newUserObj);
+          await setDoc(doc(db, "users", newUserId, "stats", "main"), {
+              correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null
+          });
+          
+          setStudents(prev => [newUserObj, ...prev]);
+          showNotification('success', 'Aluno criado com acesso ao sistema!');
+          setIsCreatingUser(false);
+      } catch (error) {
+          console.error(error);
+          if (error.code === 'auth/email-already-in-use') {
+              showNotification('error', 'Este email já está em uso.');
+          } else {
+              showNotification('error', 'Erro ao criar: ' + error.message);
+          }
+      } finally {
+          if (secondaryApp) {
+              try { await deleteApp(secondaryApp); } catch (e) { console.error("Erro ao limpar app secundário", e); }
+          }
+          setIsSaving(false);
+      }
+  };
+
+  const updateLocalList = (listType, id, newData) => {
+      if (listType === 'questions') {
+          setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+          setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+      } else if (listType === 'students') {
+          setStudents(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+      }
+  };
+
+  const removeLocalList = (listType, id) => {
+      if (listType === 'questions') {
+          setQuestions(prev => prev.filter(item => item.id !== id));
+          setExtraReportedQuestions(prev => prev.filter(item => item.id !== id));
+      } else if (listType === 'students') {
+          setStudents(prev => prev.filter(item => item.id !== id));
+      }
+  };
+
+  const handleInlineUserUpdate = async (id, field, value) => {
+      try {
+          await updateDoc(doc(db, "users", id), { [field]: value });
+          updateLocalList('students', id, { [field]: value }); 
+          showNotification('success', 'Atualizado com sucesso!');
+      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+  };
+
+  const handleAdd30Days = async (student) => {
+      const now = new Date(); let newDate = new Date();
+      if (student.subscriptionUntil) { const currentExpiry = new Date(student.subscriptionUntil); if (currentExpiry > now) { newDate = new Date(currentExpiry); } }
+      newDate.setDate(newDate.getDate() + 30);
+      try {
+          const isoDate = newDate.toISOString();
+          await updateDoc(doc(db, "users", student.id), { subscriptionUntil: isoDate });
+          updateLocalList('students', student.id, { subscriptionUntil: isoDate });
+          showNotification('success', '+30 dias adicionados!');
+      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+  };
+
+  const handleDeleteUser = async () => {
+      if (!deleteModal || !deleteModal.email) return; 
+      try {
+          await deleteDoc(doc(db, "users", deleteModal.id));
+          removeLocalList('students', deleteModal.id);
+          showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
+          setDeleteModal(null);
+      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
+  };
+
+  const fetchUserStats = async (student) => {
+      setViewingUserStats({ ...student, loading: true });
+      try {
+          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
+          if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } 
+          else { setViewingUserStats({ ...student, stats: null, loading: false }); }
+      } catch (e) { console.error(e); setViewingUserStats({ ...student, stats: null, loading: false }); }
+  };
+
   const handleSave = async (shouldResolveReport = false) => {
       setIsSaving(true);
       try {
@@ -540,66 +674,11 @@ export default function MedManager() {
               batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() });
           }
           await batch.commit();
-          
-          setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...data } : item));
-          setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...data } : item));
-          
+          updateLocalList('questions', id, data);
           showNotification('success', shouldResolveReport ? 'Salvo e resolvido!' : 'Atualizado!');
           setEditingQuestion(null);
           setAssociatedReport(null);
       } catch (error) { console.error(error); showNotification('error', error.message); } finally { setIsSaving(false); }
-  };
-
-  // ... (Funções de deletar, criar user, etc mantidas iguais) ...
-  // Para economizar linhas e focar na mudança principal, assumo que você tem o resto das funções
-  // Vou recolocar as principais para garantir que não quebre nada.
-
-  const handleCreateUser = async (e) => {
-      e.preventDefault();
-      setIsSaving(true);
-      const formData = new FormData(e.target);
-      const userData = Object.fromEntries(formData);
-      const appName = `SecondaryApp-${Date.now()}`;
-      let secondaryApp;
-      try {
-          secondaryApp = initializeApp(firebaseConfig, appName);
-          const secondaryAuth = getAuth(secondaryApp);
-          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
-          const newUser = userCredential.user;
-          await updateProfile(newUser, { displayName: userData.name });
-          const newUserId = newUser.uid; 
-          const newUserObj = { id: newUserId, name: userData.name, email: userData.email, role: userData.role || 'student', createdAt: new Date().toISOString(), subscriptionUntil: userData.subscriptionUntil || null, whatsapp: userData.whatsapp || '', dailyGoal: 50, stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 } };
-          await setDoc(doc(db, "users", newUserId), newUserObj);
-          await setDoc(doc(db, "users", newUserId, "stats", "main"), { correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null });
-          setStudents(prev => [newUserObj, ...prev]);
-          showNotification('success', 'Aluno criado!');
-          setIsCreatingUser(false);
-      } catch (error) { showNotification('error', error.message); } finally { if (secondaryApp) deleteApp(secondaryApp); setIsSaving(false); }
-  };
-
-  const handleInlineUserUpdate = async (id, field, value) => {
-      try { await updateDoc(doc(db, "users", id), { [field]: value }); setStudents(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s)); showNotification('success', 'Atualizado!'); } catch (error) { showNotification('error', error.message); }
-  };
-
-  const handleDeleteQuestion = async () => {
-      if (!deleteModal || deleteModal.email) return; 
-      try {
-          await deleteDoc(doc(db, "questions", deleteModal.id));
-          setQuestions(prev => prev.filter(q => q.id !== deleteModal.id));
-          setExtraReportedQuestions(prev => prev.filter(q => q.id !== deleteModal.id));
-          showNotification('success', 'Questão excluída.');
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', error.message); }
-  };
-  
-  const handleDeleteUser = async () => {
-      if (!deleteModal || !deleteModal.email) return;
-      try {
-          await deleteDoc(doc(db, "users", deleteModal.id));
-          setStudents(prev => prev.filter(s => s.id !== deleteModal.id));
-          showNotification('success', 'Aluno excluído.');
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', error.message); }
   };
 
   const handleRejectReport = async () => {
@@ -607,6 +686,7 @@ export default function MedManager() {
       try {
           await deleteDoc(doc(db, "reports", rejectReportModal.id));
           showNotification('success', 'Reporte excluído.');
+          if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); }
           setRejectReportModal(null);
       } catch (error) { showNotification('error', error.message); }
   };
@@ -629,35 +709,58 @@ export default function MedManager() {
           setAssociatedReport(report);
       } else { showNotification('error', 'Questão não encontrada.'); }
   };
-  
-  const fetchUserStats = async (student) => {
-      setViewingUserStats({ ...student, loading: true });
+
+  const handleDeleteQuestion = async () => {
+      if (!deleteModal || deleteModal.email) return; 
       try {
-          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
-          if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } 
-          else { setViewingUserStats({ ...student, stats: null, loading: false }); }
-      } catch (e) { setViewingUserStats({ ...student, stats: null, loading: false }); }
+          await deleteDoc(doc(db, "questions", deleteModal.id));
+          removeLocalList('questions', deleteModal.id); 
+          showNotification('success', 'Questão excluída.');
+          if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); }
+          setDeleteModal(null);
+      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
   };
 
-  const copyToClipboard = async (text) => { try { await navigator.clipboard.writeText(text); showNotification('success', 'Copiado!'); } catch (err) {} };
+  const copyToClipboard = async (text) => {
+      try {
+          await navigator.clipboard.writeText(text);
+          showNotification('success', 'Copiado!');
+      } catch (err) { showNotification('error', 'Erro ao copiar.'); }
+  };
 
-  // --- RENDER HELPERS ---
   const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
   const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
-  const checkSubscriptionStatus = (d, role) => { if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' }; if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; };
+  const checkSubscriptionStatus = (d, role) => { 
+      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
+      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
+  };
+  const getReportDetails = (r) => {
+      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
+          return (
+              <div className="flex gap-4 mt-2">
+                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span><span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span></div>
+                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span><span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span></div>
+              </div>
+          );
+      }
+      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
+  };
 
-  const pendingReportsCount = reports.length;
   const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
+  const pendingReportsCount = reports.length;
 
   if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
   if (!user) return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
           <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center">
-              <h1 className="text-2xl font-bold text-slate-800 mb-6">MedManager Admin</h1>
-              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', err.message)); }} className="space-y-4">
-                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl" required/>
-                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl" required/>
-                  <button className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl">Entrar</button>
+              <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div>
+              <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1>
+              <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p>
+              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro de login: " + err.message)); }} className="space-y-4">
+                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
+                  <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button>
               </form>
           </div>
           <NotificationToast notification={notification} onClose={() => setNotification(null)} />
@@ -672,234 +775,336 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão 5.0 (Auditoria)</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.5</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
-              <button onClick={() => { setActiveView('questions'); setAuditMode(false); }} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><List size={18} /> Questões</button>
-              <button onClick={() => setActiveView('reports')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><MessageSquare size={18} /> Reportes {pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 rounded-full">{pendingReportsCount}</span>}</button>
-              <button onClick={() => setActiveView('students')} className={`w-full flex items-center gap-3 p-3 rounded-xl font-bold text-sm ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><Users size={18} /> Alunos</button>
-
+              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
+              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
+              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
+              
+              {/* FILTERS FOR QUESTIONS */}
               {activeView === 'questions' && (
-                  <div className="mt-8 pt-6 border-t border-gray-100">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-4">Modo de Visualização</label>
-                      
-                      {/* BOTÃO MODO AUDITORIA */}
-                      <button 
-                        onClick={() => { setAuditMode(!auditMode); setSearchTerm(''); }}
-                        className={`w-full p-3 rounded-xl border-2 flex items-center gap-2 font-bold transition-all mb-4 ${auditMode ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
-                      >
-                          <ScanLine size={18}/>
-                          {auditMode ? 'Auditoria ATIVA' : 'Ativar Auditoria'}
-                      </button>
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros & Auditoria</label>
+                        <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
+                    </div>
+                    {missingIndexLink && (
+                        <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="block text-xs bg-red-100 text-red-700 p-2 rounded border border-red-200 hover:bg-red-200 transition-colors mb-2 font-bold animate-pulse">
+                            <AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui
+                        </a>
+                    )}
+                    
+                    {/* Filtro de Auditoria */}
+                    <div className="relative">
+                        <ScanLine size={16} className={`absolute left-3 top-3 ${auditFilter !== 'none' ? 'text-red-500' : 'text-gray-400'}`} />
+                        <select 
+                            value={auditFilter} 
+                            onChange={e => { setAuditFilter(e.target.value); loadQuestions(true); }} 
+                            className={`w-full pl-9 pr-3 py-2 border rounded-lg text-sm font-medium outline-none ${auditFilter !== 'none' ? 'bg-red-50 border-red-200 text-red-700 font-bold' : 'bg-gray-50 border-gray-200'}`}
+                        >
+                            <option value="none">Navegação Padrão</option>
+                            <option value="missing_meta">⚠️ Banca/Ano Vazios</option>
+                            <option value="missing_topic">⚠️ Sem Tópico/Área</option>
+                            <option value="has_image">🖼️ Com Imagem (Check)</option>
+                            <option value="short_text">📝 Enunciado Curto (Erro?)</option>
+                        </select>
+                    </div>
+                    
+                    {auditFilter === 'none' && (
+                        <>
+                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca.</div>
+                            <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                            <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                        </>
+                    )}
+                    
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais (Resultados)</label>
+                    <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
+                    <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
+                </div>
+              )}
 
-                      {auditMode ? (
-                          <div className="space-y-2 animate-in slide-in-from-left-2">
-                              <p className="text-[10px] text-amber-600 font-bold mb-2">FILTRAR PROBLEMAS (Local)</p>
-                              <button onClick={() => setActiveAuditFilter('all_problems')} className={`w-full text-left text-xs p-2 rounded ${activeAuditFilter === 'all_problems' ? 'bg-amber-200 text-amber-900 font-bold' : 'text-slate-600 hover:bg-amber-100'}`}>🚨 Tudo que tem erro</button>
-                              <button onClick={() => setActiveAuditFilter('missing_meta')} className={`w-full text-left text-xs p-2 rounded ${activeAuditFilter === 'missing_meta' ? 'bg-amber-200 text-amber-900 font-bold' : 'text-slate-600 hover:bg-amber-100'}`}>⚠️ Sem Banca/Ano</button>
-                              <button onClick={() => setActiveAuditFilter('inconsistent_topic')} className={`w-full text-left text-xs p-2 rounded ${activeAuditFilter === 'inconsistent_topic' ? 'bg-amber-200 text-amber-900 font-bold' : 'text-slate-600 hover:bg-amber-100'}`}>🔄 Tópico Inconsistente</button>
-                              <button onClick={() => setActiveAuditFilter('has_image')} className={`w-full text-left text-xs p-2 rounded ${activeAuditFilter === 'has_image' ? 'bg-amber-200 text-amber-900 font-bold' : 'text-slate-600 hover:bg-amber-100'}`}>🖼️ Com Imagem</button>
-                          </div>
-                      ) : (
-                          <div className="space-y-3">
-                              <p className="text-[10px] text-gray-400 font-bold">FILTROS PADRÃO</p>
-                              <select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full p-2 bg-gray-50 border rounded-lg text-xs"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select>
-                              <select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full p-2 bg-gray-50 border rounded-lg text-xs disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select>
-                          </div>
-                      )}
-                  </div>
+              {/* FILTERS FOR STUDENTS */}
+              {activeView === 'students' && (
+                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
+                    <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
+                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos</option><option value="expired">Expirados</option></select></div>
+                </div>
               )}
           </div>
-          <div className="p-4 border-t border-gray-100">
-              <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50"><LogOut size={16} /> Sair</button>
+          
+          <div className="p-4 border-t border-gray-100 space-y-1">
+              <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors"><ArrowLeft size={16} /> Voltar ao App</button>
+              <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors"><LogOut size={16} /> Sair</button>
           </div>
       </aside>
 
       {/* MAIN CONTENT */}
       <main className="ml-64 flex-1 p-8 overflow-y-auto">
-          {/* TOP BAR */}
+          
+          {/* SEARCH HEADER */}
           <div className="flex items-center justify-between mb-8 gap-4">
               <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                  {activeView === 'questions' && (auditMode ? <span className="text-amber-600 flex items-center gap-2"><Bug/> Auditoria de Questões</span> : <span className="flex items-center gap-2"><List className="text-blue-600"/> Banco de Questões</span>)}
-                  {activeView === 'reports' && <><MessageSquare className="text-red-600"/> Reportes</>}
-                  {activeView === 'students' && <><Users className="text-purple-600"/> Alunos</>}
+                  {activeView === 'questions' && <><List className="text-blue-600"/> Questões</>}
+                  {activeView === 'reports' && <><MessageSquare className="text-red-600"/> Reportes <span className="text-sm font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{pendingReportsCount} Pendentes</span></>}
+                  {activeView === 'students' && <><Users className="text-purple-600"/> Gestão de Alunos</>}
               </h2>
-              
-              <div className="relative flex-1 max-w-md">
+              <div className="relative flex-1 max-w-md group">
                   <Search onClick={handleServerSearch} className="absolute left-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600 z-10" size={20} />
                   <input 
                     type="text" 
-                    placeholder="Busca GLOBAL por ID ou Texto (Desativa filtros)" 
+                    placeholder="Cole o começo do enunciado ou o ID..." 
                     value={searchTerm} 
                     onChange={e => setSearchTerm(e.target.value)} 
                     onKeyDown={handleKeyDownSearch}
-                    className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
+                    className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
                   />
+                  {isSearchingServer && <div className="absolute right-4 top-3.5"><Loader2 className="animate-spin text-blue-600" size={20}/></div>}
+                  <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto"><HelpCircle size={16}/></div>
               </div>
-
-              {activeView === 'questions' && (
-                  <button onClick={handleClearAllFilters} className="bg-white border border-gray-300 text-gray-600 font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-50 flex items-center gap-2">
-                      <RefreshCw size={18}/> Limpar
-                  </button>
-              )}
-              
               {activeView === 'students' && (
-                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2">
+                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
                       <UserPlus size={20} /> Novo Aluno
                   </button>
               )}
           </div>
 
-          {/* VIEW: QUESTIONS LIST */}
+          {/* VIEW: QUESTIONS */}
           {activeView === 'questions' && (
               <div className="space-y-4 pb-10">
-                  {auditMode && (
-                      <div className="bg-amber-100 border-l-4 border-amber-500 text-amber-900 p-4 rounded-r shadow-sm mb-6">
-                          <p className="font-bold flex items-center gap-2"><ScanLine size={20}/> Modo Auditoria Ativo</p>
-                          <p className="text-sm mt-1">
-                              Estamos baixando lotes de 50 questões recentes e aplicando um "pente fino" <strong>localmente</strong>.
-                              Isso mostra erros que o filtro do servidor esconde.
-                              {activeAuditFilter !== 'all_problems' && <span className="block mt-1 font-bold">Filtro Atual: {activeAuditFilter}</span>}
-                          </p>
-                      </div>
+                  {missingIndexLink && (
+                       <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-4 mb-4">
+                           <AlertTriangle size={32} className="flex-shrink-0"/>
+                           <div>
+                               <h3 className="font-bold text-lg">Índice do Firebase Ausente</h3>
+                               <p className="text-sm mb-2">Para filtrar por Área e Tópico, o Firebase exige um índice composto.</p>
+                               <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-sm inline-flex items-center gap-2 hover:bg-red-700">
+                                   <ExternalLink size={16}/> Criar Índice Agora
+                               </a>
+                           </div>
+                       </div>
+                  )}
+
+                  {auditFilter !== 'none' && (
+                       <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold mb-4">
+                           <ScanLine size={16}/>
+                           Modo de Auditoria Ativo: Mostrando questões filtradas por problemas ou critérios específicos.
+                       </div>
                   )}
 
                   {loadingQuestions && questions.length === 0 ? (
                       <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-blue-600 w-10 h-10"/></div>
                   ) : (
                       <>
-                        {filteredQuestions.length === 0 ? (
-                             <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
-                                 <Database size={48} className="mx-auto text-gray-300 mb-4"/>
-                                 <p className="text-gray-500 font-bold">Nenhuma questão encontrada.</p>
-                                 <p className="text-gray-400 text-sm">Tente limpar os filtros ou carregar mais.</p>
-                                 <button onClick={() => loadQuestions(false)} className="mt-4 text-blue-600 font-bold hover:underline">Tentar buscar mais antigas</button>
-                             </div>
-                        ) : (
-                            filteredQuestions.map(q => {
-                                const reportCount = reportsCountByQuestion[q.id] || 0;
-                                const inconsistency = getInconsistency(q);
-                                const missingMeta = !q.institution || !q.year;
-                                
-                                return (
-                                    <div key={q.id} className={`bg-white rounded-xl border p-5 flex flex-col md:flex-row gap-4 items-start shadow-sm hover:shadow-md transition-all ${inconsistency || missingMeta ? 'border-l-4 border-l-red-500' : 'border-gray-200'}`}>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
-                                                <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
-                                                
-                                                {/* BADGES DE ERRO (AUDITORIA) */}
-                                                {missingMeta && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><AlertTriangle size={10}/> DADOS FALTANDO</span>}
-                                                {inconsistency && <span className="bg-orange-100 text-orange-800 text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><RefreshCw size={10}/> {inconsistency}</span>}
-                                                
-                                                <div className="flex items-center gap-2">
-                                                    <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.institution ? 'bg-red-50 border-red-200 text-red-600' : 'bg-blue-50 text-blue-700 border-blue-100'}`}><Building size={10}/> {q.institution || '??'}</span>
-                                                    <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.year ? 'bg-red-50 border-red-200 text-red-600' : 'bg-gray-100 text-gray-600 border-gray-200'}`}><Calendar size={10}/> {q.year || '??'}</span>
-                                                </div>
-                                                
-                                                <div className="flex items-center flex-wrap gap-1">
-                                                    <span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span>
-                                                    <span className="text-xs font-medium text-gray-400">/</span>
-                                                    <span className="text-xs font-medium text-slate-500">{q.topic}</span>
-                                                </div>
-
-                                                {q.image && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Imagem</span>}
+                        {filteredQuestions.map(q => {
+                            const reportCount = reportsCountByQuestion[q.id] || 0;
+                            // Checagens Rápidas
+                            const missingMeta = !q.institution || !q.year;
+                            const missingTopic = !q.area || !q.topic || q.area === 'Todas';
+                            
+                            return (
+                                <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200'}`}>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
+                                            <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
+                                            {reportCount > 0 && (
+                                                <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
+                                            )}
+                                            <div className="flex items-center gap-2">
+                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.institution ? 'bg-red-100 text-red-600 border-red-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}><Building size={10}/> {q.institution || 'SEM BANCA'}</span>
+                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.year ? 'bg-red-100 text-red-600 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}><Calendar size={10}/> {q.year || 'SEM ANO'}</span>
                                             </div>
-                                            <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
+                                            <div className="flex items-center flex-wrap gap-1">
+                                                {missingTopic ? (
+                                                    <span className="text-xs font-bold text-red-500 bg-red-50 px-1 rounded">Sem Classificação!</span>
+                                                ) : (
+                                                    <><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></>
+                                                )}
+                                            </div>
+                                            {q.image && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Com Imagem</span>}
                                         </div>
-                                        <div className="flex items-center gap-2 self-start md:self-center">
-                                            {reportCount > 0 && <button onClick={() => handleGoToReports(q.id)} className="p-2 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 font-bold text-xs flex flex-col items-center leading-none gap-1"><AlertCircle size={14}/> {reportCount}</button>}
-                                            <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit3 size={18}/></button>
-                                            <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={18}/></button>
-                                        </div>
+                                        <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
                                     </div>
-                                );
-                            })
-                        )}
+                                    <div className="flex items-center gap-2 self-start md:self-center">
+                                        <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg hover:border-blue-100 border border-transparent"><Edit3 size={18}/></button>
+                                        <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg hover:border-red-100 border border-transparent"><Trash2 size={18}/></button>
+                                    </div>
+                                </div>
+                            );
+                        })}
                         
-                        {hasMoreQuestions && (
+                        {/* LOAD MORE BUTTON */}
+                        {hasMoreQuestions && !missingIndexLink && (
                             <button 
                                 onClick={() => loadQuestions(false)} 
                                 disabled={loadingQuestions}
                                 className="w-full py-4 mt-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
                             >
                                 {loadingQuestions ? <Loader2 className="animate-spin" size={20}/> : <ChevronDown size={20}/>}
-                                Carregar Mais (Scanner)
+                                {loadingQuestions ? 'Carregando...' : 'Carregar Mais Questões'}
                             </button>
+                        )}
+                        {!hasMoreQuestions && questions.length > 0 && (
+                            <p className="text-center text-gray-400 text-sm py-4">Fim da lista.</p>
+                        )}
+                        {questions.length === 0 && !loadingQuestions && (
+                            <div className="text-center py-10 text-gray-500">
+                                <Database size={48} className="mx-auto mb-2 opacity-20"/>
+                                <p>Nenhuma questão encontrada com estes filtros.</p>
+                                <button onClick={handleClearQuestionFilters} className="mt-4 text-blue-600 font-bold hover:underline">Limpar Filtros</button>
+                            </div>
                         )}
                       </>
                   )}
               </div>
           )}
 
-          {/* VIEW: REPORTS (SEM MUDANÇAS DRÁSTICAS, APENAS VISUAL) */}
+          {/* VIEW: REPORTS */}
           {activeView === 'reports' && (
-              <div className="space-y-4">
-                  {reports.map(report => (
-                      <div key={report.id} className="bg-white rounded-xl border p-6 relative">
-                          <div className="flex justify-between items-start mb-4">
-                              <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
-                                  <div><p className="text-sm font-bold text-slate-800">{getUserDetails(report.userId).name}</p><p className="text-xs text-gray-400">ID: {report.userId}</p></div>
-                              </div>
-                              <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">{formatReportCategory(report.category)}</span>
-                          </div>
-                          <p className="text-slate-700 text-sm bg-gray-50 p-3 rounded-lg border mb-4">{report.details || report.text}</p>
-                          <div className="flex justify-end gap-3">
-                              <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm">Recusar</button>
-                              <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm">Ver Questão</button>
-                          </div>
+              <div className="max-w-4xl mx-auto space-y-6">
+                  {reportFilterQuestionId && (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between">
+                          <div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div>
+                          <button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button>
                       </div>
-                  ))}
-                  {reports.length === 0 && <div className="text-center py-20 text-gray-400">Nenhum reporte pendente.</div>}
+                  )}
+                  {filteredReports.map(report => {
+                      const reporter = getUserDetails(report.userId);
+                      return (
+                          <div key={report.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
+                              <div className="flex justify-between items-start mb-4">
+                                  <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
+                                      <div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div>
+                                  </div>
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span>
+                              </div>
+                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
+                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button>
+                                  <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
+                              </div>
+                          </div>
+                      );
+                  })}
               </div>
           )}
 
-          {/* VIEW: STUDENTS TABLE (MANTIDA) */}
+          {/* VIEW: STUDENTS TABLE */}
           {activeView === 'students' && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden pb-4">
-                  <table className="w-full text-left text-sm text-slate-600">
-                      <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b">
-                          <tr><th className="px-6 py-4">Aluno</th><th className="px-6 py-4">Função</th><th className="px-6 py-4">Status</th><th className="px-6 py-4 text-right">Ações</th></tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                          {students.map(s => (
-                              <tr key={s.id} className="hover:bg-gray-50">
-                                  <td className="px-6 py-4">
-                                      <div className="font-bold text-slate-900">{s.name}</div>
-                                      <div className="text-xs text-gray-500">{s.email}</div>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                      <select value={s.role} onChange={(e) => handleInlineUserUpdate(s.id, 'role', e.target.value)} className="bg-transparent font-bold outline-none cursor-pointer"><option value="student">Aluno</option><option value="admin">Admin</option></select>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                      <div className={`text-xs font-bold ${checkSubscriptionStatus(s.subscriptionUntil, s.role).color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{checkSubscriptionStatus(s.subscriptionUntil, s.role).label}</div>
-                                  </td>
-                                  <td className="px-6 py-4 text-right">
-                                      <button onClick={() => fetchUserStats(s)} className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg mr-2"><TrendingUp size={18}/></button>
-                                      <button onClick={() => setDeleteModal(s)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={18}/></button>
-                                  </td>
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm text-slate-600">
+                          <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b border-gray-200">
+                              <tr>
+                                  <th className="px-6 py-4">Aluno / Email</th>
+                                  <th className="px-6 py-4">Função</th>
+                                  <th className="px-6 py-4">ID</th>
+                                  <th className="px-6 py-4">Status / Vencimento</th>
+                                  <th className="px-6 py-4 text-right">Ações</th>
                               </tr>
-                          ))}
-                      </tbody>
-                  </table>
-                  {hasMoreStudents && <div className="p-4 text-center"><button onClick={() => loadStudents(false)} className="text-blue-600 font-bold hover:underline">Carregar Mais</button></div>}
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                              {filteredStudents.map(student => {
+                                  const subStatus = checkSubscriptionStatus(student.subscriptionUntil, student.role);
+                                  const isAdmin = student.role === 'admin';
+                                  
+                                  return (
+                                      <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                                          <td className="px-6 py-4">
+                                              <div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div>
+                                              <div className="text-xs text-gray-500 mb-1">{student.email}</div>
+                                              {student.whatsapp && (
+                                                  <div className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
+                                                      <Phone size={12}/> {student.whatsapp}
+                                                  </div>
+                                              )}
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              <select 
+                                                  value={student.role} 
+                                                  onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)}
+                                                  className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}
+                                              >
+                                                  <option value="student">Aluno</option>
+                                                  <option value="admin">Admin</option>
+                                              </select>
+                                          </td>
+                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>
+                                              {student.id.slice(0, 8)}... <Copy size={12}/>
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              {!isAdmin ? (
+                                                  <>
+                                                      <div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div>
+                                                      <div className="flex items-center gap-2">
+                                                          <input 
+                                                              type="date" 
+                                                              value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''}
+                                                              onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)}
+                                                              className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"
+                                                          />
+                                                          <button onClick={() => handleAdd30Days(student)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors" title="Adicionar 30 dias"><PlusCircle size={10}/> +30</button>
+                                                      </div>
+                                                  </>
+                                              ) : ( <span className="text-gray-400 text-sm font-medium">–</span> )}
+                                          </td>
+                                          <td className="px-6 py-4 text-right">
+                                              <div className="flex justify-end gap-2">
+                                                  <button onClick={() => fetchUserStats(student)} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors" title="Ver Desempenho"><TrendingUp size={18}/></button>
+                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Excluir"><Trash2 size={18}/></button>
+                                              </div>
+                                          </td>
+                                      </tr>
+                                  );
+                              })}
+                          </tbody>
+                      </table>
+                  </div>
+                  {/* PAGINATION FOR STUDENTS */}
+                  <div className="p-4 border-t border-gray-100">
+                      {loadingStudents && <div className="text-center py-2"><Loader2 className="animate-spin inline text-purple-600"/> Carregando alunos...</div>}
+                      {hasMoreStudents && !loadingStudents && (
+                          <button onClick={() => loadStudents(false)} className="w-full py-2 bg-gray-50 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-100">Carregar Mais Alunos</button>
+                      )}
+                  </div>
               </div>
           )}
       </main>
 
-      {/* MODALS E EDITORES (MANTIDOS IGUAIS MAS CONECTADOS ÀS NOVAS FUNÇÕES) */}
-      {/* (Vou omitir o código repetitivo dos Modais de Edição/Criação pois eles não mudaram a lógica, apenas certifique-se de que estão no final do return como antes) */}
+      {/* --- MODALS --- */}
+
       {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
           <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200">
               <div className="max-w-4xl mx-auto p-6 pb-20">
+                  {associatedReport && (
+                      <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between shadow-sm">
+                          <div className="flex items-start gap-3 w-full">
+                              <div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div>
+                              <div className="w-full">
+                                  <h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3>
+                                  <div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div>
+                              </div>
+                          </div>
+                      </div>
+                  )}
                   <div className="flex items-center justify-between mb-8 sticky top-0 bg-white py-4 border-b border-gray-100 z-10">
                       <div className="flex items-center gap-3">
                           <button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
                           <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
                       </div>
-                      <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
+                      <div className="flex gap-3">
+                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar</span></button>}
+                          {associatedReport ? (
+                              <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
+                          ) : (
+                              <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
+                          )}
+                          <button onClick={() => setDeleteModal(editingQuestion)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 ml-2" title="Excluir Questão"><Trash2 size={20} /></button>
+                      </div>
                   </div>
                   <form className="space-y-8">
                       <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -907,16 +1112,18 @@ export default function MedManager() {
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="2025"/></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                          {/* Campo de Imagem adicionado */}
                           <div className="col-span-1 md:col-span-2">
-                              <label className="block text-sm font-bold text-gray-600 mb-2">URL da Imagem</label>
+                              <label className="block text-sm font-bold text-gray-600 mb-2">URL da Imagem (Opcional)</label>
                               <div className="flex gap-2">
                                 <input value={editingQuestion.image || ''} onChange={e => setEditingQuestion({...editingQuestion, image: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://..."/>
                                 {editingQuestion.image && <a href={editingQuestion.image} target="_blank" rel="noopener noreferrer" className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 flex items-center justify-center text-gray-600"><ExternalLink size={20}/></a>}
                               </div>
+                              {editingQuestion.image && <div className="mt-2 h-32 w-full bg-gray-100 rounded-lg bg-contain bg-no-repeat bg-center border border-gray-200" style={{backgroundImage: `url(${editingQuestion.image})`}}></div>}
                           </div>
                       </div>
                       <div><label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label><textarea value={editingQuestion.text} onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})} rows={6} className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"/></div>
-                      <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas (Clique na letra p/ marcar correta)</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
+                      <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
                       <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100"><label className="block text-sm font-bold text-amber-800 uppercase tracking-wider mb-3">Comentário / Explicação</label><textarea value={editingQuestion.explanation} onChange={e => setEditingQuestion({...editingQuestion, explanation: e.target.value})} rows={5} className="w-full p-4 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-slate-700"/></div>
                   </form>
               </div>
@@ -935,6 +1142,11 @@ export default function MedManager() {
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input name="name" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="Ex: Ana Silva" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">E-mail</label><input name="email" type="email" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="email@exemplo.com" /></div>
                       <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha (Provisória)</label><input name="password" type="text" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="123456" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WhatsApp (Opcional)</label><input name="whatsapp" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="31999999999" /></div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
+                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div>
+                      </div>
                       <div className="flex gap-3 pt-4">
                           <button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
                           <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button>
@@ -943,30 +1155,8 @@ export default function MedManager() {
               </div>
           </div>
       )}
-      
-      {/* (Outros modais como Delete e Stats continuam aqui, se precisar me avise que incluo, mas o foco é a lógica de busca acima) */}
-      {deleteModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative text-center">
-                  <h2 className="text-xl font-bold mb-2">Excluir Definitivamente?</h2>
-                  <div className="flex gap-3 w-full mt-4">
-                      <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border rounded-xl font-bold">Cancelar</button>
-                      <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Excluir</button>
-                  </div>
-              </div>
-          </div>
-      )}
-      {rejectReportModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-             <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative text-center">
-                  <h2 className="text-xl font-bold mb-2">Recusar Reporte?</h2>
-                  <div className="flex gap-3 w-full mt-4">
-                      <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border rounded-xl font-bold">Cancelar</button>
-                      <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold">Apagar</button>
-                  </div>
-              </div>
-          </div>
-      )}
+
+      {/* USER STATS MODAL */}
       {viewingUserStats && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
@@ -978,6 +1168,10 @@ export default function MedManager() {
                       <div>
                           <h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2>
                           <p className="text-sm text-gray-500">{viewingUserStats.email}</p>
+                          <div className="flex gap-2 mt-1">
+                              {checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>}
+                              <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span>
+                          </div>
                       </div>
                   </div>
                   {viewingUserStats.loading ? (
@@ -986,12 +1180,50 @@ export default function MedManager() {
                       <div className="grid grid-cols-2 gap-4">
                           <div className="bg-orange-50 p-4 rounded-xl text-center border border-orange-100"><div className="flex justify-center text-orange-600 mb-1"><Zap size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.streak || 0}</div><div className="text-xs uppercase font-bold text-orange-600">Dias em Sequência</div></div>
                           <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100"><div className="flex justify-center text-blue-600 mb-1"><CheckSquare size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.totalAnswers || 0}</div><div className="text-xs uppercase font-bold text-blue-600">Questões Totais</div></div>
+                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2">
+                              <div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span><span className="text-2xl font-bold text-emerald-600">{viewingUserStats.stats?.totalAnswers > 0 ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) : 0}%</span></div>
+                              <div className="w-full bg-emerald-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div></div>
+                              <p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p>
+                          </div>
                       </div>
                   )}
               </div>
           </div>
       )}
 
+      {/* DELETE MODAL */}
+      {deleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="bg-red-100 p-3 rounded-full text-red-600 mb-4"><AlertTriangle size={32}/></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">Excluir Definitivamente?</h2>
+                    <p className="text-gray-600 mb-6 text-sm">{deleteModal.email ? `O aluno ${deleteModal.name} será removido.` : 'Essa questão será removida do banco de dados oficial.'}</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                        <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* REJECT REPORT MODAL */}
+      {rejectReportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center">
+                    <div className="bg-orange-100 p-3 rounded-full text-orange-600 mb-4"><ThumbsDown size={32}/></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">Recusar Sugestão?</h2>
+                    <p className="text-gray-600 mb-6 text-sm">Esta ação vai <strong>APAGAR</strong> o reporte do banco de dados.</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                        <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 }
