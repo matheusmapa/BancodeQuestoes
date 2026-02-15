@@ -686,6 +686,7 @@ function LoginPage({ globalError, renewalLink }) {
 }
 
 // --- DASHBOARD ---
+// --- DASHBOARD ---
 function Dashboard({ user, onLogout }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [currentView, setCurrentView] = useState('home');
@@ -716,7 +717,7 @@ function Dashboard({ user, onLogout }) {
       setToasts(prev => [...prev, { id, title, message, type }]);
       setTimeout(() => {
           setToasts(prev => prev.filter(t => t.id !== id));
-      }, 3000); // 3 segundos
+      }, 3000); 
   };
 
   const removeToast = (id) => {
@@ -819,9 +820,6 @@ function Dashboard({ user, onLogout }) {
   };
 
   const handleLaunchExam = (filters = {}, limit = 5) => {
-    // Definição: "Questão Nova" = Não está nos excluídos. "Velha" = Está nos excluídos.
-    
-    // 1. Filtra TODAS as questões possíveis (Area e Tópicos)
     const validQuestionsPool = allQuestions.filter(q => {
         if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
         if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
@@ -840,7 +838,6 @@ function Dashboard({ user, onLogout }) {
         const questionsByTopic = {};
         filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
 
-        // Distribui as questões nos baldes (Novas vs Velhas)
         validQuestionsPool.forEach(q => {
             if (questionsByTopic[q.topic]) {
                 if (excludedIds.has(q.id)) {
@@ -851,44 +848,28 @@ function Dashboard({ user, onLogout }) {
             }
         });
 
-        // Calcula meta por tópico
         const targetPerTopic = Math.ceil(limit / filters.topics.length);
-        
-        let backupPool = []; // Para compensar se algum tópico falhar totalmente
+        let backupPool = [];
 
         Object.keys(questionsByTopic).forEach(topic => {
             const { new: newQs, old: oldQs } = questionsByTopic[topic];
-            
-            // 1. Tenta pegar da meta só com NOVAS
             const shuffledNew = newQs.sort(() => 0.5 - Math.random());
             const takeNew = shuffledNew.slice(0, targetPerTopic);
             finalSelection.push(...takeNew);
-            
-            // Sobrou espaço na meta desse tópico?
             const needed = targetPerTopic - takeNew.length;
-            
-            // 2. Se precisou, completa com VELHAS do mesmo tópico
             if (needed > 0) {
                 const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
                 const takeOld = shuffledOld.slice(0, needed);
                 finalSelection.push(...takeOld);
-                
-                // O que sobrou de velhas vai pro backup
                 backupPool.push(...shuffledOld.slice(needed));
             } else {
-                 // Se não precisou de velhas, elas vão pro backup
                  backupPool.push(...oldQs);
             }
-            // As novas que sobraram tbm vão pro backup
             backupPool.push(...shuffledNew.slice(targetPerTopic));
         });
 
-        // 3. Compensação Final (Se a soma de todos ainda não bateu o limite global)
-        // Ex: Pediu 10, mas um tópico só tinha 1 questão total. Faltou 1.
         if (finalSelection.length < limit && backupPool.length > 0) {
             const missing = limit - finalSelection.length;
-            // No backup, priorizamos NOVAS de outros tópicos, depois VELHAS
-            // Ordena: Novas (não excluídas) primeiro
             backupPool.sort((a, b) => {
                 const aIsOld = excludedIds.has(a.id);
                 const bIsOld = excludedIds.has(b.id);
@@ -897,27 +878,37 @@ function Dashboard({ user, onLogout }) {
             finalSelection.push(...backupPool.slice(0, missing));
         }
 
-        // Embaralha tudo para não ficar agrupado por tema
         finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
 
     } else {
-        // --- MODO 2: GERAL/ALEATÓRIO (Prioriza Novas Globalmente) ---
+        // --- MODO 2: GERAL/ALEATÓRIO ---
         const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
         const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
-        
-        // Pega todas as novas possíveis até o limite
         finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
-        
-        // Se faltou, completa com velhas
         if (finalSelection.length < limit) {
             const missing = limit - finalSelection.length;
             finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
         }
-        
         finalSelection = finalSelection.sort(() => 0.5 - Math.random());
     }
 
     setActiveExamData({ questionsData: finalSelection, answersData: {}, currentIndex: 0, id: Date.now() });
+    handleViewSwitch('question_mode');
+  };
+
+  // --- NOVA FUNÇÃO: LANÇAR CADERNO DE ERROS ---
+  const handleLaunchSmartExam = (questionsList) => {
+    if (!questionsList || questionsList.length === 0) {
+        addToast('Erro', 'Lista de questões vazia.', 'error');
+        return;
+    }
+    // Inicia o simulado direto com a lista passada
+    setActiveExamData({ 
+        questionsData: questionsList, 
+        answersData: {}, 
+        currentIndex: 0, 
+        id: Date.now() 
+    });
     handleViewSwitch('question_mode');
   };
 
@@ -940,7 +931,6 @@ function Dashboard({ user, onLogout }) {
             lastIndex: currentIndex
         };
         await setDoc(doc(db, `users/${user.uid}/simulations`, simId), simData);
-        // Toast ao invés de Modal de Sucesso
         addToast('Progresso Salvo', 'Você pode continuar depois em "Meus Simulados".', 'success');
         setCurrentView('home'); 
         examStateRef.current = null;
@@ -1058,13 +1048,13 @@ function Dashboard({ user, onLogout }) {
       case 'home': return <HomeView user={user} userStats={userStats} dailyGoal={dailyGoal} accuracy={accuracy} streak={streak} dynamicAreas={dynamicAreas} setIsGoalModalOpen={setIsGoalModalOpen} setSelectedArea={setSelectedArea} setCurrentView={handleViewSwitch} realStats={realStats} />;
       case 'my_simulations': return <MySimulationsView simulations={mySimulations} onCreateNew={() => handleViewSwitch('general_exam_setup')} onResume={handleResumeExam} onViewResults={(id) => { setSelectedSimulationId(id); handleViewSwitch('review_mode'); }} onDelete={handleDeleteSimulation} />;
       case 'review_mode': return <ReviewExamView simulation={getSimulationForReview()} onBack={() => handleViewSwitch('my_simulations')} user={user} addToast={addToast} />;
-      case 'general_exam_setup': return <GeneralExamSetupView onBack={() => handleViewSwitch('my_simulations')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ topics: topics }, count, allowRepeats)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'general_exam_setup': return <GeneralExamSetupView onBack={() => handleViewSwitch('my_simulations')} onLaunchExam={(topics, count) => handleLaunchExam({ topics: topics }, count)} areasBase={areasBase} excludedIds={excludedIds} allQuestions={allQuestions} />;
       case 'area_hub': return <AreaHubView area={selectedArea} stats={realStats.byArea[selectedArea.title] || { total: 0, correct: 0 }} worstTopics={calculateTopicPerformance(mySimulations, selectedArea.title, allQuestions)} onBack={() => handleViewSwitch('home')} onStartTraining={() => handleViewSwitch('topic_selection')} />;
-      case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => handleViewSwitch('area_hub')} onLaunchExam={(topics, count, allowRepeats) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count, allowRepeats)} excludedIds={excludedIds} allQuestions={allQuestions} />;
+      case 'topic_selection': return <TopicSelectionView area={selectedArea} onBack={() => handleViewSwitch('area_hub')} onLaunchExam={(topics, count) => handleLaunchExam({ areaId: selectedArea.id, topics: topics }, count)} excludedIds={excludedIds} allQuestions={allQuestions} />;
       case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} user={user} onExit={() => handleViewSwitch('home')} onFinish={handleExamFinish} onPause={handleExamPause} onUpdateProgress={handleUpdateProgress} addToast={addToast} />;
       case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => handleViewSwitch('home')} onNewExam={() => handleViewSwitch('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); handleViewSwitch('review_mode'); }} />;
       case 'settings': return <SettingsView user={user} onBack={() => handleViewSwitch('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} addToast={addToast} />;
-      case 'performance': return <PerformanceView detailedStats={realStats} simulations={mySimulations} allQuestions={allQuestions} onLaunchExam={(topics, count) => handleLaunchExam({ topics: topics }, count, true)} onBack={() => handleViewSwitch('home')} />;
+      case 'performance': return <PerformanceView detailedStats={realStats} simulations={mySimulations} allQuestions={allQuestions} onLaunchExam={(topics, count) => handleLaunchExam({ topics: topics }, count)} onLaunchSmartExam={handleLaunchSmartExam} onBack={() => handleViewSwitch('home')} />;
       case 'add_question': return <AddQuestionView onBack={() => handleViewSwitch('home')} addToast={addToast} />;
       default: return <div>Erro: View não encontrada</div>;
     }
@@ -1391,21 +1381,33 @@ function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
   );
 }
 
-function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExam, onBack }) {
+function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExam, onLaunchSmartExam, onBack }) {
+    // 1. Loading Geral: Se não tiver questões, retorna loading IMEDIATAMENTE.
+    // Isso evita que a tela renderize componentes vazios ou bugados.
+    if (allQuestions.length === 0) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 pb-20">
+                <Loader2 size={48} className="animate-spin text-blue-600 mb-4" />
+                <h3 className="text-xl font-bold text-slate-700 animate-pulse">Carregando dados...</h3>
+                <p className="text-slate-400 text-sm">Analisando seu desempenho</p>
+            </div>
+        );
+    }
+
     const [scope, setScope] = useState('Todas'); 
     const [topicSort, setTopicSort] = useState('worst'); 
     const [areaSort, setAreaSort] = useState('default');
 
     // Estado para os Modais
     const [trainModalOpen, setTrainModalOpen] = useState(false);
-    const [smartReviewModalOpen, setSmartReviewModalOpen] = useState(false); // Novo Modal
+    const [smartReviewModalOpen, setSmartReviewModalOpen] = useState(false);
     const [trainQuantity, setTrainQuantity] = useState(10);
     const [selectedTrainTopics, setSelectedTrainTopics] = useState([]);
 
     const { totalQuestions, totalCorrect } = detailedStats;
     const globalPercentage = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
 
-    // --- 1. DADOS DOS ÚLTIMOS 7 DIAS ---
+    // --- DADOS DOS ÚLTIMOS 7 DIAS ---
     const statsLast7Days = useMemo(() => {
         const today = new Date();
         const sevenDaysAgo = new Date();
@@ -1435,29 +1437,23 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return { total, correct };
     }, [simulations, allQuestions]);
 
-    // --- 2. LOGICA DO CADERNO DE ERROS (Simulado Inteligente) ---
+    // --- LOGICA DO CADERNO DE ERROS ---
     const errorPool = useMemo(() => {
         const wrongQuestionIds = new Set();
-        
         simulations.forEach(sim => {
             if (sim.status !== 'finished' || !sim.answersData) return;
-            // Recupera as questões deste simulado
             const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
-            
             questions.forEach((q, idx) => {
                 const userAnswer = sim.answersData[idx];
-                // Se respondeu e errou, adiciona ao pool de erros
                 if (userAnswer && userAnswer !== q.correctOptionId) {
                     wrongQuestionIds.add(q.id);
                 }
             });
         });
-
-        // Retorna a lista completa de objetos de questões que foram erradas
         return allQuestions.filter(q => wrongQuestionIds.has(q.id));
     }, [simulations, allQuestions]);
 
-    // --- 3. DADOS DO GRÁFICO DE EVOLUÇÃO ---
+    // --- DADOS DO GRÁFICO DE EVOLUÇÃO ---
     const evolutionData = useMemo(() => {
         const finished = simulations.filter(s => s.status === 'finished');
         const last10 = finished.slice(0, 10).reverse();
@@ -1468,7 +1464,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         });
     }, [simulations]);
 
-    // --- 4. CÁLCULO BRUTO DE TÓPICOS ---
+    // --- CÁLCULO BRUTO DE TÓPICOS ---
     const allTopicsRaw = useMemo(() => {
         if (simulations.length === 0 || allQuestions.length === 0) return [];
         const stats = {};
@@ -1488,7 +1484,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return Object.values(stats).map(item => ({ ...item, percentage: Math.round((item.correct / item.total) * 100) }));
     }, [simulations, allQuestions]);
 
-    // --- 5. FILTRO E ORDENAÇÃO ---
+    // --- FILTRO E ORDENAÇÃO ---
     const filteredTopics = useMemo(() => {
         let filtered = [...allTopicsRaw]; 
         if (scope !== 'Todas') { filtered = filtered.filter(t => t.area === scope); }
@@ -1498,8 +1494,6 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         });
         return filtered.slice(0, 5);
     }, [allTopicsRaw, scope, topicSort]);
-
-    const isAnalyzing = allQuestions.length === 0;
 
     // Ordenação das Áreas
     const sortedAreas = useMemo(() => {
@@ -1532,45 +1526,12 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
     };
 
     const handleConfirmSmartReview = () => {
-        // Lógica do "Simulado Inteligente":
-        // Pega as questões do errorPool, embaralha e corta pela quantidade
         const limit = trainQuantity;
         const shuffledErrors = [...errorPool].sort(() => 0.5 - Math.random());
         const selectedQuestions = shuffledErrors.slice(0, limit);
-        
-        // Dispara o exame diretamente (bypass no handleLaunchExam padrão, pois já temos as questões exatas)
-        // Precisamos passar uma flag especial ou injetar as questões diretamente.
-        // Como o onLaunchExam espera tópicos, vamos usar uma função direta de navegação se possível,
-        // mas como estamos num componente filho, vamos passar um array especial de IDs ou Tópicos.
-        
-        // SOLUÇÃO ELEGANTE: Vamos usar a prop onLaunchExam, mas vamos adaptá-la no Dashboard depois.
-        // POR ENQUANTO: Vamos criar um "Hack" seguro -> Passar as questões já selecionadas? Não dá direto via props simples.
-        
-        // Melhor abordagem: Vamos invocar o onLaunchExam passando uma lista GIGANTE de tópicos (todos)
-        // mas filtrando por IDs excluídos... Não, isso é complicado.
-        
-        // VAMOS SIMPLIFICAR: O onLaunchExam do Dashboard precisa aceitar um array de QUESTÕES PRONTAS se quisermos.
-        // Mas para não mexer no Dashboard agora, vamos usar a estratégia de passar todos os tópicos mas com um filtro especial? Não.
-        
-        // Vamos fazer o seguinte: O onLaunchExam original filtra por tópicos.
-        // Vamos modificar o Dashboard para aceitar um parâmetro "specificQuestions" (questões específicas).
-        // MAS COMO VOCÊ PEDIU PARA MEXER SÓ AQUI, vamos fazer um "Malabarismo" com os tópicos?
-        // Não, a melhor forma é você (usuário) alterar o Dashboard rapidinho para aceitar "questionsList" direto.
-        
-        // **ATENÇÃO**: Vou assumir que você vai alterar o Dashboard. 
-        // Mas para facilitar, vou fazer o seguinte:
-        // Vou chamar onLaunchExam com uma "flag" especial ou ids.
-        
-        // VOU USAR UMA ESTRATÉGIA QUE NÃO QUEBRA O DASHBOARD ATUAL:
-        // O Dashboard espera (topics, limit, allowRepeats).
-        // Se eu passar TODOS os tópicos de todas as questões erradas, ele vai filtrar e sortear.
-        // Mas ele pode pegar questões que NÃO são erros.
-        
-        // OK, PARA FUNCIONAR PERFEITO, PRECISAMOS DE UMA PEQUENA MUDANÇA NO DASHBOARD TAMBÉM.
-        // Vou te mandar o código do Dashboard atualizado no final da resposta.
-        // Aqui, vou chamar uma prop nova `onLaunchSmartExam` que vamos criar.
-        
-        onLaunchSmartExam(selectedQuestions);
+        if (onLaunchSmartExam) {
+            onLaunchSmartExam(selectedQuestions);
+        }
         setSmartReviewModalOpen(false);
     };
 
@@ -1611,7 +1572,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                  </div>
              )}
 
-             {/* MODAL DO CADERNO DE ERROS (Simulado Inteligente) */}
+             {/* MODAL DO CADERNO DE ERROS */}
              {smartReviewModalOpen && (
                  <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
                      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
@@ -1657,7 +1618,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                 </div>
              </div>
 
-             {/* --- NOVO: CARD CADERNO DE ERROS --- */}
+             {/* CARD CADERNO DE ERROS */}
              <div className="mb-8 bg-gradient-to-r from-slate-800 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
                  <div className="absolute top-0 right-0 p-6 opacity-10"><Zap size={150} /></div>
                  <div className="relative z-10">
@@ -1674,18 +1635,27 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                  </button>
              </div>
 
-             {/* GRÁFICO DE EVOLUÇÃO */}
+             {/* GRÁFICO DE EVOLUÇÃO (VISUAL CORRIGIDO) */}
              {evolutionData.length > 1 && (
                  <div className="mb-8 bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
                      <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-6"><TrendingUp size={24} className="text-blue-600" /> Evolução (Últimos Simulados)</h2>
                      <div className="h-48 flex items-end justify-between gap-2 px-2">
-                         {evolutionData.map((data) => (
-                             <div key={data.id} className="flex flex-col items-center flex-1 group relative">
-                                 <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none whitespace-nowrap z-10">{data.percentage}% ({data.total} Questões)</div>
-                                 <div className={`w-full max-w-[40px] rounded-t-lg transition-all duration-500 relative ${data.percentage >= 80 ? 'bg-emerald-400 group-hover:bg-emerald-500' : data.percentage >= 50 ? 'bg-blue-400 group-hover:bg-blue-500' : 'bg-orange-400 group-hover:bg-orange-500'}`} style={{ height: `${Math.max(data.percentage, 5)}%` }}></div>
-                                 <span className="text-[10px] text-gray-400 mt-2 font-bold">{data.date}</span>
-                             </div>
-                         ))}
+                         {evolutionData.map((data) => {
+                             let colorClass = 'bg-blue-400 group-hover:bg-blue-500';
+                             if(data.percentage >= 80) colorClass = 'bg-emerald-400 group-hover:bg-emerald-500';
+                             else if(data.percentage < 50) colorClass = 'bg-orange-400 group-hover:bg-orange-500';
+
+                             return (
+                                 <div key={data.id} className="flex flex-col items-center flex-1 group relative h-full justify-end">
+                                     <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none whitespace-nowrap z-10">{data.percentage}% ({data.total} Questões)</div>
+                                     <div 
+                                        className={`w-full max-w-[40px] rounded-t-lg transition-all duration-500 relative ${colorClass}`} 
+                                        style={{ height: `${Math.max(data.percentage, 5)}%` }} 
+                                     ></div>
+                                     <span className="text-[10px] text-gray-400 mt-2 font-bold">{data.date}</span>
+                                 </div>
+                             );
+                         })}
                      </div>
                  </div>
              )}
@@ -1701,13 +1671,11 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                     <button onClick={() => setTopicSort(prev => prev === 'worst' ? 'best' : 'worst')} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border transition-colors ${topicSort === 'worst' ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}>{topicSort === 'worst' ? <><TrendingDown size={18}/> Piores temas</> : <><TrendingUp size={18}/> Melhores temas</>}</button>
                 </div>
                 <div className="bg-gray-50 rounded-2xl border border-gray-200 overflow-hidden mb-6 min-h-[200px]">
-                    {isAnalyzing ? (
-                        <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 gap-3"><Loader2 size={32} className="animate-spin text-blue-500" /><span className="font-medium animate-pulse">Carregando dados...</span></div>
-                    ) : filteredTopics.length > 0 ? (
+                    {filteredTopics.length > 0 ? (
                         <div className="divide-y divide-gray-200">{filteredTopics.map((topic, i) => (<div key={i} className="p-4 flex items-center justify-between hover:bg-white transition-colors"><div><div className="flex items-center gap-2 mb-1"><span className="font-bold text-slate-800">{i + 1}. {topic.name}</span>{scope === 'Todas' && <span className="text-[10px] uppercase font-bold text-gray-400 bg-white border border-gray-200 px-1.5 py-0.5 rounded">{topic.area}</span>}</div><div className="text-xs text-gray-500 font-medium">{topic.correct} acertos em {topic.total} questões</div></div><div className="text-right"><span className={`text-lg font-bold ${topic.percentage >= 80 ? 'text-emerald-600' : topic.percentage < 50 ? 'text-red-600' : 'text-blue-600'}`}>{topic.percentage}%</span></div></div>))}</div>
                     ) : (<div className="flex flex-col items-center justify-center h-[200px] text-gray-400 italic p-4 text-center"><p>Nenhum dado suficiente encontrado para esta seleção.</p><span className="text-xs mt-2">Resolva mais questões desta área para ver estatísticas.</span></div>)}
                 </div>
-                <button onClick={handleOpenTrainModal} disabled={isAnalyzing || filteredTopics.length === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 px-8 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-transform active:scale-95 mx-auto md:mx-0"><PlayCircle size={20} /> Treinar estes temas</button>
+                <button onClick={handleOpenTrainModal} disabled={filteredTopics.length === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 px-8 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-transform active:scale-95 mx-auto md:mx-0"><PlayCircle size={20} /> Treinar estes temas</button>
              </div>
 
              {/* ÁREAS OVERVIEW */}
