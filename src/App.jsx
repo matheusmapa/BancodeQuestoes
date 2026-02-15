@@ -982,7 +982,7 @@ function Dashboard({ user, onLogout }) {
       case 'question_mode': return <QuestionView area={selectedArea} initialData={activeExamData} user={user} onExit={() => handleViewSwitch('home')} onFinish={handleExamFinish} onPause={handleExamPause} onUpdateProgress={handleUpdateProgress} addToast={addToast} />;
       case 'simulation_summary': return <SimulationSummaryView results={lastExamResults} onHome={() => handleViewSwitch('home')} onNewExam={() => handleViewSwitch('general_exam_setup')} onReview={() => { setSelectedSimulationId(lastExamResults?.id); handleViewSwitch('review_mode'); }} />;
       case 'settings': return <SettingsView user={user} onBack={() => handleViewSwitch('home')} onResetQuestions={handleResetQuestions} onResetHistory={handleResetHistory} addToast={addToast} />;
-      case 'performance': return <PerformanceView detailedStats={realStats} onBack={() => handleViewSwitch('home')} />;
+      case 'performance': return <PerformanceView detailedStats={realStats} simulations={mySimulations} allQuestions={allQuestions} onLaunchExam={(topics) => handleLaunchExam({ topics: topics }, 10, true)} onBack={() => handleViewSwitch('home')} />;
       case 'add_question': return <AddQuestionView onBack={() => handleViewSwitch('home')} addToast={addToast} />;
       default: return <div>Erro: View não encontrada</div>;
     }
@@ -1284,14 +1284,170 @@ function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
   );
 }
 
-function PerformanceView({ detailedStats, onBack }) {
-    const { totalQuestions, totalCorrect, byArea } = detailedStats;
+function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExam, onBack }) {
+    const [scope, setScope] = useState('Geral'); // 'Geral' or Area Title
+    const [topicSort, setTopicSort] = useState('worst'); // 'worst' or 'best'
+    const [areaSort, setAreaSort] = useState('default'); // 'default', 'best', 'worst'
+
+    const { totalQuestions, totalCorrect } = detailedStats;
     const globalPercentage = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+
+    // 1. Calcular estatísticas de TODOS os tópicos
+    const topicStats = useMemo(() => {
+        const stats = {};
+        simulations.forEach(sim => {
+            if (sim.status !== 'finished' || !sim.answersData) return;
+            const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+            
+            questions.forEach((q, idx) => {
+                const userAnswer = sim.answersData[idx];
+                if (!userAnswer) return; // Só conta respondidas
+
+                const isCorrect = userAnswer === q.correctOptionId;
+                const key = q.topic;
+                
+                if (!stats[key]) {
+                    stats[key] = { name: key, area: q.area, total: 0, correct: 0 };
+                }
+                stats[key].total++;
+                if (isCorrect) stats[key].correct++;
+            });
+        });
+
+        return Object.values(stats).map(item => ({
+            ...item,
+            percentage: Math.round((item.correct / item.total) * 100)
+        }));
+    }, [simulations, allQuestions]);
+
+    // 2. Filtrar e Ordenar Tópicos
+    const filteredTopics = useMemo(() => {
+        let filtered = scope === 'Geral' ? topicStats : topicStats.filter(t => t.area === scope);
+        
+        // Ordenação
+        filtered.sort((a, b) => {
+            if (topicSort === 'best') return b.percentage - a.percentage || b.total - a.total;
+            return a.percentage - b.percentage || b.total - a.total; // Piores primeiro (menor %)
+        });
+
+        return filtered.slice(0, 5); // Pegar top 5
+    }, [topicStats, scope, topicSort]);
+
+    // 3. Ordenação das Áreas
+    const sortedAreas = useMemo(() => {
+        const areasWithStats = areasBase.map(area => {
+            const st = detailedStats.byArea[area.title] || { total: 0, correct: 0 };
+            const pct = st.total > 0 ? Math.round((st.correct / st.total) * 100) : 0;
+            return { ...area, stats: st, percentage: pct };
+        });
+
+        if (areaSort === 'best') return areasWithStats.sort((a, b) => b.percentage - a.percentage);
+        if (areaSort === 'worst') return areasWithStats.sort((a, b) => a.percentage - b.percentage);
+        return areasWithStats; // default
+    }, [detailedStats, areaSort]);
+
+    const handleTrainTopics = () => {
+        if (filteredTopics.length === 0) return;
+        const topics = filteredTopics.map(t => t.name);
+        onLaunchExam(topics); // Lança o simulado
+    };
+
     return (
-        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto">
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto pb-10">
              <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold text-slate-900">Desempenho Detalhado</h1></div>
+             
+             {/* GLOBAL STATS CARD */}
              <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 mb-8 text-center"><h2 className="text-lg font-semibold text-slate-600 mb-2">Aproveitamento Geral</h2><div className="text-5xl font-bold text-blue-600 mb-2">{globalPercentage}%</div><p className="text-gray-400">{totalCorrect} acertos de {totalQuestions} questões</p></div>
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{areasBase.map(area => { const stats = byArea[area.title] || { total: 0, correct: 0 }; const percentage = stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0; return (<div key={area.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm"><div className="flex items-center gap-3 mb-3"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={20} /></div><h3 className="font-bold text-slate-800">{area.title}</h3></div><div className="flex items-center justify-between mb-2"><span className="text-2xl font-bold text-slate-700">{percentage}%</span><span className="text-xs text-gray-400">{stats.correct}/{stats.total}</span></div><div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden"><div className={`h-2 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${percentage}%` }} ></div></div></div>) })}</div>
+
+             {/* ANÁLISE DE TEMAS */}
+             <div className="mb-10">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BarChart2 size={24} className="text-blue-600" /> Análise de Temas</h2>
+                    
+                    {/* CONTROLES DE FILTRO E ORDENAÇÃO */}
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <div className="flex bg-white rounded-lg p-1 border border-gray-200 overflow-x-auto max-w-full">
+                             <button onClick={() => setScope('Geral')} className={`px-3 py-1.5 rounded-md text-sm font-bold whitespace-nowrap transition-colors ${scope === 'Geral' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}>Geral</button>
+                             {areasBase.map(a => (
+                                 <button key={a.id} onClick={() => setScope(a.title)} className={`px-3 py-1.5 rounded-md text-sm font-bold whitespace-nowrap transition-colors ${scope === a.title ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}>{a.title}</button>
+                             ))}
+                        </div>
+                        <button onClick={() => setTopicSort(prev => prev === 'worst' ? 'best' : 'worst')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm border transition-colors ${topicSort === 'worst' ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}>
+                            {topicSort === 'worst' ? <><TrendingDown size={16}/> Ver Piores</> : <><TrendingUp size={16}/> Ver Melhores</>}
+                        </button>
+                    </div>
+                </div>
+
+                {/* LISTA DE TEMAS */}
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-4">
+                    {filteredTopics.length > 0 ? (
+                        <div className="divide-y divide-gray-100">
+                            {filteredTopics.map((topic, i) => (
+                                <div key={i} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-bold text-slate-800">{i + 1}. {topic.name}</span>
+                                            {scope === 'Geral' && <span className="text-[10px] uppercase font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{topic.area}</span>}
+                                        </div>
+                                        <div className="text-xs text-gray-500 font-medium">{topic.correct} acertos em {topic.total} questões</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className={`text-lg font-bold ${topic.percentage >= 80 ? 'text-emerald-600' : topic.percentage < 50 ? 'text-red-600' : 'text-blue-600'}`}>{topic.percentage}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="p-8 text-center text-gray-400 italic">Nenhum dado encontrado para esta seleção.</div>
+                    )}
+                </div>
+
+                {/* BOTÃO TREINAR TEMAS */}
+                {filteredTopics.length > 0 && (
+                    <button 
+                        onClick={handleTrainTopics}
+                        className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-transform active:scale-95 mx-auto md:mx-0"
+                    >
+                        <PlayCircle size={20} />
+                        Fazer Simulado com estes Temas
+                    </button>
+                )}
+             </div>
+
+             {/* ÁREAS OVERVIEW */}
+             <div className="mt-12">
+                 <div className="flex items-center justify-between mb-6">
+                     <h2 className="text-xl font-bold text-slate-800">Desempenho por Área</h2>
+                     <select 
+                        value={areaSort} 
+                        onChange={(e) => setAreaSort(e.target.value)}
+                        className="bg-white border border-gray-200 text-slate-600 text-sm font-bold py-2 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     >
+                         <option value="default">Padrão</option>
+                         <option value="best">Melhor Desempenho</option>
+                         <option value="worst">Pior Desempenho</option>
+                     </select>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     {sortedAreas.map(area => (
+                         <div key={area.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={20} /></div>
+                                <h3 className="font-bold text-slate-800">{area.title}</h3>
+                            </div>
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className={`text-2xl font-bold ${area.percentage >= 80 ? 'text-emerald-600' : area.percentage < 50 ? 'text-red-600' : 'text-slate-700'}`}>{area.percentage}%</span>
+                                    <span className="text-xs text-gray-400">{area.stats.correct}/{area.stats.total}</span>
+                                </div>
+                                <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                                    <div className={`h-2 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.percentage}%` }} ></div>
+                                </div>
+                            </div>
+                        </div>
+                     ))}
+                 </div>
+             </div>
         </div>
     )
 }
@@ -1500,7 +1656,7 @@ function AddQuestionView({ onBack, addToast }) {
             setIsSaving(false); return; 
         }
         const validOptions = options.filter(opt => opt.text.trim() !== '');
-        if (!validOptions.find(o => o.id === correctOptionId)) { 
+        if (!validOptions.find(o => o.id => correctOptionId)) { 
             addToast('Erro', 'A alternativa correta selecionada está vazia.', 'error');
             setIsSaving(false); return; 
         }
