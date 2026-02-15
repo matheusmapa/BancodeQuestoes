@@ -818,24 +818,106 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  const handleLaunchExam = (filters = {}, limit = 5, allowRepeats = false) => {
-    const currentExcludedIds = allowRepeats ? new Set() : excludedIds;
-    let availableQuestions = allQuestions.filter(q => {
-      if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
-      if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
-      if (currentExcludedIds.has(q.id)) return false;
-      return true;
+  const handleLaunchExam = (filters = {}, limit = 5) => {
+    // Definição: "Questão Nova" = Não está nos excluídos. "Velha" = Está nos excluídos.
+    
+    // 1. Filtra TODAS as questões possíveis (Area e Tópicos)
+    const validQuestionsPool = allQuestions.filter(q => {
+        if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
+        if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
+        return true;
     });
 
-    if (availableQuestions.length === 0) {
-      setNotification({ title: "Ops!", message: "Não há questões disponíveis com esses filtros. Tente habilitar 'Incluir respondidas'.", type: "info" });
+    if (validQuestionsPool.length === 0) {
+      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros.", type: "info" });
       return;
     }
 
-    const count = limit || 5;
-    const shuffled = [...availableQuestions].sort(() => 0.5 - Math.random()).slice(0, count);
+    let finalSelection = [];
 
-    setActiveExamData({ questionsData: shuffled, answersData: {}, currentIndex: 0, id: Date.now() });
+    // --- MODO 1: TÓPICOS ESPECÍFICOS (Balanceado) ---
+    if (filters.topics && filters.topics.length > 0) {
+        const questionsByTopic = {};
+        filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
+
+        // Distribui as questões nos baldes (Novas vs Velhas)
+        validQuestionsPool.forEach(q => {
+            if (questionsByTopic[q.topic]) {
+                if (excludedIds.has(q.id)) {
+                    questionsByTopic[q.topic].old.push(q);
+                } else {
+                    questionsByTopic[q.topic].new.push(q);
+                }
+            }
+        });
+
+        // Calcula meta por tópico
+        const targetPerTopic = Math.ceil(limit / filters.topics.length);
+        
+        let backupPool = []; // Para compensar se algum tópico falhar totalmente
+
+        Object.keys(questionsByTopic).forEach(topic => {
+            const { new: newQs, old: oldQs } = questionsByTopic[topic];
+            
+            // 1. Tenta pegar da meta só com NOVAS
+            const shuffledNew = newQs.sort(() => 0.5 - Math.random());
+            const takeNew = shuffledNew.slice(0, targetPerTopic);
+            finalSelection.push(...takeNew);
+            
+            // Sobrou espaço na meta desse tópico?
+            const needed = targetPerTopic - takeNew.length;
+            
+            // 2. Se precisou, completa com VELHAS do mesmo tópico
+            if (needed > 0) {
+                const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
+                const takeOld = shuffledOld.slice(0, needed);
+                finalSelection.push(...takeOld);
+                
+                // O que sobrou de velhas vai pro backup
+                backupPool.push(...shuffledOld.slice(needed));
+            } else {
+                 // Se não precisou de velhas, elas vão pro backup
+                 backupPool.push(...oldQs);
+            }
+            // As novas que sobraram tbm vão pro backup
+            backupPool.push(...shuffledNew.slice(targetPerTopic));
+        });
+
+        // 3. Compensação Final (Se a soma de todos ainda não bateu o limite global)
+        // Ex: Pediu 10, mas um tópico só tinha 1 questão total. Faltou 1.
+        if (finalSelection.length < limit && backupPool.length > 0) {
+            const missing = limit - finalSelection.length;
+            // No backup, priorizamos NOVAS de outros tópicos, depois VELHAS
+            // Ordena: Novas (não excluídas) primeiro
+            backupPool.sort((a, b) => {
+                const aIsOld = excludedIds.has(a.id);
+                const bIsOld = excludedIds.has(b.id);
+                return aIsOld === bIsOld ? 0.5 - Math.random() : aIsOld ? 1 : -1;
+            });
+            finalSelection.push(...backupPool.slice(0, missing));
+        }
+
+        // Embaralha tudo para não ficar agrupado por tema
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
+
+    } else {
+        // --- MODO 2: GERAL/ALEATÓRIO (Prioriza Novas Globalmente) ---
+        const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
+        const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
+        
+        // Pega todas as novas possíveis até o limite
+        finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
+        
+        // Se faltou, completa com velhas
+        if (finalSelection.length < limit) {
+            const missing = limit - finalSelection.length;
+            finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
+        }
+        
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random());
+    }
+
+    setActiveExamData({ questionsData: finalSelection, answersData: {}, currentIndex: 0, id: Date.now() });
     handleViewSwitch('question_mode');
   };
 
@@ -1126,31 +1208,46 @@ function GeneralExamSetupView({ onBack, onLaunchExam, areasBase, excludedIds, al
     const [expandedArea, setExpandedArea] = useState(null);
     const [selectedTopics, setSelectedTopics] = useState([]); 
     const [desiredQuestions, setDesiredQuestions] = useState(10);
-    const [allowRepeats, setAllowRepeats] = useState(false);
+    
     const toggleArea = (areaId) => setExpandedArea(expandedArea === areaId ? null : areaId);
     const toggleTopic = (areaId, topicName) => { const id = `${areaId}-${topicName}`; setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]); };
     const allTopicIds = useMemo(() => { const ids = []; areasBase.forEach(area => { const list = themesMap[area.id] || []; list.forEach(theme => ids.push(`${area.id}-${theme}`)); }); return ids; }, []);
     const toggleSelectAll = () => { if (selectedTopics.length === allTopicIds.length) { setSelectedTopics([]); } else { setSelectedTopics(allTopicIds); } };
-    const maxAvailable = useMemo(() => { let total = 0; selectedTopics.forEach(item => { const parts = item.split('-'); const areaId = parts[0]; const topicName = parts.slice(1).join('-'); const areaTitle = areaNameMap[areaId]; const totalInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName).length; const availableInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName && !excludedIds.has(q.id)).length; total += allowRepeats ? totalInDb : availableInDb; }); return total; }, [selectedTopics, allowRepeats, allQuestions, excludedIds]);
     
-    // LIMITAÇÃO PARA 100 QUESTÕES
+    // Cálculo do Máximo Disponível (Total Global dos temas selecionados)
+    const maxAvailable = useMemo(() => { 
+        let total = 0; 
+        selectedTopics.forEach(item => { 
+            const parts = item.split('-'); 
+            const areaId = parts[0]; 
+            const topicName = parts.slice(1).join('-'); 
+            const areaTitle = areaNameMap[areaId]; 
+            // Agora conta o TOTAL do banco, pois podemos usar repetidas se faltar inéditas
+            const totalInDb = allQuestions.filter(q => q.area === areaTitle && q.topic === topicName).length; 
+            total += totalInDb; 
+        }); 
+        return total; 
+    }, [selectedTopics, allQuestions]);
+    
     const MAX_QUESTIONS_LIMIT = 100;
     const effectiveMax = Math.min(maxAvailable, MAX_QUESTIONS_LIMIT);
 
     useEffect(() => { 
-        // Ajusta o desiredQuestions se o novo maxAvailable for menor que o atual
         setDesiredQuestions(prev => Math.min(prev, effectiveMax));
     }, [effectiveMax]);
 
-    const handleStart = () => { const topicsList = selectedTopics.map(t => { const parts = t.split('-'); return parts.slice(1).join('-'); }); onLaunchExam(topicsList, desiredQuestions, allowRepeats); }
+    const handleStart = () => { 
+        const topicsList = selectedTopics.map(t => { const parts = t.split('-'); return parts.slice(1).join('-'); }); 
+        onLaunchExam(topicsList, desiredQuestions); 
+    }
     
     return (
       <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
         <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Cancelar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">Simulado Personalizado</span></div></div>
         <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">Monte seu Simulado</h1><p className="text-slate-500">Selecione temas de diferentes áreas para praticar de forma mista.</p></div>
         <div className="mb-6 flex justify-end"><button onClick={toggleSelectAll} className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">{selectedTopics.length === allTopicIds.length ? (<><Square size={18} /> Desmarcar Tudo</>) : (<><CheckSquare size={18} /> Selecionar Tudo</>)}</button></div>
-        <div className="space-y-4 mb-10">{areasBase.map(area => { const themes = getThemesForArea(area.id, excludedIds, allQuestions); const isExpanded = expandedArea === area.id; const selectedCount = themes.filter(t => selectedTopics.includes(`${area.id}-${t.name}`)).length; const areaTopicIds = themes.map(t => `${area.id}-${t.name}`); const isAreaFullySelected = areaTopicIds.length > 0 && areaTopicIds.every(id => selectedTopics.includes(id)); const handleAreaToggle = (e) => { e.stopPropagation(); if (isAreaFullySelected) { setSelectedTopics(prev => prev.filter(id => !areaTopicIds.includes(id))); } else { setSelectedTopics(prev => { const newSet = new Set([...prev, ...areaTopicIds]); return Array.from(newSet); }); } }; return (<div key={area.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm"><div onClick={() => toggleArea(area.id)} className={`p-5 cursor-pointer flex items-center justify-between hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-100' : ''}`}><div className="flex items-center gap-4"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={24} /></div><div><h3 className="font-bold text-slate-900">{area.title}</h3><p className="text-xs text-gray-500">{selectedCount} temas selecionados</p></div></div><div className="flex items-center gap-3"><button onClick={handleAreaToggle} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors z-10 ${isAreaFullySelected ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{isAreaFullySelected ? 'Todos' : 'Selecionar'}</button>{isExpanded ? <ChevronUp className="text-gray-400" /> : <ChevronDown className="text-gray-400" />}</div></div>{isExpanded && (<div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-2 bg-white animate-in slide-in-from-top-2">{themes.map((theme, i) => { const uniqueId = `${area.id}-${theme.name}`; const isSelected = selectedTopics.includes(uniqueId); const count = allowRepeats ? theme.total : theme.count; return (<div key={i} onClick={() => toggleTopic(area.id, theme.name)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${isSelected ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'}`}><div className={isSelected ? 'text-blue-600' : 'text-gray-300'}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div><div className="flex flex-col"><span className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-slate-600'}`}>{theme.name}</span><span className="text-xs text-gray-400">{count} disponíveis</span></div></div>); })}</div>)}</div>); })}</div>
-        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
+        <div className="space-y-4 mb-10">{areasBase.map(area => { const themes = getThemesForArea(area.id, excludedIds, allQuestions); const isExpanded = expandedArea === area.id; const selectedCount = themes.filter(t => selectedTopics.includes(`${area.id}-${t.name}`)).length; const areaTopicIds = themes.map(t => `${area.id}-${t.name}`); const isAreaFullySelected = areaTopicIds.length > 0 && areaTopicIds.every(id => selectedTopics.includes(id)); const handleAreaToggle = (e) => { e.stopPropagation(); if (isAreaFullySelected) { setSelectedTopics(prev => prev.filter(id => !areaTopicIds.includes(id))); } else { setSelectedTopics(prev => { const newSet = new Set([...prev, ...areaTopicIds]); return Array.from(newSet); }); } }; return (<div key={area.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm"><div onClick={() => toggleArea(area.id)} className={`p-5 cursor-pointer flex items-center justify-between hover:bg-gray-50 transition-colors ${isExpanded ? 'bg-gray-50 border-b border-gray-100' : ''}`}><div className="flex items-center gap-4"><div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={24} /></div><div><h3 className="font-bold text-slate-900">{area.title}</h3><p className="text-xs text-gray-500">{selectedCount} temas selecionados</p></div></div><div className="flex items-center gap-3"><button onClick={handleAreaToggle} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors z-10 ${isAreaFullySelected ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{isAreaFullySelected ? 'Todos' : 'Selecionar'}</button>{isExpanded ? <ChevronUp className="text-gray-400" /> : <ChevronDown className="text-gray-400" />}</div></div>{isExpanded && (<div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-2 bg-white animate-in slide-in-from-top-2">{themes.map((theme, i) => { const uniqueId = `${area.id}-${theme.name}`; const isSelected = selectedTopics.includes(uniqueId); return (<div key={i} onClick={() => toggleTopic(area.id, theme.name)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${isSelected ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'}`}><div className={isSelected ? 'text-blue-600' : 'text-gray-300'}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div><div className="flex flex-col"><span className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-slate-600'}`}>{theme.name}</span><span className="text-xs text-gray-400">{theme.total} questões</span></div></div>); })}</div>)}</div>); })}</div>
+        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
       </div>
     );
 }
@@ -1159,28 +1256,38 @@ function TopicSelectionView({ area, onBack, onLaunchExam, excludedIds, allQuesti
     const themes = useMemo(() => { return getThemesForArea(area.id, excludedIds, allQuestions); }, [area, allQuestions, excludedIds]);
     const [selectedTopics, setSelectedTopics] = useState([]);
     const [desiredQuestions, setDesiredQuestions] = useState(5);
-    const [allowRepeats, setAllowRepeats] = useState(false);
+    
     const toggleTopic = (id) => setSelectedTopics(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
     const selectAll = () => selectedTopics.length === themes.length ? setSelectedTopics([]) : setSelectedTopics(themes.map(t => t.id));
-    const maxAvailable = useMemo(() => { let sum = 0; themes.forEach(t => { if(selectedTopics.includes(t.id)) sum += allowRepeats ? t.total : t.count; }); return sum; }, [selectedTopics, themes, allowRepeats]);
     
-    // LIMITAÇÃO PARA 100 QUESTÕES
+    const maxAvailable = useMemo(() => { 
+        let sum = 0; 
+        themes.forEach(t => { 
+            // Usa o TOTAL (t.total) ao invés de só inéditas (t.count)
+            if(selectedTopics.includes(t.id)) sum += t.total; 
+        }); 
+        return sum; 
+    }, [selectedTopics, themes]);
+    
     const MAX_QUESTIONS_LIMIT = 100;
     const effectiveMax = Math.min(maxAvailable, MAX_QUESTIONS_LIMIT);
 
     useEffect(() => { 
-        // Ajusta o desiredQuestions se o novo maxAvailable for menor que o atual
         setDesiredQuestions(prev => Math.min(prev, effectiveMax));
     }, [effectiveMax]);
 
-    const handleStart = () => { const selectedNames = themes.filter(t => selectedTopics.includes(t.id)).map(t => t.name); onLaunchExam(selectedNames, desiredQuestions, allowRepeats); };
+    const handleStart = () => { 
+        const selectedNames = themes.filter(t => selectedTopics.includes(t.id)).map(t => t.name); 
+        onLaunchExam(selectedNames, desiredQuestions); 
+    };
+    
     return (
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-48">
             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><div className="text-right"><span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{area.title}</span></div></div>
             <div className="text-center mb-10"><h1 className="text-3xl font-bold text-slate-900 mb-3">O que vamos estudar hoje?</h1><p className="text-slate-500">Selecione os temas que deseja incluir no seu simulado.</p></div>
              <div className="mb-6 flex justify-end"><button onClick={selectAll} className="text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors flex items-center gap-2">{selectedTopics.length === themes.length ? (<><Square size={18} /> Desmarcar Todos</>) : (<><CheckSquare size={18} /> Selecionar Todos</>)}</button></div>
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8"><div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100"><div className="divide-y divide-gray-100">{themes.slice(0, Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div><div className="divide-y divide-gray-100">{themes.slice(Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={allowRepeats ? theme.total : theme.count} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div></div></div>
-            <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div><div className="flex items-center gap-3 cursor-pointer group" onClick={() => setAllowRepeats(!allowRepeats)}><div className={`w-12 h-7 rounded-full relative transition-colors ${allowRepeats ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all shadow-sm ${allowRepeats ? 'left-6' : 'left-1'}`}></div></div><div className="text-sm"><span className="block font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">Incluir respondidas</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-8"><div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100"><div className="divide-y divide-gray-100">{themes.slice(0, Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={theme.total} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div><div className="divide-y divide-gray-100">{themes.slice(Math.ceil(themes.length / 2)).map(theme => <TopicItem key={theme.id} theme={theme} count={theme.total} isSelected={selectedTopics.includes(theme.id)} onToggle={() => toggleTopic(theme.id)} />)}</div></div></div>
+            <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50 md:pl-64"><div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4"><div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-start"><div><label className="text-xs text-gray-500 block mb-1 font-bold uppercase tracking-wide">Quantidade</label><div className="flex items-center gap-2"><input type="number" min="1" max={effectiveMax} value={desiredQuestions} onChange={(e) => setDesiredQuestions(Math.min(effectiveMax, Math.max(1, parseInt(e.target.value) || 0)))} className="w-20 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500" /><span className="text-xs text-gray-400">de {maxAvailable} {maxAvailable > MAX_QUESTIONS_LIMIT && '(Máx 100)'}</span></div></div></div><button disabled={selectedTopics.length === 0 || maxAvailable === 0} className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-10 py-4 rounded-xl font-bold flex items-center justify-center gap-3 transition-all shadow-lg shadow-blue-200" onClick={handleStart}>Começar Agora <ArrowRight size={20} /></button></div></div>
         </div>
     );
 }
