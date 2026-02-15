@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  RotateCcw, SaveAll, CloudLightning, Square, Layers // Adicionei Layers para o ícone de edição em massa
+  RotateCcw, SaveAll, CloudLightning, Square, Layers, Eraser // Adicionei Eraser
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -139,6 +139,9 @@ export default function MedManager() {
   // UI State para Modal de Edição em Massa (BULK EDIT)
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ institution: '', year: '', area: '', topic: '' });
+  // NOVOS STATES PARA LIMPEZA
+  const [bulkClearInstitution, setBulkClearInstitution] = useState(false);
+  const [bulkClearYear, setBulkClearYear] = useState(false);
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -608,26 +611,37 @@ export default function MedManager() {
 
   // --- BULK UPDATE LOGIC (EDIÇÃO EM MASSA) ---
   const handleBulkUpdate = async () => {
-      const targets = filteredQuestions; // Edita o que está sendo visto/filtrado
+      const targets = filteredQuestions; 
       if (targets.length === 0) return;
       
-      // Cria objeto de update removendo campos vazios (PROTEÇÃO DO BRANCO)
       const updates = {};
-      if (bulkEditData.institution.trim()) updates.institution = bulkEditData.institution;
-      if (bulkEditData.year) updates.year = bulkEditData.year; // assume string ou number, se vier vazio não entra
+      
+      // Lógica da Banca (Limpar vs Editar vs Manter)
+      if (bulkClearInstitution) {
+          updates.institution = ""; // Força vazio
+      } else if (bulkEditData.institution.trim()) {
+          updates.institution = bulkEditData.institution;
+      }
+      
+      // Lógica do Ano
+      if (bulkClearYear) {
+          updates.year = ""; // Força vazio
+      } else if (bulkEditData.year) {
+          updates.year = bulkEditData.year;
+      }
+
+      // Lógica de Área/Tópico (padrão)
       if (bulkEditData.area && bulkEditData.area !== '') updates.area = bulkEditData.area;
       if (bulkEditData.topic && bulkEditData.topic !== '') updates.topic = bulkEditData.topic;
       
-      // Se não tem nada pra atualizar, avisa
       if (Object.keys(updates).length === 0) {
-          showNotification('error', 'Preencha pelo menos um campo para editar.');
+          showNotification('error', 'Nenhuma alteração definida. Preencha os campos ou marque para apagar.');
           return;
       }
 
       setIsSaving(true);
       
       try {
-          // Firebase Batch Limit é 500. Vamos quebrar em chunks de 450 pra garantir.
           const chunkSize = 450;
           const chunks = [];
           for (let i = 0; i < targets.length; i += chunkSize) {
@@ -646,9 +660,7 @@ export default function MedManager() {
               updatedCount += chunk.length;
           }
 
-          // Atualiza estado local para refletir mudanças sem refetch
           setQuestions(prev => prev.map(q => {
-             // Se a questão estava no alvo, atualiza ela
              if (targets.some(t => t.id === q.id)) {
                  return { ...q, ...updates };
              }
@@ -657,7 +669,10 @@ export default function MedManager() {
 
           showNotification('success', `${updatedCount} questões atualizadas com sucesso!`);
           setIsBulkEditModalOpen(false);
-          setBulkEditData({ institution: '', year: '', area: '', topic: '' }); // Limpa form
+          // Reseta tudo
+          setBulkEditData({ institution: '', year: '', area: '', topic: '' }); 
+          setBulkClearInstitution(false);
+          setBulkClearYear(false);
 
       } catch (error) {
           console.error("Erro bulk update:", error);
@@ -973,7 +988,7 @@ export default function MedManager() {
                         </select>
                     </div>
 
-                    {/* BOTÃO DE BULK EDIT (NOVO) */}
+                    {/* BOTÃO DE BULK EDIT */}
                     {filteredQuestions.length > 0 && !loadingQuestions && (
                         <div className="mt-6 pt-4 border-t border-gray-100">
                              <button 
@@ -1309,7 +1324,7 @@ export default function MedManager() {
           </div>
       )}
 
-      {/* BULK EDIT MODAL (NOVO) */}
+      {/* BULK EDIT MODAL */}
       {isBulkEditModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
@@ -1326,22 +1341,36 @@ export default function MedManager() {
                   
                   <div className="space-y-4">
                       <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nova Banca (Opcional)</label>
+                          <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase">Nova Banca</label>
+                              <label className={`flex items-center gap-1 text-xs cursor-pointer font-bold ${bulkClearInstitution ? 'text-red-600' : 'text-gray-400 hover:text-red-500'}`}>
+                                  <input type="checkbox" checked={bulkClearInstitution} onChange={e => { setBulkClearInstitution(e.target.checked); if(e.target.checked) setBulkEditData(prev => ({...prev, institution: ''})); }} className="accent-red-600" />
+                                  <Eraser size={12}/> Apagar Banca
+                              </label>
+                          </div>
                           <input 
                              value={bulkEditData.institution} 
+                             disabled={bulkClearInstitution}
                              onChange={e => setBulkEditData({...bulkEditData, institution: e.target.value})} 
-                             className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300"
-                             placeholder="Manter original..."
+                             className={`w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300 ${bulkClearInstitution ? 'opacity-50 cursor-not-allowed bg-red-50' : ''}`}
+                             placeholder={bulkClearInstitution ? "(Será apagada)" : "Manter original..."}
                           />
                       </div>
                       <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Novo Ano (Opcional)</label>
+                          <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-gray-500 uppercase">Novo Ano</label>
+                              <label className={`flex items-center gap-1 text-xs cursor-pointer font-bold ${bulkClearYear ? 'text-red-600' : 'text-gray-400 hover:text-red-500'}`}>
+                                  <input type="checkbox" checked={bulkClearYear} onChange={e => { setBulkClearYear(e.target.checked); if(e.target.checked) setBulkEditData(prev => ({...prev, year: ''})); }} className="accent-red-600" />
+                                  <Eraser size={12}/> Apagar Ano
+                              </label>
+                          </div>
                           <input 
                              type="number"
                              value={bulkEditData.year} 
+                             disabled={bulkClearYear}
                              onChange={e => setBulkEditData({...bulkEditData, year: e.target.value})} 
-                             className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300"
-                             placeholder="Manter original..."
+                             className={`w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300 ${bulkClearYear ? 'opacity-50 cursor-not-allowed bg-red-50' : ''}`}
+                             placeholder={bulkClearYear ? "(Será apagado)" : "Manter original..."}
                           />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
