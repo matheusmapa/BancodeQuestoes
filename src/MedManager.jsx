@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: matheusmapa/bancodequestoes/BancodeQuestoes-083b0981ec35833d62313cdbc8d00d05c203dcbb/src/MedManager.jsx
-fullContent:
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
