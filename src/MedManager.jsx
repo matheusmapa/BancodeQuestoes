@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  RotateCcw, SaveAll, CloudLightning, Square, Layers, Eraser // Adicionei Eraser
+  RotateCcw, SaveAll, CloudLightning, Square, Layers, Eraser, MousePointerClick // Adicionei MousePointerClick
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -97,6 +97,9 @@ export default function MedManager() {
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
   
+  // SELECTION STATE (Para checkbox manual)
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
   // METADADOS CACHEADOS (Listas de Bancas e Anos)
   const [cachedInstitutions, setCachedInstitutions] = useState([]);
   const [cachedYears, setCachedYears] = useState([]);
@@ -139,7 +142,6 @@ export default function MedManager() {
   // UI State para Modal de Edição em Massa (BULK EDIT)
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ institution: '', year: '', area: '', topic: '' });
-  // NOVOS STATES PARA LIMPEZA
   const [bulkClearInstitution, setBulkClearInstitution] = useState(false);
   const [bulkClearYear, setBulkClearYear] = useState(false);
 
@@ -310,6 +312,8 @@ export default function MedManager() {
           if (auditFilter !== 'none') {
              if (auditFilter === 'missing_meta') { constraints.push(orderBy("institution")); constraints.push(where("institution", "==", "")); }
              else if (auditFilter === 'missing_topic') { constraints.push(where("area", "==", "")); }
+             // Correção do filtro de imagem no BD (para paginação funciona melhor com orderBy, mas local é mais seguro)
+             // Vamos manter simples aqui e filtrar melhor no cliente para casos complexos de boolean misto
              else if (auditFilter === 'has_image') { constraints.push(orderBy("image")); constraints.push(startAfter("")); }
           } 
           else {
@@ -343,6 +347,7 @@ export default function MedManager() {
 
           if (reset) {
               setQuestions(newQuestions);
+              setSelectedIds(new Set()); // Reseta seleção ao recarregar tudo
           } else {
               setQuestions(prev => [...prev, ...newQuestions]);
           }
@@ -409,6 +414,7 @@ export default function MedManager() {
           }
 
           setQuestions(foundDocs); 
+          setSelectedIds(new Set()); // Reseta seleção na busca
           
           if (foundDocs.length > 0) showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
           else showNotification('error', 'Nada encontrado. Dica: O Firestore diferencia Maiúsculas de minúsculas.');
@@ -524,9 +530,12 @@ export default function MedManager() {
           }
           let matchesAudit = true;
           if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
-          if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
-          if (auditFilter === 'has_image') matchesAudit = !!q.image;
-          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50;
+          // CORREÇÃO: Tópico vazio agora pega nulos, undefined e strings vazias
+          if (auditFilter === 'missing_topic') matchesAudit = !q.area || q.area === '' || !q.topic || q.topic === '' || q.area === 'Todas';
+          // CORREÇÃO: Imagem agora verifica boolean hasImage OU campo de URL
+          if (auditFilter === 'has_image') matchesAudit = !!q.image || q.hasImage === true || q.needsImage === true;
+          // Removido short_text
+          
           if (auditFilter !== 'none') return matchesAudit;
           return true;
       });
@@ -580,12 +589,30 @@ export default function MedManager() {
     });
   };
 
+  // --- SELECTION LOGIC ---
+  const toggleQuestionSelection = (id) => {
+      setSelectedIds(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(id)) newSet.delete(id);
+          else newSet.add(id);
+          return newSet;
+      });
+  };
+
+  const selectAllFiltered = () => {
+      const newSet = new Set(selectedIds);
+      filteredQuestions.forEach(q => newSet.add(q.id));
+      setSelectedIds(newSet);
+  };
+
+  const deselectAll = () => setSelectedIds(new Set());
+
   // --- ACTIONS ---
   const handleLogout = async () => {
       try {
           await signOut(auth);
           setUser(null);
-          setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]);
+          setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]); setSelectedIds(new Set());
           setActiveView('questions');
       } catch (error) { console.error(error); }
   };
@@ -611,26 +638,40 @@ export default function MedManager() {
 
   // --- BULK UPDATE LOGIC (EDIÇÃO EM MASSA) ---
   const handleBulkUpdate = async () => {
-      const targets = filteredQuestions; 
+      // INTELIGÊNCIA DE ALVO: Se tem selecionados manualmente, usa eles. Se não, usa todos do filtro.
+      const hasSelection = selectedIds.size > 0;
+      
+      let targets = [];
+      if (hasSelection) {
+          // Pega do array geral de questoes carregadas
+          targets = questions.filter(q => selectedIds.has(q.id));
+          // Adiciona as do extraReported se não achar
+          if (targets.length < selectedIds.size) {
+               const extras = extraReportedQuestions.filter(q => selectedIds.has(q.id));
+               targets = [...targets, ...extras];
+               // Remove duplicatas por ID
+               targets = Array.from(new Map(targets.map(item => [item.id, item])).values());
+          }
+      } else {
+          targets = filteredQuestions;
+      }
+
       if (targets.length === 0) return;
       
       const updates = {};
       
-      // Lógica da Banca (Limpar vs Editar vs Manter)
       if (bulkClearInstitution) {
-          updates.institution = ""; // Força vazio
+          updates.institution = ""; 
       } else if (bulkEditData.institution.trim()) {
           updates.institution = bulkEditData.institution;
       }
       
-      // Lógica do Ano
       if (bulkClearYear) {
-          updates.year = ""; // Força vazio
+          updates.year = ""; 
       } else if (bulkEditData.year) {
           updates.year = bulkEditData.year;
       }
 
-      // Lógica de Área/Tópico (padrão)
       if (bulkEditData.area && bulkEditData.area !== '') updates.area = bulkEditData.area;
       if (bulkEditData.topic && bulkEditData.topic !== '') updates.topic = bulkEditData.topic;
       
@@ -669,10 +710,11 @@ export default function MedManager() {
 
           showNotification('success', `${updatedCount} questões atualizadas com sucesso!`);
           setIsBulkEditModalOpen(false);
-          // Reseta tudo
+          // Reseta form e selecao
           setBulkEditData({ institution: '', year: '', area: '', topic: '' }); 
           setBulkClearInstitution(false);
           setBulkClearYear(false);
+          if (hasSelection) setSelectedIds(new Set()); // Limpa seleção após editar
 
       } catch (error) {
           console.error("Erro bulk update:", error);
@@ -748,6 +790,12 @@ export default function MedManager() {
       if (listType === 'questions') {
           setQuestions(prev => prev.filter(item => item.id !== id));
           setExtraReportedQuestions(prev => prev.filter(item => item.id !== id));
+          // Remove da seleção se deletar
+          if (selectedIds.has(id)) {
+              const newSet = new Set(selectedIds);
+              newSet.delete(id);
+              setSelectedIds(newSet);
+          }
       } else if (listType === 'students') {
           setStudents(prev => prev.filter(item => item.id !== id));
       }
@@ -935,7 +983,6 @@ export default function MedManager() {
                             <option value="missing_meta">⚠️ Banca/Ano Vazios</option>
                             <option value="missing_topic">⚠️ Sem Tópico/Área</option>
                             <option value="has_image">🖼️ Com Imagem (Check)</option>
-                            <option value="short_text">📝 Enunciado Curto (Erro?)</option>
                         </select>
                     </div>
                     
@@ -993,11 +1040,13 @@ export default function MedManager() {
                         <div className="mt-6 pt-4 border-t border-gray-100">
                              <button 
                                 onClick={() => setIsBulkEditModalOpen(true)}
-                                className="w-full bg-slate-800 text-white p-2 rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                                className={`w-full p-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-sm ${selectedIds.size > 0 ? 'bg-emerald-600 text-white hover:bg-emerald-700 animate-pulse' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
                              >
-                                <Layers size={14}/> Editar {filteredQuestions.length} Filtradas
+                                <Layers size={14}/> 
+                                {selectedIds.size > 0 ? `Editar ${selectedIds.size} Selecionadas` : `Editar ${filteredQuestions.length} Listadas`}
                              </button>
-                             <p className="text-[10px] text-gray-400 mt-1 text-center">Cuidado: Edita todas as listadas.</p>
+                             {selectedIds.size === 0 && <p className="text-[10px] text-gray-400 mt-1 text-center">Edita todas que aparecem na lista.</p>}
+                             {selectedIds.size > 0 && <div className="flex justify-between mt-2"><button onClick={deselectAll} className="text-[10px] text-red-500 hover:underline">Desmarcar Todas</button><button onClick={selectAllFiltered} className="text-[10px] text-blue-500 hover:underline">Marcar Todas Listadas</button></div>}
                         </div>
                     )}
                 </div>
@@ -1085,6 +1134,11 @@ export default function MedManager() {
                              <Building size={12}/> Filtro Banca: {selectedInstitutions.length} selecionada(s)
                          </div>
                      )}
+                     {selectedIds.size > 0 && (
+                         <div className="bg-emerald-100 border border-emerald-200 text-emerald-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <CheckSquare size={12}/> {selectedIds.size} selecionada(s) para edição
+                         </div>
+                     )}
                   </div>
 
                   {auditFilter !== 'none' && (
@@ -1101,9 +1155,15 @@ export default function MedManager() {
                         {filteredQuestions.map(q => {
                             const reportCount = reportsCountByQuestion[q.id] || 0;
                             const missingTopic = !q.area || !q.topic || q.area === 'Todas';
+                            const isSelected = selectedIds.has(q.id);
                             
                             return (
-                                <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200'}`}>
+                                <div key={q.id} className={`bg-white rounded-xl border shadow-sm transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${isSelected ? 'border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50' : reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200 hover:shadow-md'}`}>
+                                    {/* CHECKBOX DE SELEÇÃO */}
+                                    <div onClick={() => toggleQuestionSelection(q.id)} className={`mt-1 cursor-pointer transition-colors ${isSelected ? 'text-emerald-600' : 'text-gray-300 hover:text-gray-400'}`}>
+                                        {isSelected ? <CheckSquare size={24}/> : <Square size={24}/>}
+                                    </div>
+
                                     <div className="flex-1 min-w-0">
                                         <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
                                             <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
@@ -1121,7 +1181,7 @@ export default function MedManager() {
                                                     <><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></>
                                                 )}
                                             </div>
-                                            {q.image && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Com Imagem</span>}
+                                            {(q.image || q.hasImage || q.needsImage) && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Com Imagem</span>}
                                         </div>
                                         <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
                                     </div>
@@ -1332,11 +1392,17 @@ export default function MedManager() {
                       <div className="bg-slate-800 text-white p-3 rounded-full mb-3 shadow-lg"><Layers size={32}/></div>
                       <h2 className="text-xl font-bold text-slate-800">Edição em Massa</h2>
                       <p className="text-sm text-gray-500 mt-1">
-                          Você está prestes a editar <strong className="text-slate-900">{filteredQuestions.length} questões</strong> listadas.
+                          Você está prestes a editar <strong className="text-slate-900">{selectedIds.size > 0 ? selectedIds.size : filteredQuestions.length} questões</strong>.
                       </p>
-                      <div className="mt-2 bg-amber-50 border border-amber-100 text-amber-800 text-xs p-3 rounded-lg text-left w-full">
-                          <strong>Atenção:</strong> Deixe os campos <strong>EM BRANCO</strong> se quiser manter o valor original das questões. Só preencha o que você deseja mudar em todas.
-                      </div>
+                      {selectedIds.size > 0 ? (
+                           <div className="mt-2 bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs p-3 rounded-lg text-left w-full flex items-center gap-2">
+                               <CheckCircle size={14}/> <strong>Modo Seleção Ativo:</strong> Apenas as questões marcadas serão alteradas.
+                           </div>
+                      ) : (
+                           <div className="mt-2 bg-amber-50 border border-amber-100 text-amber-800 text-xs p-3 rounded-lg text-left w-full">
+                               <strong>Atenção:</strong> Todas as questões da lista atual serão editadas.
+                           </div>
+                      )}
                   </div>
                   
                   <div className="space-y-4">
