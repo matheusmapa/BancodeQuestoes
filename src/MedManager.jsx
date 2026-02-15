@@ -31,6 +31,7 @@ const firebaseConfig = {
   measurementId: "G-XNHXB5BCGF"
 };
 
+// Evita reinicialização múltipla em desenvolvimento
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
@@ -120,7 +121,7 @@ export default function MedManager() {
   const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
 
   // --- NOVOS FILTROS DE AUDITORIA ---
-  const [auditFilter, setAuditFilter] = useState('none'); // 'none', 'missing_meta', 'missing_topic', 'has_image', 'short_text'
+  const [auditFilter, setAuditFilter] = useState('none'); 
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -148,13 +149,19 @@ export default function MedManager() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
         if (u) {
-            const userDoc = await getDoc(doc(db, "users", u.uid));
-            if (userDoc.exists() && userDoc.data().role === 'admin') {
-                setUser(u);
-                loadQuestions(true);
-            } else {
-                await signOut(auth);
-                showNotification('error', 'Acesso negado: Apenas administradores.');
+            try {
+                const userDoc = await getDoc(doc(db, "users", u.uid));
+                if (userDoc.exists() && userDoc.data().role === 'admin') {
+                    setUser(u);
+                    // Não carrega automaticamente se tiver filtros residuais, espera o useEffect de filtros
+                    loadQuestions(true);
+                } else {
+                    await signOut(auth);
+                    showNotification('error', 'Acesso negado: Apenas administradores.');
+                    setUser(null);
+                }
+            } catch (e) {
+                console.error(e);
                 setUser(null);
             }
         } else {
@@ -165,7 +172,7 @@ export default function MedManager() {
     return () => unsubscribe();
   }, []);
 
-  // --- REALTIME REPORTS & PRIORITY FETCH ---
+  // --- REALTIME REPORTS ---
   useEffect(() => {
     if (!user) return;
     const qReports = query(collection(db, "reports"), where("status", "==", "pending"));
@@ -184,7 +191,6 @@ export default function MedManager() {
   useEffect(() => {
     const fetchMissing = async () => {
         if (reports.length === 0) return;
-        
         const reportedIds = Object.keys(reportsCountByQuestion);
         const missingIds = reportedIds.filter(id => 
             !questions.find(q => q.id === id) && 
@@ -209,14 +215,16 @@ export default function MedManager() {
             setExtraReportedQuestions(prev => [...prev, ...newDocs]);
         }
     };
-    
     const timer = setTimeout(fetchMissing, 1000);
     return () => clearTimeout(timer);
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS (MODIFICADO PARA AUDITORIA) ---
+  // --- LOAD QUESTIONS (NAVEGAÇÃO E FILTROS PADRÃO) ---
   const loadQuestions = async (reset = false) => {
+      // Se houver um termo de pesquisa ativo, ignoramos o loadQuestions padrão para não misturar lógicas
+      if (searchTerm && !reset) return; 
+
       if (loadingQuestions) return;
       if (!reset && !hasMoreQuestions) return;
 
@@ -227,20 +235,23 @@ export default function MedManager() {
           let q = collection(db, "questions");
           let constraints = [];
 
-          // -- Lógica de Filtros de Auditoria (Prioridade) --
+          // Se estiver resetando (clicou em Limpar ou mudou filtro), limpa a busca textual
+          if (reset && !searchTerm) {
+             // Mantém lógica normal
+          }
+
+          // -- Lógica de Filtros de Auditoria --
           if (auditFilter === 'missing_meta') {
-              // Tenta achar campos vazios. Obs: Firestore não tem filtro "é vazio" nativo fácil,
-              // então ordenamos por institution para pegar os vazios primeiro (strings vazias vêm antes)
               constraints.push(orderBy("institution")); 
-              constraints.push(where("institution", "==", "")); // Se seu DB salvar como string vazia
+              constraints.push(where("institution", "==", ""));
           } else if (auditFilter === 'missing_topic') {
               constraints.push(where("area", "==", ""));
           } else if (auditFilter === 'has_image') {
-              // Assumindo que você tem um campo 'image' ou 'imageUrl' que não é nulo
               constraints.push(orderBy("image"));
-              constraints.push(startAfter("")); // Pega qualquer coisa que tenha texto no campo image
+              constraints.push(startAfter(""));
           } else {
               // -- Modo Normal --
+              // Só aplica ordenação por data se não tivermos fazendo uma busca textual complexa (que faremos no handleServerSearch)
               constraints.push(orderBy("createdAt", "desc"));
               
               if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
@@ -268,11 +279,6 @@ export default function MedManager() {
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
 
-          if (reset && newQuestions.length === 0 && auditFilter === 'none') {
-             // Fallback: Se não achou nada no modo normal, tenta buscar sem order by complexo pra não travar tela
-             // Isso previne tela em branco se o indice de 'area' nao existir
-          }
-
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
           if (error.message.includes("requires an index")) {
@@ -288,19 +294,31 @@ export default function MedManager() {
       }
   };
 
-  // --- SERVER SIDE SEARCH ---
+  // --- SERVER SIDE SEARCH (A CORREÇÃO PRINCIPAL) ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
+      
+      // Se limpou o campo, volta a carregar tudo normalmente
       if (!term) {
-          loadQuestions(true);
+          handleClearQuestionFilters();
           return;
       }
+
       setIsSearchingServer(true);
+      setLoadingQuestions(true);
       setMissingIndexLink(null);
+      
+      // 1. IMPORTANTE: Reseta os filtros visuais para "Todas"
+      // Isso garante que o resultado da busca não seja filtrado localmente
+      setSelectedArea('Todas');
+      setSelectedTopic('Todos');
+      setAuditFilter('none');
+      setHasMoreQuestions(false); // Desativa paginação infinita durante busca textual
+      
       let foundDocs = [];
 
       try {
-          // 1. Tenta buscar por ID exato
+          // 2. Tenta buscar por ID exato primeiro
           try {
             const docRef = doc(db, "questions", term);
             const docSnap = await getDoc(docRef);
@@ -309,15 +327,17 @@ export default function MedManager() {
             }
           } catch(e) { }
 
-          // 2. Se não achou ID, busca por texto (prefixo)
+          // 3. Se não achou ID, busca por texto (Começa com...)
+          // Nota: Firestore 'startAt' é Case Sensitive. 
           if (foundDocs.length === 0) {
               const qText = query(
                   collection(db, "questions"),
                   orderBy("text"),
                   startAt(term),
                   endAt(term + '\uf8ff'),
-                  limit(10)
+                  limit(20) // Limite seguro para não gastar muito
               );
+              
               const textSnap = await getDocs(qText);
               textSnap.forEach(d => {
                   if (!foundDocs.some(f => f.id === d.id)) {
@@ -326,18 +346,27 @@ export default function MedManager() {
               });
           }
 
+          setQuestions(foundDocs); 
+          
           if (foundDocs.length > 0) {
-              setQuestions(foundDocs); 
-              setHasMoreQuestions(false); 
               showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
           } else {
-              showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
+              showNotification('error', 'Nada encontrado. Dica: O Firestore diferencia Maiúsculas de minúsculas.');
           }
+
       } catch (error) {
           console.error("Erro na busca:", error);
-          showNotification('error', 'Erro ao buscar no servidor.');
+          if (error.message.includes("requires an index")) {
+              const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
+              const link = linkMatch ? linkMatch[0] : null;
+              setMissingIndexLink(link);
+              showNotification('error', 'Falta um índice para buscar por texto!', link);
+          } else {
+              showNotification('error', 'Erro ao buscar no servidor.');
+          }
       } finally {
           setIsSearchingServer(false);
+          setLoadingQuestions(false);
       }
   };
 
@@ -395,11 +424,12 @@ export default function MedManager() {
       }
   }, [activeView]);
 
+  // Listener para mudança de Área/Tópico - Só recarrega se NÃO tiver busca textual ativa
   useEffect(() => {
-      if(user) {
-         // Pequeno delay para evitar flood ao trocar filtros
+      if(user && !searchTerm) {
+          // Pequeno delay para evitar flood ao trocar filtros
           const timer = setTimeout(() => {
-             if(!searchTerm) loadQuestions(true);
+             loadQuestions(true);
           }, 500);
           return () => clearTimeout(timer);
       }
@@ -434,66 +464,63 @@ export default function MedManager() {
       fetchReporters();
   }, [reports]);
 
-  // --- FILTERS MEMO & SORTING ---
+  // --- FILTERS MEMO & SORTING (LOCAL) ---
   const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
   const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
   
   const filteredQuestions = useMemo(() => {
-      // 1. Merge: Junta a lista normal + a lista de questões com report
+      // 1. Merge
       const allQuestionsMap = new Map();
       questions.forEach(q => allQuestionsMap.set(q.id, q));
       extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
       
       const allQuestions = Array.from(allQuestionsMap.values());
 
-      // 2. Filtra (Lógica melhorada para funcionar LOCALMENTE com o que foi baixado)
+      // 2. Filtra
       let result = allQuestions.filter(q => {
-          // Busca Textual Local (Case Insensitive)
+          // Busca Textual Local (Fallback para resultados já carregados)
           const term = searchTerm.toLowerCase().trim();
-          const matchesSearch = term ? (
-              (q.text || '').toLowerCase().includes(term) || 
-              (q.institution || '').toLowerCase().includes(term) || 
-              q.id === term
-          ) : true;
           
-          // Filtros de Dropdown (Audit ou Normal)
-          // Se estiver em modo Auditoria, o loadQuestions já filtrou no servidor, 
-          // mas aplicamos aqui também para garantir visualização correta dos dados mistos
+          // Se tiver termo de busca, priorizamos ele e IGNORAMOS área/tópico se o user não for explícito
+          // Isso resolve o problema de "busca retorna mas filtro esconde"
+          if (term) {
+             const inText = (q.text || '').toLowerCase().includes(term);
+             const inId = q.id === term; // ID exato já tratado no server, mas mantém aqui
+             const inInst = (q.institution || '').toLowerCase().includes(term);
+             return inText || inId || inInst;
+          }
+
+          // Se NÃO tiver termo, aplica filtros rígidos
+          
+          // Lógica Audit
           let matchesAudit = true;
           if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
           if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
           if (auditFilter === 'has_image') matchesAudit = !!q.image;
-          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50; // Detecta enunciados quebrados
+          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50;
 
-          // Filtros Padrão (Area/Topic/Inst/Year)
-          // Normaliza as strings para evitar erro de espaço ou case
-          const qInst = (q.institution || '').trim();
-          const qYear = String(q.year || '').trim();
-          
           const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
           const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
           
+          const qInst = (q.institution || '').trim();
+          const qYear = String(q.year || '').trim();
           const matchesInstitution = selectedInstitution === 'Todas' || qInst === selectedInstitution;
           const matchesYear = selectedYear === 'Todos' || qYear === selectedYear;
 
-          // Se tiver search term, ignora alguns filtros para achar a questão
-          if (term) return matchesSearch;
-
-          // Se estiver em modo auditoria, respeita a auditoria E os filtros locais de inst/ano se selecionados
-          if (auditFilter !== 'none') {
-              return matchesAudit;
-          }
+          if (auditFilter !== 'none') return matchesAudit;
 
           return matchesArea && matchesTopic && matchesInstitution && matchesYear;
       });
 
       // 3. Ordena
       result.sort((a, b) => {
+          // Reportados primeiro
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
           if (countA > 0 || countB > 0) {
               if (countA !== countB) return countB - countA; 
           }
+          // Depois data
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
           return dateB - dateA;
@@ -551,7 +578,8 @@ export default function MedManager() {
       setSelectedInstitution('Todas'); 
       setSelectedYear('Todos'); 
       setAuditFilter('none');
-      loadQuestions(true); // Força reload
+      setQuestions([]); // Limpa lista para forçar reload limpo
+      setTimeout(() => loadQuestions(true), 100); 
   };
 
   // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
@@ -775,7 +803,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.5</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.6</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -801,7 +829,7 @@ export default function MedManager() {
                         <ScanLine size={16} className={`absolute left-3 top-3 ${auditFilter !== 'none' ? 'text-red-500' : 'text-gray-400'}`} />
                         <select 
                             value={auditFilter} 
-                            onChange={e => { setAuditFilter(e.target.value); loadQuestions(true); }} 
+                            onChange={e => { setAuditFilter(e.target.value); if(e.target.value !== 'none') setSearchTerm(''); }} 
                             className={`w-full pl-9 pr-3 py-2 border rounded-lg text-sm font-medium outline-none ${auditFilter !== 'none' ? 'bg-red-50 border-red-200 text-red-700 font-bold' : 'bg-gray-50 border-gray-200'}`}
                         >
                             <option value="none">Navegação Padrão</option>
@@ -812,12 +840,18 @@ export default function MedManager() {
                         </select>
                     </div>
                     
-                    {auditFilter === 'none' && (
+                    {auditFilter === 'none' && !searchTerm && (
                         <>
-                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca.</div>
+                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Filtrar por Tópico requer índice no Firebase.</div>
                             <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                             <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                         </>
+                    )}
+
+                    {searchTerm && (
+                         <div className="bg-blue-50 border border-blue-100 text-blue-700 p-2 rounded text-xs font-bold text-center">
+                             Busca textual ativa.<br/>Filtros de Área desativados.
+                         </div>
                     )}
                     
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais (Resultados)</label>
@@ -852,17 +886,21 @@ export default function MedManager() {
                   {activeView === 'students' && <><Users className="text-purple-600"/> Gestão de Alunos</>}
               </h2>
               <div className="relative flex-1 max-w-md group">
-                  <Search onClick={handleServerSearch} className="absolute left-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600 z-10" size={20} />
+                  <div className="absolute left-4 top-3.5 z-10">
+                      {isSearchingServer ? <Loader2 className="animate-spin text-blue-600" size={20}/> : <Search onClick={handleServerSearch} className="text-gray-400 cursor-pointer hover:text-blue-600" size={20} />}
+                  </div>
                   <input 
                     type="text" 
-                    placeholder="Cole o começo do enunciado ou o ID..." 
+                    placeholder="Cole o ID ou digite o começo do enunciado..." 
                     value={searchTerm} 
                     onChange={e => setSearchTerm(e.target.value)} 
                     onKeyDown={handleKeyDownSearch}
                     className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
                   />
-                  {isSearchingServer && <div className="absolute right-4 top-3.5"><Loader2 className="animate-spin text-blue-600" size={20}/></div>}
-                  <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto"><HelpCircle size={16}/></div>
+                  {searchTerm && (
+                      <button onClick={handleClearQuestionFilters} className="absolute right-3 top-3.5 text-gray-400 hover:text-red-500" title="Limpar Busca"><X size={16}/></button>
+                  )}
+                  {!searchTerm && <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto (Case Sensitive)"><HelpCircle size={16}/></div>}
               </div>
               {activeView === 'students' && (
                   <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
@@ -887,6 +925,16 @@ export default function MedManager() {
                        </div>
                   )}
 
+                  {searchTerm && (
+                       <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center justify-between text-sm font-bold mb-4">
+                           <div className="flex items-center gap-2">
+                               <Search size={16}/>
+                               Resultado da busca textual por: "{searchTerm}"
+                           </div>
+                           <button onClick={handleClearQuestionFilters} className="text-blue-600 underline hover:text-blue-800">Limpar Busca</button>
+                       </div>
+                  )}
+
                   {auditFilter !== 'none' && (
                        <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold mb-4">
                            <ScanLine size={16}/>
@@ -901,7 +949,6 @@ export default function MedManager() {
                         {filteredQuestions.map(q => {
                             const reportCount = reportsCountByQuestion[q.id] || 0;
                             // Checagens Rápidas
-                            const missingMeta = !q.institution || !q.year;
                             const missingTopic = !q.area || !q.topic || q.area === 'Todas';
                             
                             return (
@@ -936,7 +983,7 @@ export default function MedManager() {
                         })}
                         
                         {/* LOAD MORE BUTTON */}
-                        {hasMoreQuestions && !missingIndexLink && (
+                        {hasMoreQuestions && !searchTerm && (
                             <button 
                                 onClick={() => loadQuestions(false)} 
                                 disabled={loadingQuestions}
@@ -952,8 +999,8 @@ export default function MedManager() {
                         {questions.length === 0 && !loadingQuestions && (
                             <div className="text-center py-10 text-gray-500">
                                 <Database size={48} className="mx-auto mb-2 opacity-20"/>
-                                <p>Nenhuma questão encontrada com estes filtros.</p>
-                                <button onClick={handleClearQuestionFilters} className="mt-4 text-blue-600 font-bold hover:underline">Limpar Filtros</button>
+                                <p>Nenhuma questão encontrada.</p>
+                                <button onClick={handleClearQuestionFilters} className="mt-4 text-blue-600 font-bold hover:underline">Limpar Filtros e Tentar Novamente</button>
                             </div>
                         )}
                       </>
