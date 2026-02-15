@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
   AlertCircle, Database, List, ArrowLeft, LogOut, Loader2, 
@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  Clock, RotateCcw, Search as SearchIcon
+  RotateCcw, SaveAll, CloudLightning
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -14,7 +14,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
-  limit, startAfter, getDocs, startAt, endAt, documentId
+  limit, startAfter, getDocs, startAt, endAt
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -97,6 +97,11 @@ export default function MedManager() {
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
   
+  // METADADOS CACHEADOS (Listas de Bancas e Anos)
+  const [cachedInstitutions, setCachedInstitutions] = useState([]);
+  const [cachedYears, setCachedYears] = useState([]);
+  const [isSyncingMeta, setIsSyncingMeta] = useState(false);
+
   const [students, setStudents] = useState([]); 
   const [lastStudentDoc, setLastStudentDoc] = useState(null);
   const [hasMoreStudents, setHasMoreStudents] = useState(true);
@@ -120,8 +125,7 @@ export default function MedManager() {
   const [selectedArea, setSelectedArea] = useState('Todas');
   const [selectedTopic, setSelectedTopic] = useState('Todos');
   
-  // Filtros "Server-Side" (Banca e Ano)
-  // Agora esses estados controlam a query real no DB
+  // Filtros "Server-Side" (Via Cache)
   const [serverInstitution, setServerInstitution] = useState(''); 
   const [serverYear, setServerYear] = useState(''); 
   
@@ -150,7 +154,7 @@ export default function MedManager() {
 
   const showNotification = (type, text, link = null) => setNotification({ type, text, link });
 
-  // --- AUTH ---
+  // --- AUTH & INITIAL LOAD ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
         if (u) {
@@ -159,6 +163,7 @@ export default function MedManager() {
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
                     loadQuestions(true);
+                    loadMetadata(); // Carrega as listas de Banca/Ano salvas
                 } else {
                     await signOut(auth);
                     showNotification('error', 'Acesso negado: Apenas administradores.');
@@ -175,6 +180,67 @@ export default function MedManager() {
     });
     return () => unsubscribe();
   }, []);
+
+  // --- METADATA SYSTEM (A IDEIA GENIAL) ---
+  
+  // 1. Carregar listas salvas (Rápido, 1 leitura)
+  const loadMetadata = async () => {
+      try {
+          const metaSnap = await getDoc(doc(db, "system", "metadata"));
+          if (metaSnap.exists()) {
+              const data = metaSnap.data();
+              if (data.institutions) setCachedInstitutions(data.institutions.sort());
+              if (data.years) setCachedYears(data.years.sort().reverse());
+          }
+      } catch (error) {
+          console.error("Erro ao carregar metadados:", error);
+      }
+  };
+
+  // 2. Sincronizar listas (Varre o banco e atualiza - Pesado, mas sob demanda)
+  const handleSyncDatabaseFilters = async () => {
+      if (isSyncingMeta) return;
+      setIsSyncingMeta(true);
+      
+      try {
+          showNotification('success', 'Iniciando varredura do banco... Aguarde.');
+          
+          // Busca APENAS os campos necessários para economizar banda (mas ainda conta leituras)
+          const q = query(collection(db, "questions")); // Infelizmente Firestore não tem "select distinct" nativo barato
+          const snapshot = await getDocs(q);
+          
+          const institutionsSet = new Set();
+          const yearsSet = new Set();
+          
+          snapshot.forEach(doc => {
+              const data = doc.data();
+              if (data.institution) institutionsSet.add(data.institution.trim());
+              if (data.year) yearsSet.add(String(data.year).trim());
+          });
+          
+          const institutionsList = Array.from(institutionsSet).filter(Boolean).sort();
+          const yearsList = Array.from(yearsSet).filter(Boolean).sort().reverse();
+          
+          // Salva no documento de sistema
+          await setDoc(doc(db, "system", "metadata"), {
+              institutions: institutionsList,
+              years: yearsList,
+              lastUpdated: new Date().toISOString()
+          });
+          
+          setCachedInstitutions(institutionsList);
+          setCachedYears(yearsList);
+          
+          showNotification('success', `Sincronização concluída! ${institutionsList.length} Bancas e ${yearsList.length} Anos encontrados.`);
+          
+      } catch (error) {
+          console.error("Erro na sync:", error);
+          showNotification('error', 'Erro ao sincronizar filtros: ' + error.message);
+      } finally {
+          setIsSyncingMeta(false);
+      }
+  };
+
 
   // --- REALTIME REPORTS ---
   useEffect(() => {
@@ -226,7 +292,6 @@ export default function MedManager() {
 
   // --- LOAD QUESTIONS (QUERY NO BANCO) ---
   const loadQuestions = async (reset = false) => {
-      // Se tiver busca textual (ID/Enunciado), deixa o handleServerSearch lidar
       if (searchTerm && !reset) return; 
 
       if (loadingQuestions) return;
@@ -252,28 +317,19 @@ export default function MedManager() {
               if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
 
               // 2. BANCA (INSTITUTION) - BUSCA EXATA
-              // Isso permite você filtrar "MG - SCMBH" direto no banco
               if (serverInstitution.trim()) {
                   constraints.push(where("institution", "==", serverInstitution.trim()));
               }
 
               // 3. ANO - BUSCA EXATA
               if (serverYear.trim()) {
-                  // Tenta converter pra numero se possível, ou string dependendo de como salvou
-                  // Assumindo que no banco salvou como string ou number. 
-                  // Para garantir, se for numero no banco, o filtro precisa ser numero.
                   const yearNum = parseInt(serverYear.trim());
-                  if(!isNaN(yearNum)) {
-                       // Idealmente, verifique como salvou. Vamos tentar string se falhar ou hibrido
-                       // Se salvou como string "2024", passar number falha.
-                       constraints.push(where("year", "==", serverYear.trim())); 
-                  }
+                  // Tenta buscar como string (mais comum se veio de JSON) ou numero
+                  // Se o DB estiver misto, isso pode ser um problema, mas vamos assumir string pela consistência do select
+                  constraints.push(where("year", "==", serverYear.trim())); 
               }
 
               // 4. ORDENAÇÃO: Sempre por ID (Fallback seguro)
-              // Não usamos mais createdAt para evitar ocultar questões sem data
-              // Se não tiver nenhum filtro que exija ordem especifica (como audit), 
-              // firestore ordena implicitamente por __name__
           }
 
           // Paginação
@@ -297,18 +353,13 @@ export default function MedManager() {
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
 
-          // Feedback se filtrou por banca e não achou
-          if (reset && newQuestions.length === 0 && serverInstitution) {
-             showNotification('error', `Nenhuma questão encontrada com a banca exata: "${serverInstitution}"`);
-          }
-
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
           if (error.message.includes("requires an index")) {
               const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
               const link = linkMatch ? linkMatch[0] : null;
               setMissingIndexLink(link);
-              showNotification('error', 'O Firestore precisa de um índice para combinar esses filtros (Ex: Área + Banca).', link);
+              showNotification('error', 'O Firestore precisa de um índice para essa combinação de filtros.', link);
           } else {
               showNotification('error', 'Erro ao carregar dados: ' + error.message);
           }
@@ -329,7 +380,7 @@ export default function MedManager() {
       setLoadingQuestions(true);
       setMissingIndexLink(null);
       
-      // Reseta filtros de categoria/banca visualmente (mas mantém o estado limpo para não conflitar)
+      // Reseta filtros visuais
       setSelectedArea('Todas');
       setSelectedTopic('Todos');
       setServerInstitution('');
@@ -424,20 +475,16 @@ export default function MedManager() {
       if (activeView === 'students' && students.length === 0) loadStudents(true);
   }, [activeView]);
 
-  // Listener para mudança de Área/Tópico (Automático)
+  // Listener para mudança de Filtros (Automático)
   useEffect(() => {
       if(user && !searchTerm) {
-          // Pequeno delay
           const timer = setTimeout(() => {
              loadQuestions(true);
           }, 500);
           return () => clearTimeout(timer);
       }
-  }, [selectedArea, selectedTopic, auditFilter]); 
+  }, [selectedArea, selectedTopic, serverInstitution, serverYear, auditFilter]); 
 
-  // Listener para mudança nos filtros de Servidor (Banca/Ano) - MANUAL (OnEnter)
-  // Nota: Não coloquei no useEffect automático para evitar requests enquanto digita
-  // O usuário deve apertar Enter ou o botão de busca na sidebar.
 
   useEffect(() => {
       if(user && activeView === 'students') loadStudents(true);
@@ -467,8 +514,6 @@ export default function MedManager() {
   }, [reports]);
 
   // --- FILTERS MEMO & SORTING (LOCAL) ---
-  // Apenas para sugestão na interface, pegamos o que já foi carregado
-  const availableInstitutionsHint = useMemo(() => Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort(), [questions]);
   
   const filteredQuestions = useMemo(() => {
       // 1. Merge
@@ -495,8 +540,6 @@ export default function MedManager() {
           if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50;
           if (auditFilter !== 'none') return matchesAudit;
 
-          // Os filtros de Banca e Ano agora são server-side, então teoricamente o que veio já é o certo.
-          // Mas mantemos a consistência visual caso algo "escape"
           return true;
       });
 
@@ -565,12 +608,6 @@ export default function MedManager() {
       setAuditFilter('none');
       setQuestions([]); 
       setTimeout(() => loadQuestions(true), 100); 
-  };
-
-  const handleTriggerServerFilter = () => {
-      // Botão para forçar busca por Banca/Ano
-      setQuestions([]);
-      loadQuestions(true);
   };
 
   // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
@@ -794,7 +831,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v5.0</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v5.2</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -845,37 +882,40 @@ export default function MedManager() {
                          </div>
                     )}
                     
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Buscar no Servidor (Padronização)</label>
-                    <p className="text-[10px] text-gray-400 mb-2 leading-tight">Digite a Banca ou Ano EXATO para buscar no banco todo. (Enter p/ buscar)</p>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4 flex items-center justify-between">
+                         Banca & Ano (BD)
+                         <button onClick={handleSyncDatabaseFilters} disabled={isSyncingMeta} className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-200 transition-colors flex items-center gap-1" title="Sincronizar Lista de Filtros">
+                             {isSyncingMeta ? <Loader2 className="animate-spin" size={10}/> : <CloudLightning size={10}/>} Atualizar
+                         </button>
+                    </label>
+                    <p className="text-[10px] text-gray-400 mb-2 leading-tight">Selecione para filtrar. Use o botão acima se adicionar questões novas.</p>
                     
                     <div className="relative">
                         <Building size={16} className="absolute left-3 top-3 text-gray-400" />
                         <input 
-                            list="availableInstitutions"
+                            list="cachedInstitutionsList"
                             type="text" 
-                            placeholder="Ex: MG - SCMBH" 
+                            placeholder="Selecione a Banca..." 
                             value={serverInstitution} 
                             onChange={e => setServerInstitution(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleTriggerServerFilter()}
                             className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
                         />
-                        <button onClick={handleTriggerServerFilter} className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"><SearchIcon size={14}/></button>
-                        <datalist id="availableInstitutions">
-                            {availableInstitutionsHint.map(i => <option key={i} value={i} />)}
+                        {serverInstitution && <button onClick={() => setServerInstitution('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={14}/></button>}
+                        <datalist id="cachedInstitutionsList">
+                            {cachedInstitutions.map(i => <option key={i} value={i} />)}
                         </datalist>
                     </div>
 
                     <div className="relative mt-2">
                         <Calendar size={16} className="absolute left-3 top-3 text-gray-400" />
-                        <input 
-                            type="text" 
-                            placeholder="Ex: 2024" 
-                            value={serverYear} 
-                            onChange={e => setServerYear(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && handleTriggerServerFilter()}
-                            className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                         <button onClick={handleTriggerServerFilter} className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"><SearchIcon size={14}/></button>
+                        <select 
+                             value={serverYear} 
+                             onChange={e => setServerYear(e.target.value)}
+                             className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos os Anos</option>
+                            {cachedYears.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
                     </div>
                 </div>
               )}
