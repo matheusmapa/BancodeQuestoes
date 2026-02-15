@@ -1329,11 +1329,31 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return { total, correct };
     }, [simulations, allQuestions]);
 
-    // Calcular Tópicos (Async Effect para UI Feedback)
+    // Calcular Tópicos (Otimizado para Reatividade Máxima)
     useEffect(() => {
+        // 1. TRAVA DE SEGURANÇA: Se o BD ainda não entregou as questões, segura o loading.
+        if (allQuestions.length === 0) {
+            setIsAnalyzing(true);
+            return;
+        }
+
+        // 2. Se não tem simulados feitos, para o loading e mostra vazio imediatamente.
+        if (simulations.length === 0) {
+            setFilteredTopics([]);
+            setIsAnalyzing(false);
+            return;
+        }
+
         setIsAnalyzing(true);
+
+        // 3. O TRUQUE DE PERFORMANCE: setTimeout com 0ms.
+        // Isso joga o cálculo pesado para o final da fila de tarefas do navegador.
+        // Garante que o spinner "Analisando..." apareça na tela ANTES do cálculo começar,
+        // mas assim que o cálculo termina (seja em 1ms ou 100ms), ele libera o resultado.
         const timer = setTimeout(() => {
             const stats = {};
+            
+            // Loop de cálculo (Pesado)
             simulations.forEach(sim => {
                 if (sim.status !== 'finished' || !sim.answersData) return;
                 const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
@@ -1364,12 +1384,12 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
 
             filtered.sort((a, b) => {
                 if (topicSort === 'best') return b.percentage - a.percentage || b.total - a.total;
-                return a.percentage - b.percentage || b.total - a.total; // Piores primeiro
+                return a.percentage - b.percentage || b.total - a.total; 
             });
 
             setFilteredTopics(filtered.slice(0, 5));
-            setIsAnalyzing(false);
-        }, 600); 
+            setIsAnalyzing(false); // Libera assim que terminar, sem esperar timer artificial
+        }, 0); 
 
         return () => clearTimeout(timer);
     }, [simulations, allQuestions, scope, topicSort]);
