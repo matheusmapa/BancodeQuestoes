@@ -1434,7 +1434,22 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return { total, correct };
     }, [simulations, allQuestions]);
 
-    // --- 2. CÁLCULO BRUTO DE TODOS OS TÓPICOS (Só roda se os DADOS mudarem) ---
+    // --- 2. DADOS DO GRÁFICO DE EVOLUÇÃO (Últimos 10 Simulados) ---
+    const evolutionData = useMemo(() => {
+        // Pega apenas simulados finalizados
+        const finished = simulations.filter(s => s.status === 'finished');
+        // Pega os 10 mais recentes (já estão ordenados por ID decrescente no Dashboard, então invertemos para o gráfico ficar cronológico)
+        const last10 = finished.slice(0, 10).reverse();
+        
+        return last10.map(sim => {
+            const pct = sim.total > 0 ? Math.round((sim.correct / sim.total) * 100) : 0;
+            // Pega só dia/mês para caber no gráfico
+            const shortDate = sim.date.split('/').slice(0, 2).join('/'); 
+            return { id: sim.id, date: shortDate, percentage: pct, total: sim.total };
+        });
+    }, [simulations]);
+
+    // --- 3. CÁLCULO BRUTO DE TODOS OS TÓPICOS ---
     const allTopicsRaw = useMemo(() => {
         if (simulations.length === 0 || allQuestions.length === 0) return [];
 
@@ -1464,9 +1479,9 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         }));
     }, [simulations, allQuestions]);
 
-    // --- 3. FILTRO E ORDENAÇÃO (Roda instantaneamente quando você clica nos botões) ---
+    // --- 4. FILTRO E ORDENAÇÃO ---
     const filteredTopics = useMemo(() => {
-        let filtered = [...allTopicsRaw]; // Cria uma cópia para não alterar o original
+        let filtered = [...allTopicsRaw]; 
 
         if (scope !== 'Todas') {
             filtered = filtered.filter(t => t.area === scope);
@@ -1480,12 +1495,9 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return filtered.slice(0, 5);
     }, [allTopicsRaw, scope, topicSort]);
 
-    // --- 4. ESTADO DE LOADING REAL ---
-    // Só mostra carregando se realmente não tiver dados do banco ainda
     const isAnalyzing = allQuestions.length === 0;
 
-
-    // Ordenação das Áreas (Mantida igual)
+    // Ordenação das Áreas
     const sortedAreas = useMemo(() => {
         const areasWithStats = areasBase.map(area => {
             const st = detailedStats.byArea[area.title] || { total: 0, correct: 0 };
@@ -1515,6 +1527,222 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
             prev.includes(topicName) ? prev.filter(t => t !== topicName) : [...prev, topicName]
         );
     };
+
+    return (
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto pb-10 relative">
+             
+             {/* MODAL DE CONFIGURAÇÃO DO TREINO */}
+             {trainModalOpen && (
+                 <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                     <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+                         <div className="flex justify-between items-center mb-6">
+                             <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Target className="text-blue-600"/> Configurar Treino</h3>
+                             <button onClick={() => setTrainModalOpen(false)}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                         </div>
+                         
+                         <div className="mb-6">
+                             <label className="block text-sm font-bold text-slate-700 mb-3">Quantidade de Questões</label>
+                             <div className="flex flex-wrap gap-2">
+                                 {[10, 20, 30, 40, 50].map(qtd => (
+                                     <button 
+                                        key={qtd}
+                                        onClick={() => setTrainQuantity(qtd)}
+                                        className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${trainQuantity === qtd ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                     >
+                                         {qtd}
+                                     </button>
+                                 ))}
+                             </div>
+                         </div>
+
+                         <div className="mb-8">
+                             <label className="block text-sm font-bold text-slate-700 mb-3">Temas Selecionados</label>
+                             <div className="bg-gray-50 rounded-xl p-2 max-h-48 overflow-y-auto space-y-1 border border-gray-200">
+                                 {filteredTopics.map(topic => (
+                                     <div key={topic.name} onClick={() => toggleTrainTopic(topic.name)} className="flex items-center gap-3 p-3 rounded-lg hover:bg-white cursor-pointer transition-colors">
+                                         <div className={selectedTrainTopics.includes(topic.name) ? "text-blue-600" : "text-gray-300"}>
+                                             {selectedTrainTopics.includes(topic.name) ? <CheckSquare size={20} /> : <Square size={20} />}
+                                         </div>
+                                         <span className="text-sm font-medium text-slate-700">{topic.name}</span>
+                                     </div>
+                                 ))}
+                             </div>
+                         </div>
+
+                         <button 
+                             onClick={handleConfirmTrain}
+                             disabled={selectedTrainTopics.length === 0}
+                             className="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                         >
+                             <Play size={20} fill="currentColor" /> Começar Simulado
+                         </button>
+                     </div>
+                 </div>
+             )}
+
+             <div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold text-slate-900">Desempenho Detalhado</h1></div>
+             
+             {/* STATS GERAIS E ÚLTIMOS 7 DIAS */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center">
+                    <h2 className="text-lg font-semibold text-slate-600 mb-2">Aproveitamento Geral</h2>
+                    <div className="text-5xl font-bold text-blue-600 mb-2">{globalPercentage}%</div>
+                    <p className="text-gray-400">{totalCorrect} acertos de {totalQuestions} questões</p>
+                </div>
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-5 text-purple-600"><Calendar size={100} /></div>
+                    <h2 className="text-lg font-semibold text-slate-600 mb-4 relative z-10">Últimos 7 Dias</h2>
+                    <div className="flex justify-around items-center relative z-10">
+                        <div>
+                            <div className="text-3xl font-bold text-slate-800">{statsLast7Days.total}</div>
+                            <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mt-1">Feitas</p>
+                        </div>
+                        <div className="w-px h-12 bg-gray-100"></div>
+                        <div>
+                            <div className="text-3xl font-bold text-emerald-600">{statsLast7Days.correct}</div>
+                            <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mt-1">Acertos</p>
+                        </div>
+                    </div>
+                </div>
+             </div>
+
+             {/* GRÁFICO DE EVOLUÇÃO (NOVO) */}
+             {evolutionData.length > 1 && (
+                 <div className="mb-8 bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
+                     <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-6">
+                        <TrendingUp size={24} className="text-blue-600" /> 
+                        Evolução (Últimos Simulados)
+                     </h2>
+                     <div className="h-48 flex items-end justify-between gap-2 px-2">
+                         {evolutionData.map((data, i) => (
+                             <div key={data.id} className="flex flex-col items-center flex-1 group relative">
+                                 {/* Tooltip */}
+                                 <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none whitespace-nowrap z-10">
+                                     {data.percentage}% ({data.total} Questões)
+                                 </div>
+                                 
+                                 {/* Barra */}
+                                 <div 
+                                     className={`w-full max-w-[40px] rounded-t-lg transition-all duration-500 relative ${
+                                        data.percentage >= 80 ? 'bg-emerald-400 group-hover:bg-emerald-500' : 
+                                        data.percentage >= 50 ? 'bg-blue-400 group-hover:bg-blue-500' : 
+                                        'bg-orange-400 group-hover:bg-orange-500'
+                                     }`}
+                                     style={{ height: `${Math.max(data.percentage, 5)}%` }} // Mínimo 5% para a barra aparecer
+                                 ></div>
+                                 
+                                 {/* Data */}
+                                 <span className="text-[10px] text-gray-400 mt-2 font-bold">{data.date}</span>
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
+
+             {/* RADAR DE DESEMPENHO */}
+             <div className="mb-10 bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 mb-6">
+                    <Activity size={24} className="text-blue-600" /> 
+                    Radar de Desempenho
+                </h2>
+
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
+                    <div className="flex bg-gray-100/50 rounded-xl p-1 overflow-x-auto max-w-full no-scrollbar">
+                        <button onClick={() => setScope('Todas')} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === 'Todas' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Todas</button>
+                        {areasBase.map(a => (
+                            <button key={a.id} onClick={() => setScope(a.title)} className={`px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${scope === a.title ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{a.title}</button>
+                        ))}
+                    </div>
+
+                    <button 
+                        onClick={() => setTopicSort(prev => prev === 'worst' ? 'best' : 'worst')} 
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border transition-colors ${topicSort === 'worst' ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}
+                    >
+                        {topicSort === 'worst' ? 
+                            <><TrendingDown size={18}/> Piores temas</> : 
+                            <><TrendingUp size={18}/> Melhores temas</>
+                        }
+                    </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-2xl border border-gray-200 overflow-hidden mb-6 min-h-[200px]">
+                    {isAnalyzing ? (
+                        <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 gap-3">
+                            <Loader2 size={32} className="animate-spin text-blue-500" />
+                            <span className="font-medium animate-pulse">Carregando dados...</span>
+                        </div>
+                    ) : filteredTopics.length > 0 ? (
+                        <div className="divide-y divide-gray-200">
+                            {filteredTopics.map((topic, i) => (
+                                <div key={i} className="p-4 flex items-center justify-between hover:bg-white transition-colors">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-bold text-slate-800">{i + 1}. {topic.name}</span>
+                                            {scope === 'Todas' && <span className="text-[10px] uppercase font-bold text-gray-400 bg-white border border-gray-200 px-1.5 py-0.5 rounded">{topic.area}</span>}
+                                        </div>
+                                        <div className="text-xs text-gray-500 font-medium">{topic.correct} acertos em {topic.total} questões</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className={`text-lg font-bold ${topic.percentage >= 80 ? 'text-emerald-600' : topic.percentage < 50 ? 'text-red-600' : 'text-blue-600'}`}>{topic.percentage}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 italic p-4 text-center">
+                            <p>Nenhum dado suficiente encontrado para esta seleção.</p>
+                            <span className="text-xs mt-2">Resolva mais questões desta área para ver estatísticas.</span>
+                        </div>
+                    )}
+                </div>
+
+                <button 
+                    onClick={handleOpenTrainModal}
+                    disabled={isAnalyzing || filteredTopics.length === 0}
+                    className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 px-8 rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-transform active:scale-95 mx-auto md:mx-0"
+                >
+                    <PlayCircle size={20} />
+                    Treinar estes temas
+                </button>
+             </div>
+
+             {/* ÁREAS OVERVIEW */}
+             <div className="mt-12">
+                 <div className="flex items-center justify-between mb-6">
+                     <h2 className="text-xl font-bold text-slate-800">Desempenho por Área</h2>
+                     <select 
+                        value={areaSort} 
+                        onChange={(e) => setAreaSort(e.target.value)}
+                        className="bg-white border border-gray-200 text-slate-600 text-sm font-bold py-2 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     >
+                         <option value="default">Padrão</option>
+                         <option value="best">Melhor Desempenho</option>
+                         <option value="worst">Pior Desempenho</option>
+                     </select>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     {sortedAreas.map(area => (
+                         <div key={area.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className={`p-2 rounded-lg ${area.color} bg-opacity-10`}><area.icon size={20} /></div>
+                                <h3 className="font-bold text-slate-800">{area.title}</h3>
+                            </div>
+                            <div>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className={`text-2xl font-bold ${area.percentage >= 80 ? 'text-emerald-600' : area.percentage < 50 ? 'text-red-600' : 'text-slate-700'}`}>{area.percentage}%</span>
+                                    <span className="text-xs text-gray-400">{area.stats.correct}/{area.stats.total}</span>
+                                </div>
+                                <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                                    <div className={`h-2 rounded-full ${area.color.split(' ')[0].replace('bg-', 'bg-')}`} style={{ width: `${area.percentage}%` }} ></div>
+                                </div>
+                            </div>
+                        </div>
+                     ))}
+                 </div>
+             </div>
+        </div>
+    )
+}
 
     return (
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-5xl mx-auto pb-10 relative">
