@@ -6,11 +6,26 @@ import {
 import ReportModal from './components/ReportModal';
 
 export default function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress, addToast }) {
-  // Inicializa os estados com base no initialData
-  const [questions] = useState(() => initialData ? initialData.questionsData : []); 
-  const [userAnswers, setUserAnswers] = useState(() => initialData ? initialData.answersData : {}); 
-  const [currentIndex, setCurrentIndex] = useState(() => initialData ? initialData.currentIndex : 0);
+  // --- CORREÇÃO PRINCIPAL ---
+  // Não usamos mais useState para 'questions'. Lemos direto de initialData.
+  // Assim, se initialData demorar um pouco pra chegar, a variável atualiza sozinha.
+  const questions = initialData?.questionsData || [];
   
+  // Para userAnswers e currentIndex, precisamos de state (pois mudam), 
+  // mas vamos garantir que eles existam mesmo se initialData vier vazio no começo.
+  const [userAnswers, setUserAnswers] = useState(initialData?.answersData || {}); 
+  const [currentIndex, setCurrentIndex] = useState(initialData?.currentIndex || 0);
+
+  // Efeito para Sincronizar dados caso cheguem "atrasados" (Resume Exam ou Race Condition)
+  useEffect(() => {
+    if (initialData) {
+        // Se as respostas no estado estiverem vazias mas no initialData tiver coisa, atualiza
+        setUserAnswers(prev => Object.keys(prev).length === 0 ? (initialData.answersData || {}) : prev);
+        // O mesmo para o índice (se estiver no 0 e o salvo for outro)
+        setCurrentIndex(prev => prev === 0 ? (initialData.currentIndex || 0) : prev);
+    }
+  }, [initialData]);
+
   const [selectedOption, setSelectedOption] = useState(null);
   const [status, setStatus] = useState('unanswered'); 
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -24,9 +39,7 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
      }
   }, [questions, userAnswers, currentIndex, onUpdateProgress, initialData?.id]);
 
-  // Atualiza a seleção visual ao trocar de questão
   useEffect(() => {
-    // Verifica se questions[currentIndex] existe antes de acessar
     if (questions && questions[currentIndex]) {
         if (userAnswers[currentIndex]) {
           setSelectedOption(userAnswers[currentIndex]);
@@ -41,8 +54,8 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
 
   const currentQuestion = questions[currentIndex];
 
-  // --- PROTEÇÃO CONTRA O ERRO "UNDEFINED" ---
-  // Se os dados ainda não chegaram ou o índice for inválido, mostra loading
+  // --- PROTEÇÃO DE LOADING ---
+  // Se ainda não tiver questão carregada, mostra o loading e espera os dados chegarem
   if (!currentQuestion) {
       return (
           <div className="min-h-screen flex items-center justify-center bg-gray-50 pb-20">
@@ -92,7 +105,6 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
       onPause(questions, userAnswers, currentIndex, initialData?.id); 
   };
   
-  // NavBar Mobile
   const MobileNavBar = () => (
       <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-3 z-50 flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:hidden">
           <button onClick={handlePrevious} disabled={currentIndex === 0} className="p-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 rounded-xl bg-gray-50 border border-gray-100"><ArrowLeft size={24} /></button>
@@ -109,11 +121,9 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-32 md:pb-0 relative">
-      {/* Modais */}
       <ReportModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="error" addToast={addToast} />
       <ReportModal isOpen={suggestionModalOpen} onClose={() => setSuggestionModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="suggestion" category={suggestionType} addToast={addToast} />
       
-      {/* Header Fixo */}
       <div className="flex items-center justify-between mb-6 sticky top-14 md:top-0 bg-gray-50 z-30 py-4 border-b md:border-none border-gray-200">
           <div className="flex gap-2">
               <button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100">
@@ -131,14 +141,9 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
           </div>
       </div>
       
-      {/* Área Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Coluna da Questão */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200 relative">
-              
-              {/* Topo do Card: Metadados e Ações */}
               <div className="flex justify-between items-start mb-4 border-b border-gray-100 pb-4">
                   <div className="flex flex-wrap gap-2 items-center">
                       {(!currentQuestion.institution || !currentQuestion.year) && (
@@ -159,10 +164,8 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
                   </div>
               </div>
 
-              {/* Texto do Enunciado */}
               <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6 font-medium whitespace-pre-line">{currentQuestion.text}</p>
               
-              {/* Imagens */}
               {(currentQuestion.images?.length > 0 || currentQuestion.imageUrl) && (
                   <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {(currentQuestion.images || [currentQuestion.imageUrl]).map((img, idx) => (
@@ -175,7 +178,6 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
               )}
           </div>
 
-          {/* Alternativas */}
           <div className="space-y-3">
               {currentQuestion.options.map((option) => { 
                   let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; 
@@ -209,7 +211,6 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
               })}
           </div>
           
-          {/* Navegação Desktop */}
           <div className="hidden md:flex justify-between items-center pt-4 mt-4 border-t border-gray-100">
               <button onClick={handlePrevious} disabled={currentIndex === 0} className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"><ArrowLeft size={20} /> Anterior</button>
               
@@ -223,7 +224,6 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
           </div>
         </div>
         
-        {/* Coluna de Feedback (Comentário) */}
         <div className="lg:col-span-1 space-y-6">
            {status !== 'unanswered' && (
                <div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
@@ -245,7 +245,6 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
   );
 }
 
-// Botão Auxiliar de Copiar
 export function CopyButton({ text, className }) {
     const [isCopied, setIsCopied] = useState(false);
     const handleCopy = (e) => {
