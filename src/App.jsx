@@ -1656,7 +1656,7 @@ function AddQuestionView({ onBack, addToast }) {
             setIsSaving(false); return; 
         }
         const validOptions = options.filter(opt => opt.text.trim() !== '');
-        if (!validOptions.find(o => o.id => correctOptionId)) { 
+        if (!validOptions.find(o => o.id === correctOptionId)) { 
             addToast('Erro', 'A alternativa correta selecionada está vazia.', 'error');
             setIsSaving(false); return; 
         }
