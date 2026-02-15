@@ -650,94 +650,106 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  const handleLaunchExam = (filters = {}, limit = 5) => {
-    // 1. Filtra as questões válidas do banco
+  // Substitua todo o handleLaunchExam por este:
+const handleLaunchExam = (filters = {}, limit = 5) => {
+    // 1. Filtra todas as questões possíveis baseadas no filtro
     const validQuestionsPool = allQuestions.filter(q => {
-        if (!q || !q.id) return false; // Proteção extra contra nulos
+        if (!q || !q.id) return false; // Segurança contra itens nulos
         if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
         if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
         return true;
     });
 
     if (validQuestionsPool.length === 0) {
-      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros.", type: "info" });
+      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros no banco.", type: "info" });
       return;
     }
 
     let finalSelection = [];
 
-    // --- MODO 1: TÓPICOS ESPECÍFICOS ---
-    if (filters.topics && filters.topics.length > 0) {
-        const questionsByTopic = {};
-        filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
+    // Tenta a lógica de distribuição balanceada (Novas vs Antigas)
+    try {
+        if (filters.topics && filters.topics.length > 0) {
+            // MODO 1: TÓPICOS ESPECÍFICOS
+            const questionsByTopic = {};
+            filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
 
-        validQuestionsPool.forEach(q => {
-            if (questionsByTopic[q.topic]) {
-                if (excludedIds.has(q.id)) {
-                    questionsByTopic[q.topic].old.push(q);
-                } else {
-                    questionsByTopic[q.topic].new.push(q);
+            validQuestionsPool.forEach(q => {
+                // Só adiciona se o tópico existir na chave (segurança extra)
+                if (questionsByTopic[q.topic]) {
+                    if (excludedIds.has(q.id)) {
+                        questionsByTopic[q.topic].old.push(q);
+                    } else {
+                        questionsByTopic[q.topic].new.push(q);
+                    }
                 }
-            }
-        });
-
-        const targetPerTopic = Math.ceil(limit / filters.topics.length);
-        let backupPool = [];
-
-        Object.keys(questionsByTopic).forEach(topic => {
-            const { new: newQs, old: oldQs } = questionsByTopic[topic];
-            const shuffledNew = newQs.sort(() => 0.5 - Math.random());
-            const takeNew = shuffledNew.slice(0, targetPerTopic);
-            finalSelection.push(...takeNew);
-            const needed = targetPerTopic - takeNew.length;
-            if (needed > 0) {
-                const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
-                const takeOld = shuffledOld.slice(0, needed);
-                finalSelection.push(...takeOld);
-                backupPool.push(...shuffledOld.slice(needed));
-            } else {
-                 backupPool.push(...oldQs);
-            }
-            backupPool.push(...shuffledNew.slice(targetPerTopic));
-        });
-
-        if (finalSelection.length < limit && backupPool.length > 0) {
-            const missing = limit - finalSelection.length;
-            backupPool.sort((a, b) => {
-                const aIsOld = excludedIds.has(a.id);
-                const bIsOld = excludedIds.has(b.id);
-                return aIsOld === bIsOld ? 0.5 - Math.random() : aIsOld ? 1 : -1;
             });
-            finalSelection.push(...backupPool.slice(0, missing));
-        }
-        
-        // LIMITAR e EMBARALHAR
-        finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
 
-    } else {
-        // --- MODO 2: GERAL/ALEATÓRIO ---
-        const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
-        const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
-        finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
-        if (finalSelection.length < limit) {
-            const missing = limit - finalSelection.length;
-            finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
+            const targetPerTopic = Math.ceil(limit / filters.topics.length);
+            let backupPool = [];
+
+            Object.keys(questionsByTopic).forEach(topic => {
+                const { new: newQs, old: oldQs } = questionsByTopic[topic];
+                const shuffledNew = newQs.sort(() => 0.5 - Math.random());
+                const takeNew = shuffledNew.slice(0, targetPerTopic);
+                finalSelection.push(...takeNew);
+
+                const needed = targetPerTopic - takeNew.length;
+                if (needed > 0) {
+                    const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
+                    const takeOld = shuffledOld.slice(0, needed);
+                    finalSelection.push(...takeOld);
+                    backupPool.push(...shuffledOld.slice(needed));
+                } else {
+                    backupPool.push(...oldQs);
+                }
+                backupPool.push(...shuffledNew.slice(targetPerTopic));
+            });
+
+            // Completa com o backup se faltou
+            if (finalSelection.length < limit && backupPool.length > 0) {
+                const missing = limit - finalSelection.length;
+                finalSelection.push(...backupPool.sort(() => 0.5 - Math.random()).slice(0, missing));
+            }
+            // Embaralha o resultado final
+            finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
+
+        } else {
+            // MODO 2: GERAL/ALEATÓRIO
+            const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
+            const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
+            
+            finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
+            if (finalSelection.length < limit) {
+                const missing = limit - finalSelection.length;
+                finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
+            }
+            finalSelection = finalSelection.sort(() => 0.5 - Math.random());
         }
-        finalSelection = finalSelection.sort(() => 0.5 - Math.random());
+    } catch (err) {
+        console.error("Erro na lógica de distribuição:", err);
     }
 
-    // --- PROTEÇÃO FINAL ---
-    // Removemos qualquer undefined que possa ter entrado
+    // --- LIMPEZA DE SEGURANÇA ---
     finalSelection = finalSelection.filter(item => item && item.id);
 
+    // --- FAILSAFE (A SALVAÇÃO) ---
+    // Se a lógica acima falhou e retornou vazio, mas TEMOS questões válidas,
+    // ignoramos a distribuição complexa e pegamos qualquer questão válida.
+    if (finalSelection.length === 0 && validQuestionsPool.length > 0) {
+        console.warn("Usando fallback de seleção direta");
+        finalSelection = validQuestionsPool.sort(() => 0.5 - Math.random()).slice(0, limit);
+    }
+
+    // Se mesmo assim estiver vazio, aí sim é erro real
     if (finalSelection.length === 0) {
-        setNotification({ title: "Erro", message: "Erro ao selecionar questões. Tente novamente.", type: "error" });
-        return;
+      setNotification({ title: "Erro Crítico", message: "Erro ao selecionar questões. Tente novamente.", type: "error" });
+      return;
     }
 
     setActiveExamData({ questionsData: finalSelection, answersData: {}, currentIndex: 0, id: Date.now() });
     handleViewSwitch('question_mode');
-  };
+};
 
   // --- NOVA FUNÇÃO: LANÇAR CADERNO DE ERROS ---
   const handleLaunchSmartExam = (questionsList) => {
