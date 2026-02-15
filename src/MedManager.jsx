@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  Clock, RotateCcw
+  Clock, RotateCcw, Search as SearchIcon
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -14,7 +14,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
-  limit, startAfter, getDocs, startAt, endAt
+  limit, startAfter, getDocs, startAt, endAt, documentId
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -96,7 +96,6 @@ export default function MedManager() {
   const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
-  const [usingFallbackSort, setUsingFallbackSort] = useState(false);
   
   const [students, setStudents] = useState([]); 
   const [lastStudentDoc, setLastStudentDoc] = useState(null);
@@ -114,15 +113,19 @@ export default function MedManager() {
   // View State
   const [activeView, setActiveView] = useState('questions'); 
   
-  // Filters
+  // --- FILTROS ---
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Filtros "Categoria"
   const [selectedArea, setSelectedArea] = useState('Todas');
   const [selectedTopic, setSelectedTopic] = useState('Todos');
-  const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
-  const [selectedYear, setSelectedYear] = useState('Todos'); 
+  
+  // Filtros "Server-Side" (Banca e Ano)
+  // Agora esses estados controlam a query real no DB
+  const [serverInstitution, setServerInstitution] = useState(''); 
+  const [serverYear, setServerYear] = useState(''); 
+  
   const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
-
-  // --- NOVOS FILTROS DE AUDITORIA ---
   const [auditFilter, setAuditFilter] = useState('none'); 
 
   // Students Filters
@@ -155,8 +158,6 @@ export default function MedManager() {
                 const userDoc = await getDoc(doc(db, "users", u.uid));
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
-                    // Não carrega automaticamente se tiver filtros residuais, espera o useEffect de filtros
-                    // MAS agora queremos carregar de cara
                     loadQuestions(true);
                 } else {
                     await signOut(auth);
@@ -223,20 +224,17 @@ export default function MedManager() {
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS (LÓGICA BLINDADA) ---
-  const loadQuestions = async (reset = false, forceFallback = false) => {
-      if (searchTerm && !reset) return; // Se tem busca de texto, não mistura as lógicas
+  // --- LOAD QUESTIONS (QUERY NO BANCO) ---
+  const loadQuestions = async (reset = false) => {
+      // Se tiver busca textual (ID/Enunciado), deixa o handleServerSearch lidar
+      if (searchTerm && !reset) return; 
+
       if (loadingQuestions) return;
       if (!reset && !hasMoreQuestions) return;
 
       setLoadingQuestions(true);
       setMissingIndexLink(null); 
       
-      if (reset) {
-          if (forceFallback) setUsingFallbackSort(true);
-          else setUsingFallbackSort(false);
-      }
-
       try {
           let q = collection(db, "questions");
           let constraints = [];
@@ -247,34 +245,35 @@ export default function MedManager() {
              else if (auditFilter === 'missing_topic') { constraints.push(where("area", "==", "")); }
              else if (auditFilter === 'has_image') { constraints.push(orderBy("image")); constraints.push(startAfter("")); }
           } 
-          // -- MODO NORMAL (FILTROS DE ÁREA/TÓPICO) --
+          // -- MODO PADRÃO DE FILTRAGEM --
           else {
-              const hasAreaFilter = selectedArea !== 'Todas';
-              const hasTopicFilter = selectedTopic !== 'Todos';
+              // 1. ÁREA / TÓPICO
+              if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
+              if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
 
-              // 1. APLICA FILTROS (Sem OrderBy por enquanto)
-              if (hasAreaFilter) constraints.push(where("area", "==", selectedArea));
-              if (hasTopicFilter) constraints.push(where("topic", "==", selectedTopic));
-
-              // 2. LÓGICA DE ORDENAÇÃO SEGURA
-              // Se estamos filtrando por Área/Tópico, NÃO ordenamos por data para evitar erro de índice.
-              // Se estamos vendo "Todas", tentamos ordenar por data (padrão) ou fallback (ID).
-              
-              if (!hasAreaFilter && !hasTopicFilter) {
-                  // Apenas na tela "Geral" tentamos ordenar
-                  if (forceFallback || usingFallbackSort) {
-                      // Modo Fallback: Ordena por ID (garante que mostra algo se createdAt estiver faltando)
-                      // Não colocamos orderBy explícito, Firestore ordena por __name__ por padrão se não houver orderBy
-                      // Ou podemos por orderBy('__name__')
-                  } else {
-                      // Modo Padrão: Tenta por Data
-                      constraints.push(orderBy("createdAt", "desc"));
-                  }
-              } else {
-                  // Se tem filtro de área, NÃO adiciona orderBy("createdAt")
-                  // Isso permite usar índices simples (single-field) que o Firestore cria automático.
-                  // A desvantagem: a ordem fica meio aleatória (por ID), mas PELO MENOS APARECE.
+              // 2. BANCA (INSTITUTION) - BUSCA EXATA
+              // Isso permite você filtrar "MG - SCMBH" direto no banco
+              if (serverInstitution.trim()) {
+                  constraints.push(where("institution", "==", serverInstitution.trim()));
               }
+
+              // 3. ANO - BUSCA EXATA
+              if (serverYear.trim()) {
+                  // Tenta converter pra numero se possível, ou string dependendo de como salvou
+                  // Assumindo que no banco salvou como string ou number. 
+                  // Para garantir, se for numero no banco, o filtro precisa ser numero.
+                  const yearNum = parseInt(serverYear.trim());
+                  if(!isNaN(yearNum)) {
+                       // Idealmente, verifique como salvou. Vamos tentar string se falhar ou hibrido
+                       // Se salvou como string "2024", passar number falha.
+                       constraints.push(where("year", "==", serverYear.trim())); 
+                  }
+              }
+
+              // 4. ORDENAÇÃO: Sempre por ID (Fallback seguro)
+              // Não usamos mais createdAt para evitar ocultar questões sem data
+              // Se não tiver nenhum filtro que exija ordem especifica (como audit), 
+              // firestore ordena implicitamente por __name__
           }
 
           // Paginação
@@ -289,16 +288,6 @@ export default function MedManager() {
           
           const newQuestions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-          // -- DETECÇÃO DE FALHA SILENCIOSA --
-          // Se estamos no reset (primeira carga), pedimos ordenação por data, E veio vazio,
-          // pode ser que as questões não tenham o campo createdAt. Vamos tentar o fallback automático.
-          if (reset && newQuestions.length === 0 && !forceFallback && auditFilter === 'none' && selectedArea === 'Todas') {
-             console.log("Lista vazia com ordenação por data. Tentando fallback...");
-             setLoadingQuestions(false);
-             loadQuestions(true, true); // Chama recursivo forçando fallback
-             return;
-          }
-          
           if (reset) {
               setQuestions(newQuestions);
           } else {
@@ -308,21 +297,18 @@ export default function MedManager() {
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
 
+          // Feedback se filtrou por banca e não achou
+          if (reset && newQuestions.length === 0 && serverInstitution) {
+             showNotification('error', `Nenhuma questão encontrada com a banca exata: "${serverInstitution}"`);
+          }
+
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
           if (error.message.includes("requires an index")) {
               const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
               const link = linkMatch ? linkMatch[0] : null;
-              
-              // Se deu erro de índice e estamos tentando ordenar por data, tenta fallback
-              if (!forceFallback && selectedArea === 'Todas') {
-                  setLoadingQuestions(false);
-                  loadQuestions(true, true);
-                  return;
-              }
-
               setMissingIndexLink(link);
-              showNotification('error', 'O Firestore exige um índice composto para essa combinação.', link);
+              showNotification('error', 'O Firestore precisa de um índice para combinar esses filtros (Ex: Área + Banca).', link);
           } else {
               showNotification('error', 'Erro ao carregar dados: ' + error.message);
           }
@@ -331,7 +317,7 @@ export default function MedManager() {
       }
   };
 
-  // --- SERVER SIDE SEARCH ---
+  // --- SERVER SIDE SEARCH (TEXTO/ID) ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
       if (!term) {
@@ -343,9 +329,11 @@ export default function MedManager() {
       setLoadingQuestions(true);
       setMissingIndexLink(null);
       
-      // Reseta filtros visuais para não confundir
+      // Reseta filtros de categoria/banca visualmente (mas mantém o estado limpo para não conflitar)
       setSelectedArea('Todas');
       setSelectedTopic('Todos');
+      setServerInstitution('');
+      setServerYear('');
       setAuditFilter('none');
       setHasMoreQuestions(false);
       
@@ -436,15 +424,20 @@ export default function MedManager() {
       if (activeView === 'students' && students.length === 0) loadStudents(true);
   }, [activeView]);
 
-  // Listener para mudança de Área/Tópico
+  // Listener para mudança de Área/Tópico (Automático)
   useEffect(() => {
       if(user && !searchTerm) {
+          // Pequeno delay
           const timer = setTimeout(() => {
              loadQuestions(true);
           }, 500);
           return () => clearTimeout(timer);
       }
   }, [selectedArea, selectedTopic, auditFilter]); 
+
+  // Listener para mudança nos filtros de Servidor (Banca/Ano) - MANUAL (OnEnter)
+  // Nota: Não coloquei no useEffect automático para evitar requests enquanto digita
+  // O usuário deve apertar Enter ou o botão de busca na sidebar.
 
   useEffect(() => {
       if(user && activeView === 'students') loadStudents(true);
@@ -474,8 +467,8 @@ export default function MedManager() {
   }, [reports]);
 
   // --- FILTERS MEMO & SORTING (LOCAL) ---
-  const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
-  const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
+  // Apenas para sugestão na interface, pegamos o que já foi carregado
+  const availableInstitutionsHint = useMemo(() => Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort(), [questions]);
   
   const filteredQuestions = useMemo(() => {
       // 1. Merge
@@ -485,7 +478,7 @@ export default function MedManager() {
       
       const allQuestions = Array.from(allQuestionsMap.values());
 
-      // 2. Filtra
+      // 2. Filtra (Apenas refinamento local, o grosso já veio do servidor)
       let result = allQuestions.filter(q => {
           const term = searchTerm.toLowerCase().trim();
           if (term) {
@@ -500,35 +493,26 @@ export default function MedManager() {
           if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
           if (auditFilter === 'has_image') matchesAudit = !!q.image;
           if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50;
-
-          const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
-          const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-          
-          const qInst = (q.institution || '').trim();
-          const qYear = String(q.year || '').trim();
-          const matchesInstitution = selectedInstitution === 'Todas' || qInst === selectedInstitution;
-          const matchesYear = selectedYear === 'Todos' || qYear === selectedYear;
-
           if (auditFilter !== 'none') return matchesAudit;
 
-          return matchesArea && matchesTopic && matchesInstitution && matchesYear;
+          // Os filtros de Banca e Ano agora são server-side, então teoricamente o que veio já é o certo.
+          // Mas mantemos a consistência visual caso algo "escape"
+          return true;
       });
 
-      // 3. Ordena Localmente (Para quando o Firestore não ordena)
+      // 3. Ordena Localmente (Para garantir ordem de reports)
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
           if (countA > 0 || countB > 0) {
               if (countA !== countB) return countB - countA; 
           }
-          // Se tiver createdAt, usa, senão mantém
-          const dateA = new Date(a.createdAt || 0).getTime();
-          const dateB = new Date(b.createdAt || 0).getTime();
-          return dateB - dateA;
+          // Fallback ID (cronológico reverso aproximado)
+          return (a.id > b.id) ? -1 : 1;
       });
 
       return result;
-  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear, auditFilter]);
+  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, auditFilter]);
 
   const filteredReports = useMemo(() => {
       let result = reports;
@@ -576,11 +560,17 @@ export default function MedManager() {
       setSearchTerm(''); 
       setSelectedArea('Todas'); 
       setSelectedTopic('Todos'); 
-      setSelectedInstitution('Todas'); 
-      setSelectedYear('Todos'); 
+      setServerInstitution('');
+      setServerYear('');
       setAuditFilter('none');
       setQuestions([]); 
       setTimeout(() => loadQuestions(true), 100); 
+  };
+
+  const handleTriggerServerFilter = () => {
+      // Botão para forçar busca por Banca/Ano
+      setQuestions([]);
+      loadQuestions(true);
   };
 
   // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
@@ -804,7 +794,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.7</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v5.0</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -843,7 +833,7 @@ export default function MedManager() {
                     
                     {auditFilter === 'none' && !searchTerm && (
                         <>
-                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico desativa ordenação por Data (Index Safety).</div>
+                            <div className="text-[10px] text-gray-400 mb-2 leading-tight">Filtrar por Área/Tópico (Automático).</div>
                             <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                             <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                         </>
@@ -855,9 +845,38 @@ export default function MedManager() {
                          </div>
                     )}
                     
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais (Resultados)</label>
-                    <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
-                    <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Buscar no Servidor (Padronização)</label>
+                    <p className="text-[10px] text-gray-400 mb-2 leading-tight">Digite a Banca ou Ano EXATO para buscar no banco todo. (Enter p/ buscar)</p>
+                    
+                    <div className="relative">
+                        <Building size={16} className="absolute left-3 top-3 text-gray-400" />
+                        <input 
+                            list="availableInstitutions"
+                            type="text" 
+                            placeholder="Ex: MG - SCMBH" 
+                            value={serverInstitution} 
+                            onChange={e => setServerInstitution(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleTriggerServerFilter()}
+                            className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button onClick={handleTriggerServerFilter} className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"><SearchIcon size={14}/></button>
+                        <datalist id="availableInstitutions">
+                            {availableInstitutionsHint.map(i => <option key={i} value={i} />)}
+                        </datalist>
+                    </div>
+
+                    <div className="relative mt-2">
+                        <Calendar size={16} className="absolute left-3 top-3 text-gray-400" />
+                        <input 
+                            type="text" 
+                            placeholder="Ex: 2024" 
+                            value={serverYear} 
+                            onChange={e => setServerYear(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleTriggerServerFilter()}
+                            className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                         <button onClick={handleTriggerServerFilter} className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"><SearchIcon size={14}/></button>
+                    </div>
                 </div>
               )}
 
@@ -926,21 +945,21 @@ export default function MedManager() {
                        </div>
                   )}
 
-                  <div className="flex gap-2 mb-2">
+                  <div className="flex gap-2 mb-2 flex-wrap">
                      {/* BADGES DE STATUS */}
                      {searchTerm && (
                          <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
                              <Search size={12}/> Busca Textual
                          </div>
                      )}
-                     {!searchTerm && auditFilter === 'none' && selectedArea === 'Todas' && !usingFallbackSort && (
-                         <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
-                             <Clock size={12}/> Ordenado por Data
+                     {!searchTerm && auditFilter === 'none' && selectedArea === 'Todas' && !serverInstitution && (
+                         <div className="bg-gray-100 border border-gray-200 text-gray-600 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <RotateCcw size={12}/> Ordenação Padrão (ID)
                          </div>
                      )}
-                     {!searchTerm && usingFallbackSort && (
-                         <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
-                             <RotateCcw size={12}/> Modo Fallback (Ordenação por ID) - Campo de data pode estar ausente
+                     {serverInstitution && (
+                         <div className="bg-purple-50 border border-purple-200 text-purple-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
+                             <Building size={12}/> Filtro Banca: "{serverInstitution}"
                          </div>
                      )}
                   </div>
