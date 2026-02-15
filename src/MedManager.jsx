@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  RotateCcw, SaveAll, CloudLightning
+  RotateCcw, SaveAll, CloudLightning, Square // Adicionei Square aqui
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -126,11 +126,16 @@ export default function MedManager() {
   const [selectedTopic, setSelectedTopic] = useState('Todos');
   
   // Filtros "Server-Side" (Via Cache)
-  const [serverInstitution, setServerInstitution] = useState(''); 
+  // ALTERAÇÃO: Mudado de string única para array de instituições
+  const [selectedInstitutions, setSelectedInstitutions] = useState([]); 
   const [serverYear, setServerYear] = useState(''); 
   
   const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
   const [auditFilter, setAuditFilter] = useState('none'); 
+
+  // UI State para Modal de Bancas
+  const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
+  const [institutionSearchTerm, setInstitutionSearchTerm] = useState('');
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -181,9 +186,7 @@ export default function MedManager() {
     return () => unsubscribe();
   }, []);
 
-  // --- METADATA SYSTEM (A IDEIA GENIAL) ---
-  
-  // 1. Carregar listas salvas (Rápido, 1 leitura)
+  // --- METADATA SYSTEM ---
   const loadMetadata = async () => {
       try {
           const metaSnap = await getDoc(doc(db, "system", "metadata"));
@@ -197,16 +200,13 @@ export default function MedManager() {
       }
   };
 
-  // 2. Sincronizar listas (Varre o banco e atualiza - Pesado, mas sob demanda)
   const handleSyncDatabaseFilters = async () => {
       if (isSyncingMeta) return;
       setIsSyncingMeta(true);
       
       try {
           showNotification('success', 'Iniciando varredura do banco... Aguarde.');
-          
-          // Busca APENAS os campos necessários para economizar banda (mas ainda conta leituras)
-          const q = query(collection(db, "questions")); // Infelizmente Firestore não tem "select distinct" nativo barato
+          const q = query(collection(db, "questions"));
           const snapshot = await getDocs(q);
           
           const institutionsSet = new Set();
@@ -221,7 +221,6 @@ export default function MedManager() {
           const institutionsList = Array.from(institutionsSet).filter(Boolean).sort();
           const yearsList = Array.from(yearsSet).filter(Boolean).sort().reverse();
           
-          // Salva no documento de sistema
           await setDoc(doc(db, "system", "metadata"), {
               institutions: institutionsList,
               years: yearsList,
@@ -230,9 +229,7 @@ export default function MedManager() {
           
           setCachedInstitutions(institutionsList);
           setCachedYears(yearsList);
-          
           showNotification('success', `Sincronização concluída! ${institutionsList.length} Bancas e ${yearsList.length} Anos encontrados.`);
-          
       } catch (error) {
           console.error("Erro na sync:", error);
           showNotification('error', 'Erro ao sincronizar filtros: ' + error.message);
@@ -316,20 +313,23 @@ export default function MedManager() {
               if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
               if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
 
-              // 2. BANCA (INSTITUTION) - BUSCA EXATA
-              if (serverInstitution.trim()) {
-                  constraints.push(where("institution", "==", serverInstitution.trim()));
+              // 2. BANCA (INSTITUTION) - ALTERAÇÃO PARA MULTI-SELEÇÃO
+              if (selectedInstitutions.length > 0) {
+                  // Se for apenas uma, usa igualdade simples (mais rápido)
+                  if (selectedInstitutions.length === 1) {
+                      constraints.push(where("institution", "==", selectedInstitutions[0]));
+                  } else {
+                      // Se forem várias, usa o operador IN
+                      // O Firestore limita 'IN' a 10 valores.
+                      const safeList = selectedInstitutions.slice(0, 10);
+                      constraints.push(where("institution", "in", safeList));
+                  }
               }
 
               // 3. ANO - BUSCA EXATA
               if (serverYear.trim()) {
-                  const yearNum = parseInt(serverYear.trim());
-                  // Tenta buscar como string (mais comum se veio de JSON) ou numero
-                  // Se o DB estiver misto, isso pode ser um problema, mas vamos assumir string pela consistência do select
                   constraints.push(where("year", "==", serverYear.trim())); 
               }
-
-              // 4. ORDENAÇÃO: Sempre por ID (Fallback seguro)
           }
 
           // Paginação
@@ -383,7 +383,7 @@ export default function MedManager() {
       // Reseta filtros visuais
       setSelectedArea('Todas');
       setSelectedTopic('Todos');
-      setServerInstitution('');
+      setSelectedInstitutions([]); // Limpa as bancas
       setServerYear('');
       setAuditFilter('none');
       setHasMoreQuestions(false);
@@ -391,14 +391,12 @@ export default function MedManager() {
       let foundDocs = [];
 
       try {
-          // 1. Busca ID
           try {
             const docRef = doc(db, "questions", term);
             const docSnap = await getDoc(docRef);
             if (docSnap.exists()) foundDocs.push({ id: docSnap.id, ...docSnap.data() });
           } catch(e) { }
 
-          // 2. Busca Texto (StartAt)
           if (foundDocs.length === 0) {
               const qText = query(
                   collection(db, "questions"),
@@ -483,7 +481,7 @@ export default function MedManager() {
           }, 500);
           return () => clearTimeout(timer);
       }
-  }, [selectedArea, selectedTopic, serverInstitution, serverYear, auditFilter]); 
+  }, [selectedArea, selectedTopic, selectedInstitutions, serverYear, auditFilter]); 
 
 
   useEffect(() => {
@@ -523,7 +521,7 @@ export default function MedManager() {
       
       const allQuestions = Array.from(allQuestionsMap.values());
 
-      // 2. Filtra (Apenas refinamento local, o grosso já veio do servidor)
+      // 2. Filtra (Apenas refinamento local)
       let result = allQuestions.filter(q => {
           const term = searchTerm.toLowerCase().trim();
           if (term) {
@@ -543,14 +541,13 @@ export default function MedManager() {
           return true;
       });
 
-      // 3. Ordena Localmente (Para garantir ordem de reports)
+      // 3. Ordena Localmente
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
           if (countA > 0 || countB > 0) {
               if (countA !== countB) return countB - countA; 
           }
-          // Fallback ID (cronológico reverso aproximado)
           return (a.id > b.id) ? -1 : 1;
       });
 
@@ -580,6 +577,20 @@ export default function MedManager() {
       });
   }, [students, searchTerm, activeView, studentStatusFilter]);
 
+  // Função para toggle de seleção de bancas no modal
+  const toggleInstitutionSelection = (inst) => {
+    setSelectedInstitutions(prev => {
+        if (prev.includes(inst)) {
+            return prev.filter(i => i !== inst);
+        } else {
+            if (prev.length >= 10) {
+                showNotification('error', 'Limite de 10 bancas para filtro simultâneo no Firebase.');
+                return prev;
+            }
+            return [...prev, inst];
+        }
+    });
+  };
 
   // --- ACTIONS ---
   const handleLogout = async () => {
@@ -603,7 +614,7 @@ export default function MedManager() {
       setSearchTerm(''); 
       setSelectedArea('Todas'); 
       setSelectedTopic('Todos'); 
-      setServerInstitution('');
+      setSelectedInstitutions([]); // Limpa Array
       setServerYear('');
       setAuditFilter('none');
       setQuestions([]); 
@@ -890,20 +901,19 @@ export default function MedManager() {
                     </label>
                     <p className="text-[10px] text-gray-400 mb-2 leading-tight">Selecione para filtrar. Use o botão acima se adicionar questões novas.</p>
                     
+                    {/* BOTÃO PARA ABRIR MODAL DE BANCAS */}
                     <div className="relative">
-                        <Building size={16} className="absolute left-3 top-3 text-gray-400" />
-                        <input 
-                            list="cachedInstitutionsList"
-                            type="text" 
-                            placeholder="Selecione a Banca..." 
-                            value={serverInstitution} 
-                            onChange={e => setServerInstitution(e.target.value)}
-                            className="w-full pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        {serverInstitution && <button onClick={() => setServerInstitution('')} className="absolute right-2 top-2 text-gray-400 hover:text-red-500"><X size={14}/></button>}
-                        <datalist id="cachedInstitutionsList">
-                            {cachedInstitutions.map(i => <option key={i} value={i} />)}
-                        </datalist>
+                        <button 
+                            onClick={() => setIsInstitutionModalOpen(true)}
+                            className={`w-full text-left pl-3 pr-3 py-2 border rounded-lg text-sm font-medium outline-none hover:bg-gray-50 transition-colors flex items-center justify-between ${selectedInstitutions.length > 0 ? 'bg-purple-50 border-purple-200 text-purple-700' : 'bg-white border-gray-200 text-gray-500'}`}
+                        >
+                            <span className="truncate">
+                                {selectedInstitutions.length === 0 ? 'Selecionar Bancas...' : 
+                                 selectedInstitutions.length === 1 ? selectedInstitutions[0] : 
+                                 `${selectedInstitutions.length} Bancas Selecionadas`}
+                            </span>
+                            <ChevronDown size={14}/>
+                        </button>
                     </div>
 
                     <div className="relative mt-2">
@@ -992,14 +1002,14 @@ export default function MedManager() {
                              <Search size={12}/> Busca Textual
                          </div>
                      )}
-                     {!searchTerm && auditFilter === 'none' && selectedArea === 'Todas' && !serverInstitution && (
+                     {!searchTerm && auditFilter === 'none' && selectedArea === 'Todas' && selectedInstitutions.length === 0 && (
                          <div className="bg-gray-100 border border-gray-200 text-gray-600 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
                              <RotateCcw size={12}/> Ordenação Padrão (ID)
                          </div>
                      )}
-                     {serverInstitution && (
+                     {selectedInstitutions.length > 0 && (
                          <div className="bg-purple-50 border border-purple-200 text-purple-800 px-3 py-1 rounded-lg flex items-center gap-2 text-xs font-bold">
-                             <Building size={12}/> Filtro Banca: "{serverInstitution}"
+                             <Building size={12}/> Filtro Banca: {selectedInstitutions.length} selecionada(s)
                          </div>
                      )}
                   </div>
@@ -1190,6 +1200,56 @@ export default function MedManager() {
       </main>
 
       {/* --- MODALS --- */}
+
+      {/* INSTITUTION SELECTION MODAL (NEW) */}
+      {isInstitutionModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative flex flex-col max-h-[90vh]">
+                  <div className="flex items-center justify-between mb-4 border-b border-gray-100 pb-4">
+                      <div className="flex items-center gap-3">
+                          <div className="bg-blue-100 p-2 rounded-lg text-blue-600"><Building size={20}/></div>
+                          <div>
+                            <h2 className="text-xl font-bold text-slate-800">Selecionar Bancas</h2>
+                            <p className="text-xs text-gray-500">Selecione até 10 bancas para filtrar</p>
+                          </div>
+                      </div>
+                      <button onClick={() => setIsInstitutionModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><X size={20}/></button>
+                  </div>
+
+                  <div className="relative mb-4">
+                      <Search className="absolute left-3 top-3 text-gray-400" size={18} />
+                      <input 
+                          type="text" 
+                          placeholder="Pesquisar banca..." 
+                          value={institutionSearchTerm}
+                          onChange={e => setInstitutionSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-1 pr-2 mb-4">
+                      {cachedInstitutions.filter(inst => inst.toLowerCase().includes(institutionSearchTerm.toLowerCase())).map(inst => {
+                          const isSelected = selectedInstitutions.includes(inst);
+                          return (
+                              <div 
+                                  key={inst} 
+                                  onClick={() => toggleInstitutionSelection(inst)}
+                                  className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 text-blue-700 font-bold border border-blue-100' : 'hover:bg-gray-50 text-gray-600 border border-transparent'}`}
+                              >
+                                  {isSelected ? <CheckSquare size={20} className="text-blue-600"/> : <Square size={20} className="text-gray-300"/>}
+                                  <span>{inst}</span>
+                              </div>
+                          )
+                      })}
+                      {cachedInstitutions.length === 0 && <div className="text-center py-8 text-gray-400">Nenhuma banca carregada. Clique em "Atualizar" no menu.</div>}
+                  </div>
+
+                  <div className="flex justify-end pt-4 border-t border-gray-100">
+                      <button onClick={() => setIsInstitutionModalOpen(false)} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors">Confirmar Seleção ({selectedInstitutions.length})</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
