@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  RotateCcw, SaveAll, CloudLightning, Square // Adicionei Square aqui
+  RotateCcw, SaveAll, CloudLightning, Square, Layers // Adicionei Layers para o ícone de edição em massa
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -126,7 +126,6 @@ export default function MedManager() {
   const [selectedTopic, setSelectedTopic] = useState('Todos');
   
   // Filtros "Server-Side" (Via Cache)
-  // ALTERAÇÃO: Mudado de string única para array de instituições
   const [selectedInstitutions, setSelectedInstitutions] = useState([]); 
   const [serverYear, setServerYear] = useState(''); 
   
@@ -136,6 +135,10 @@ export default function MedManager() {
   // UI State para Modal de Bancas
   const [isInstitutionModalOpen, setIsInstitutionModalOpen] = useState(false);
   const [institutionSearchTerm, setInstitutionSearchTerm] = useState('');
+
+  // UI State para Modal de Edição em Massa (BULK EDIT)
+  const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({ institution: '', year: '', area: '', topic: '' });
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -168,7 +171,7 @@ export default function MedManager() {
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
                     loadQuestions(true);
-                    loadMetadata(); // Carrega as listas de Banca/Ano salvas
+                    loadMetadata(); 
                 } else {
                     await signOut(auth);
                     showNotification('error', 'Acesso negado: Apenas administradores.');
@@ -287,7 +290,7 @@ export default function MedManager() {
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS (QUERY NO BANCO) ---
+  // --- LOAD QUESTIONS ---
   const loadQuestions = async (reset = false) => {
       if (searchTerm && !reset) return; 
 
@@ -301,38 +304,29 @@ export default function MedManager() {
           let q = collection(db, "questions");
           let constraints = [];
 
-          // -- AUDITORIA --
           if (auditFilter !== 'none') {
              if (auditFilter === 'missing_meta') { constraints.push(orderBy("institution")); constraints.push(where("institution", "==", "")); }
              else if (auditFilter === 'missing_topic') { constraints.push(where("area", "==", "")); }
              else if (auditFilter === 'has_image') { constraints.push(orderBy("image")); constraints.push(startAfter("")); }
           } 
-          // -- MODO PADRÃO DE FILTRAGEM --
           else {
-              // 1. ÁREA / TÓPICO
               if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
               if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
 
-              // 2. BANCA (INSTITUTION) - ALTERAÇÃO PARA MULTI-SELEÇÃO
               if (selectedInstitutions.length > 0) {
-                  // Se for apenas uma, usa igualdade simples (mais rápido)
                   if (selectedInstitutions.length === 1) {
                       constraints.push(where("institution", "==", selectedInstitutions[0]));
                   } else {
-                      // Se forem várias, usa o operador IN
-                      // O Firestore limita 'IN' a 10 valores.
                       const safeList = selectedInstitutions.slice(0, 10);
                       constraints.push(where("institution", "in", safeList));
                   }
               }
 
-              // 3. ANO - BUSCA EXATA
               if (serverYear.trim()) {
                   constraints.push(where("year", "==", serverYear.trim())); 
               }
           }
 
-          // Paginação
           if (!reset && lastQuestionDoc) {
               constraints.push(startAfter(lastQuestionDoc));
           }
@@ -368,7 +362,7 @@ export default function MedManager() {
       }
   };
 
-  // --- SERVER SIDE SEARCH (TEXTO/ID) ---
+  // --- SERVER SIDE SEARCH ---
   const handleServerSearch = async () => {
       const term = searchTerm.trim();
       if (!term) {
@@ -380,10 +374,9 @@ export default function MedManager() {
       setLoadingQuestions(true);
       setMissingIndexLink(null);
       
-      // Reseta filtros visuais
       setSelectedArea('Todas');
       setSelectedTopic('Todos');
-      setSelectedInstitutions([]); // Limpa as bancas
+      setSelectedInstitutions([]); 
       setServerYear('');
       setAuditFilter('none');
       setHasMoreQuestions(false);
@@ -473,7 +466,6 @@ export default function MedManager() {
       if (activeView === 'students' && students.length === 0) loadStudents(true);
   }, [activeView]);
 
-  // Listener para mudança de Filtros (Automático)
   useEffect(() => {
       if(user && !searchTerm) {
           const timer = setTimeout(() => {
@@ -514,14 +506,11 @@ export default function MedManager() {
   // --- FILTERS MEMO & SORTING (LOCAL) ---
   
   const filteredQuestions = useMemo(() => {
-      // 1. Merge
       const allQuestionsMap = new Map();
       questions.forEach(q => allQuestionsMap.set(q.id, q));
       extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
-      
       const allQuestions = Array.from(allQuestionsMap.values());
 
-      // 2. Filtra (Apenas refinamento local)
       let result = allQuestions.filter(q => {
           const term = searchTerm.toLowerCase().trim();
           if (term) {
@@ -530,18 +519,15 @@ export default function MedManager() {
              const inInst = (q.institution || '').toLowerCase().includes(term);
              return inText || inId || inInst;
           }
-
           let matchesAudit = true;
           if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
           if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
           if (auditFilter === 'has_image') matchesAudit = !!q.image;
           if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50;
           if (auditFilter !== 'none') return matchesAudit;
-
           return true;
       });
 
-      // 3. Ordena Localmente
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
@@ -577,7 +563,6 @@ export default function MedManager() {
       });
   }, [students, searchTerm, activeView, studentStatusFilter]);
 
-  // Função para toggle de seleção de bancas no modal
   const toggleInstitutionSelection = (inst) => {
     setSelectedInstitutions(prev => {
         if (prev.includes(inst)) {
@@ -614,14 +599,75 @@ export default function MedManager() {
       setSearchTerm(''); 
       setSelectedArea('Todas'); 
       setSelectedTopic('Todos'); 
-      setSelectedInstitutions([]); // Limpa Array
+      setSelectedInstitutions([]); 
       setServerYear('');
       setAuditFilter('none');
       setQuestions([]); 
       setTimeout(() => loadQuestions(true), 100); 
   };
 
-  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
+  // --- BULK UPDATE LOGIC (EDIÇÃO EM MASSA) ---
+  const handleBulkUpdate = async () => {
+      const targets = filteredQuestions; // Edita o que está sendo visto/filtrado
+      if (targets.length === 0) return;
+      
+      // Cria objeto de update removendo campos vazios (PROTEÇÃO DO BRANCO)
+      const updates = {};
+      if (bulkEditData.institution.trim()) updates.institution = bulkEditData.institution;
+      if (bulkEditData.year) updates.year = bulkEditData.year; // assume string ou number, se vier vazio não entra
+      if (bulkEditData.area && bulkEditData.area !== '') updates.area = bulkEditData.area;
+      if (bulkEditData.topic && bulkEditData.topic !== '') updates.topic = bulkEditData.topic;
+      
+      // Se não tem nada pra atualizar, avisa
+      if (Object.keys(updates).length === 0) {
+          showNotification('error', 'Preencha pelo menos um campo para editar.');
+          return;
+      }
+
+      setIsSaving(true);
+      
+      try {
+          // Firebase Batch Limit é 500. Vamos quebrar em chunks de 450 pra garantir.
+          const chunkSize = 450;
+          const chunks = [];
+          for (let i = 0; i < targets.length; i += chunkSize) {
+              chunks.push(targets.slice(i, i + chunkSize));
+          }
+
+          let updatedCount = 0;
+
+          for (const chunk of chunks) {
+              const batch = writeBatch(db);
+              chunk.forEach(q => {
+                  const docRef = doc(db, "questions", q.id);
+                  batch.update(docRef, updates);
+              });
+              await batch.commit();
+              updatedCount += chunk.length;
+          }
+
+          // Atualiza estado local para refletir mudanças sem refetch
+          setQuestions(prev => prev.map(q => {
+             // Se a questão estava no alvo, atualiza ela
+             if (targets.some(t => t.id === q.id)) {
+                 return { ...q, ...updates };
+             }
+             return q;
+          }));
+
+          showNotification('success', `${updatedCount} questões atualizadas com sucesso!`);
+          setIsBulkEditModalOpen(false);
+          setBulkEditData({ institution: '', year: '', area: '', topic: '' }); // Limpa form
+
+      } catch (error) {
+          console.error("Erro bulk update:", error);
+          showNotification('error', 'Erro ao atualizar em massa: ' + error.message);
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  // --- CRIAÇÃO DE USUÁRIO ---
   const handleCreateUser = async (e) => {
       e.preventDefault();
       setIsSaving(true);
@@ -863,7 +909,6 @@ export default function MedManager() {
                         </a>
                     )}
                     
-                    {/* Filtro de Auditoria */}
                     <div className="relative">
                         <ScanLine size={16} className={`absolute left-3 top-3 ${auditFilter !== 'none' ? 'text-red-500' : 'text-gray-400'}`} />
                         <select 
@@ -927,6 +972,19 @@ export default function MedManager() {
                             {cachedYears.map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
                     </div>
+
+                    {/* BOTÃO DE BULK EDIT (NOVO) */}
+                    {filteredQuestions.length > 0 && !loadingQuestions && (
+                        <div className="mt-6 pt-4 border-t border-gray-100">
+                             <button 
+                                onClick={() => setIsBulkEditModalOpen(true)}
+                                className="w-full bg-slate-800 text-white p-2 rounded-lg text-xs font-bold hover:bg-slate-900 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                             >
+                                <Layers size={14}/> Editar {filteredQuestions.length} Filtradas
+                             </button>
+                             <p className="text-[10px] text-gray-400 mt-1 text-center">Cuidado: Edita todas as listadas.</p>
+                        </div>
+                    )}
                 </div>
               )}
 
@@ -1201,7 +1259,7 @@ export default function MedManager() {
 
       {/* --- MODALS --- */}
 
-      {/* INSTITUTION SELECTION MODAL (NEW) */}
+      {/* INSTITUTION SELECTION MODAL */}
       {isInstitutionModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
               <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative flex flex-col max-h-[90vh]">
@@ -1251,6 +1309,83 @@ export default function MedManager() {
           </div>
       )}
 
+      {/* BULK EDIT MODAL (NOVO) */}
+      {isBulkEditModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
+                  <div className="flex flex-col items-center text-center mb-6">
+                      <div className="bg-slate-800 text-white p-3 rounded-full mb-3 shadow-lg"><Layers size={32}/></div>
+                      <h2 className="text-xl font-bold text-slate-800">Edição em Massa</h2>
+                      <p className="text-sm text-gray-500 mt-1">
+                          Você está prestes a editar <strong className="text-slate-900">{filteredQuestions.length} questões</strong> listadas.
+                      </p>
+                      <div className="mt-2 bg-amber-50 border border-amber-100 text-amber-800 text-xs p-3 rounded-lg text-left w-full">
+                          <strong>Atenção:</strong> Deixe os campos <strong>EM BRANCO</strong> se quiser manter o valor original das questões. Só preencha o que você deseja mudar em todas.
+                      </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nova Banca (Opcional)</label>
+                          <input 
+                             value={bulkEditData.institution} 
+                             onChange={e => setBulkEditData({...bulkEditData, institution: e.target.value})} 
+                             className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300"
+                             placeholder="Manter original..."
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Novo Ano (Opcional)</label>
+                          <input 
+                             type="number"
+                             value={bulkEditData.year} 
+                             onChange={e => setBulkEditData({...bulkEditData, year: e.target.value})} 
+                             className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-gray-50 placeholder-gray-300"
+                             placeholder="Manter original..."
+                          />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nova Área</label>
+                              <select 
+                                  value={bulkEditData.area} 
+                                  onChange={e => setBulkEditData({...bulkEditData, area: e.target.value, topic: ''})} 
+                                  className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-white"
+                              >
+                                  <option value="">(Manter)</option>
+                                  {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
+                              </select>
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Novo Tópico</label>
+                              <select 
+                                  value={bulkEditData.topic} 
+                                  onChange={e => setBulkEditData({...bulkEditData, topic: e.target.value})} 
+                                  disabled={!bulkEditData.area}
+                                  className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-slate-500 bg-white disabled:opacity-50"
+                              >
+                                  <option value="">(Manter)</option>
+                                  {(themesMap[bulkEditData.area] || []).map(t => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 mt-8">
+                      <button onClick={() => setIsBulkEditModalOpen(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
+                      <button 
+                          onClick={handleBulkUpdate} 
+                          disabled={isSaving}
+                          className="flex-1 py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-900 shadow-lg flex items-center justify-center gap-2"
+                      >
+                          {isSaving ? <Loader2 className="animate-spin" size={18}/> : <SaveAll size={18}/>}
+                          Aplicar Mudanças
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
           <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200">
@@ -1287,7 +1422,6 @@ export default function MedManager() {
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="2025"/></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                          {/* Campo de Imagem adicionado */}
                           <div className="col-span-1 md:col-span-2">
                               <label className="block text-sm font-bold text-gray-600 mb-2">URL da Imagem (Opcional)</label>
                               <div className="flex gap-2">
