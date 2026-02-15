@@ -1,24 +1,48 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
-  AlertCircle, Database, List, ArrowLeft, LogOut, Loader2, 
-  CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
-  MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
-  Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
-  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine
+  Map, Save, Trash2, Settings, CheckCircle, 
+  AlertCircle, FileText, Database, 
+  Loader2, Wand2, Cpu, RefreshCw, User, X,
+  LogOut, Send, Brain, Image as ImageIcon, UploadCloud, Lock, CloudLightning, ArrowLeft,
+  AlertTriangle, ExternalLink, Key, Play, Pause, AlertOctagon, Terminal, ShieldCheck, ShieldAlert, 
+  ToggleLeft, ToggleRight, Layers, Filter, Eraser, RefreshCcw, XCircle, RotateCcw, Copy,
+  SkipForward, BookOpen, Clock, Files, Info, History, FastForward, Globe, ListFilter,
+  FileType, BarChart3
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp, deleteApp } from "firebase/app"; 
+import { initializeApp } from "firebase/app";
+
+// 1. Banco de Dados (Firestore)
 import { 
-  getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
-  onSnapshot, query, orderBy, where, writeBatch, setDoc, 
-  limit, startAfter, getDocs, startAt, endAt
+  getFirestore, collection, addDoc, doc, getDoc, deleteDoc, onSnapshot, query, orderBy, setDoc, writeBatch, updateDoc, arrayUnion, arrayRemove, increment 
 } from "firebase/firestore";
+
+// 2. Autenticação (Auth)
 import { 
-  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  createUserWithEmailAndPassword, updateProfile 
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 } from "firebase/auth";
+
+// 3. Arquivos (Storage)
+import { 
+  getStorage, ref, uploadBytes, getDownloadURL, deleteObject 
+} from "firebase/storage";
+
+// --- PDF.JS IMPORT (Dynamic CDN) ---
+const loadPdfJs = async () => {
+    if (window.pdfjsLib) return window.pdfjsLib;
+    
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        script.onload = () => {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            resolve(window.pdfjsLib);
+        };
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+};
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -34,28 +58,184 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const storage = getStorage(app);
 
-// --- CONSTANTES ---
-const ITEMS_PER_PAGE = 20;
-
+// --- DADOS DE REFERÊNCIA ---
 const areasBase = [
-  'Clínica Médica', 'Cirurgia Geral', 'Ginecologia e Obstetrícia', 'Pediatria', 'Preventiva'
+  'Clínica Médica', 
+  'Cirurgia Geral', 
+  'Ginecologia e Obstetrícia', 
+  'Pediatria', 
+  'Preventiva'
 ];
 
 const themesMap = {
-    'Clínica Médica': ['Cardiologia', 'Dermatologia', 'Endocrinologia e Metabologia', 'Gastroenterologia', 'Hematologia', 'Hepatologia', 'Infectologia', 'Nefrologia', 'Neurologia', 'Pneumologia', 'Psiquiatria', 'Reumatologia'],
-    'Cirurgia Geral': ['Abdome Agudo', 'Cirurgia Hepatobiliopancreática', 'Cirurgia Torácica e de Cabeça e Pescoço', 'Cirurgia Vascular', 'Cirurgia do Esôfago e Estômago', 'Coloproctologia', 'Hérnias e Parede Abdominal', 'Pré e Pós-Operatório', 'Queimaduras', 'Resposta Metabólica e Cicatrização', 'Trauma', 'Urologia'],
-    'Ginecologia e Obstetrícia': ['Ciclo Menstrual e Anticoncepção', 'Climatério e Menopausa', 'Doenças Intercorrentes na Gestação', 'Infecções Congênitas e Gestacionais', 'Infecções Ginecológicas e ISTs', 'Mastologia', 'Obstetrícia Fisiológica e Pré-Natal', 'Oncologia Pélvica', 'Parto e Puerpério', 'Sangramentos da Gestação', 'Uroginecologia e Distopias', 'Vitalidade Fetal e Amniograma'],
-    'Pediatria': ['Adolescência e Puberdade', 'Afecções Respiratórias', 'Aleitamento Materno e Nutrição', 'Cardiologia e Reumatologia Pediátrica', 'Crescimento e Desenvolvimento', 'Emergências e Acidentes', 'Gastroenterologia Pediátrica', 'Imunizações', 'Infectopediatria e Exantemáticas', 'Nefrologia Pediátrica', 'Neonatologia: Patologias', 'Neonatologia: Sala de Parto'],
-    'Preventiva': ['Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética']
+    'Clínica Médica': [
+        'Cardiologia', 'Dermatologia', 'Endocrinologia e Metabologia', 'Gastroenterologia', 'Hematologia', 'Hepatologia', 'Infectologia', 'Nefrologia', 'Neurologia', 'Pneumologia', 'Psiquiatria', 'Reumatologia'
+    ],
+    'Cirurgia Geral': [
+        'Abdome Agudo', 'Cirurgia Hepatobiliopancreática', 'Cirurgia Torácica e de Cabeça e Pescoço', 'Cirurgia Vascular', 'Cirurgia do Esôfago e Estômago', 'Coloproctologia', 'Hérnias e Parede Abdominal', 'Pré e Pós-Operatório', 'Queimaduras', 'Resposta Metabólica e Cicatrização', 'Trauma', 'Urologia'
+    ],
+    'Ginecologia e Obstetrícia': [
+        'Ciclo Menstrual e Anticoncepção', 'Climatério e Menopausa', 'Doenças Intercorrentes na Gestação', 'Infecções Congênitas e Gestacionais', 'Infecções Ginecológicas e ISTs', 'Mastologia', 'Obstetrícia Fisiológica e Pré-Natal', 'Oncologia Pélvica', 'Parto e Puerpério', 'Sangramentos da Gestação', 'Uroginecologia e Distopias', 'Vitalidade Fetal e Amniograma'
+    ],
+    'Pediatria': [
+        'Adolescência e Puberdade', 'Afecções Respiratórias', 'Aleitamento Materno e Nutrição', 'Cardiologia e Reumatologia Pediátrica', 'Crescimento e Desenvolvimento', 'Emergências e Acidentes', 'Gastroenterologia Pediátrica', 'Imunizações', 'Infectopediatria e Exantemáticas', 'Nefrologia Pediátrica', 'Neonatologia: Patologias', 'Neonatologia: Sala de Parto'
+    ],
+    'Preventiva': [
+        'Atenção Primária e Saúde da Família', 'Estudos Epidemiológicos', 'Financiamento e Gestão', 'História e Princípios do SUS', 'Indicadores de Saúde e Demografia', 'Medicina Baseada em Evidências', 'Medicina Legal', 'Medidas de Associação e Testes Diagnósticos', 'Políticas Nacionais de Saúde', 'Saúde do Trabalhador', 'Vigilância em Saúde', 'Ética Médica e Bioética'
+    ]
 };
 
-// --- COMPONENTE DE NOTIFICAÇÃO ---
-function NotificationToast({ notification, onClose }) {
+// --- HELPER: OTIMIZADOR DE IMAGEM (WEB CLIENT-SIDE) ---
+const optimizeImageForWeb = (file) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                const MAX_WIDTH = 1920; // Padrão HD
+                
+                if (width > MAX_WIDTH) {
+                    height = Math.round((height * MAX_WIDTH) / width);
+                    width = MAX_WIDTH;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        const newFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".webp", {
+                            type: "image/webp",
+                            lastModified: Date.now(),
+                        });
+                        resolve(newFile);
+                    } else {
+                        reject(new Error("Falha na conversão para WebP"));
+                    }
+                }, 'image/webp', 0.90);
+            };
+            img.onerror = (err) => reject(err);
+        };
+        reader.onerror = (err) => reject(err);
+    });
+};
+
+// --- HELPER: HASH ID GENERATOR (DEDUPLICATION) ---
+const generateQuestionHash = async (text) => {
+    if (!text) return null;
+    const normalized = text
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+    
+    const msgBuffer = new TextEncoder().encode(normalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
+};
+
+// --- HELPER: CLEAN INSTITUTION (ATUALIZADO - ANTI-CURSINHO) ---
+const cleanInstitutionText = (inst) => {
+    if (!inst) return "";
+    let text = inst.toString().trim();
+    const lower = text.toLowerCase();
+
+    // 1. Lista Negra de Cursinhos (Meta-dados que não são bancas)
+    const blockList = [
+        "medcurso", "medgrupo", "medcel", "medcof", 
+        "sanar", "estrategia", "hardwork", "sic", "residencia médica", "medicina livre"
+    ];
+
+    // Se o texto for EXATAMENTE um desses, limpa.
+    if (blockList.includes(lower)) return "";
+    
+    // Se começar com termos de material de estudo
+    if (lower.startsWith("apostila") || lower.startsWith("simulado") || lower.includes("banco de questões")) return "";
+
+    // 2. Termos genéricos de erro da IA
+    if (
+        lower.includes("não informado") || 
+        lower.includes("nao informado") || 
+        lower.includes("detectar") ||
+        lower.includes("nao consta")
+    ) return "";
+
+    return text;
+};
+
+// --- HELPER: EXTRAIR TEMPO DE ESPERA DA MENSAGEM DE ERRO ---
+const extractRetryTime = (message) => {
+    const match = message.match(/retry in ([0-9\.]+)s/);
+    return match ? parseFloat(match[1]) : null;
+};
+
+// --- HELPER: PARSER JSON BLINDADO (RECUPERAÇÃO ITERATIVA) ---
+const safeJsonParse = (jsonString) => {
+    let clean = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+    clean = clean.replace(/[\u0000-\u0019]+/g, ""); 
+
+    const startIndex = clean.indexOf('[');
+    if (startIndex === -1) {
+        try { return JSON.parse(clean); } catch(e) { 
+            throw new Error("Formato inválido: JSON não encontrado."); 
+        }
+    }
+    clean = clean.substring(startIndex);
+
+    try {
+        const parsed = JSON.parse(clean);
+        if (!Array.isArray(parsed) && typeof parsed === 'object') return [parsed];
+        return parsed;
+    } catch (e) {
+        console.warn("JSON quebrado detectado. Iniciando recuperação iterativa...", e.message);
+        
+        let currentString = clean;
+        let attempts = 0;
+        const maxAttempts = 50;
+
+        while (currentString.length > 2 && attempts < maxAttempts) {
+            attempts++;
+            const lastClose = currentString.lastIndexOf('}');
+            
+            if (lastClose === -1) {
+                console.error("Recuperação falhou: nenhum objeto válido encontrado.");
+                return []; 
+            }
+            
+            const candidate = currentString.substring(0, lastClose + 1) + ']';
+            
+            try {
+                const result = JSON.parse(candidate);
+                console.log(`Recuperação com sucesso na tentativa ${attempts}! ${result.length} itens salvos.`);
+                return result;
+            } catch (e2) {
+                currentString = currentString.substring(0, lastClose);
+            }
+        }
+        
+        console.error("Falha total na recuperação do JSON.");
+        return [];
+    }
+};
+
+// --- COMPONENTE DE NOTIFICAÇÃO INTELIGENTE ---
+function NotificationToast({ notification, onClose, positionClass }) {
   const [isHovered, setIsHovered] = useState(false);
+
   useEffect(() => {
     if (!notification || isHovered) return;
-    const timer = setTimeout(() => onClose(), 6000); 
+    const timer = setTimeout(() => { onClose(); }, 6000);
     return () => clearTimeout(timer);
   }, [notification, isHovered, onClose]);
 
@@ -65,96 +245,134 @@ function NotificationToast({ notification, onClose }) {
     <div 
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="fixed top-24 right-4 z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-md border bg-white border-gray-200 text-slate-800"
+        className={`${positionClass} z-[100] p-4 rounded-xl shadow-xl flex items-start gap-3 animate-in slide-in-from-right-10 duration-300 max-w-sm border transition-all ${notification.type === 'error' ? 'bg-white border-red-200 text-red-700' : notification.type === 'warning' ? 'bg-white border-amber-200 text-amber-700' : notification.type === 'info' ? 'bg-white border-blue-200 text-blue-700' : 'bg-white border-emerald-200 text-emerald-700'}`}
     >
-        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
-            {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
+        <div className={`mt-0.5 p-1 rounded-full ${notification.type === 'error' ? 'bg-red-100' : notification.type === 'warning' ? 'bg-amber-100' : notification.type === 'info' ? 'bg-blue-100' : 'bg-emerald-100'}`}>
+            {notification.type === 'error' ? <AlertCircle size={20} /> : notification.type === 'warning' ? <AlertTriangle size={20} /> : notification.type === 'info' ? <Info size={20}/> : <CheckCircle size={20} />}
         </div>
         <div className="flex-1">
-            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Atenção' : 'Sucesso'}</p>
-            <p className="text-sm opacity-90 leading-tight break-words">{notification.text}</p>
-            {notification.link && (
-                <a href={notification.link} target="_blank" rel="noopener noreferrer" className="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded mt-2 inline-flex items-center gap-1 hover:bg-blue-100">
-                    <ExternalLink size={12}/> Criar Índice no Firebase Agora
-                </a>
-            )}
+            <p className="font-bold text-sm mb-1">{notification.type === 'error' ? 'Erro' : notification.type === 'warning' ? 'Atenção' : notification.type === 'info' ? 'Info' : 'Sucesso'}</p>
+            <p className="text-sm opacity-90 leading-tight">{notification.text}</p>
         </div>
-        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400"><X size={18}/></button>
+        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors">
+            <X size={18}/>
+        </button>
     </div>
   );
 }
 
-export default function MedManager() {
+export default function App() {
   const [user, setUser] = useState(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   
-  // Data State
-  const [questions, setQuestions] = useState([]);
-  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); 
-  const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
-  const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
-  const [missingIndexLink, setMissingIndexLink] = useState(null); 
+  // Gestão de Chaves API
+  const [apiKeys, setApiKeys] = useState(() => JSON.parse(localStorage.getItem('gemini_api_keys') || '[]'));
   
-  const [students, setStudents] = useState([]); 
-  const [lastStudentDoc, setLastStudentDoc] = useState(null);
-  const [hasMoreStudents, setHasMoreStudents] = useState(true);
-
-  // Reports
-  const [reports, setReports] = useState([]); 
-  const [userProfiles, setUserProfiles] = useState({}); 
-
-  // Loading States
-  const [loadingQuestions, setLoadingQuestions] = useState(false);
-  const [loadingStudents, setLoadingStudents] = useState(false); 
-  const [isSearchingServer, setIsSearchingServer] = useState(false);
+  // Modelos
+  const [availableModels, setAvailableModels] = useState([
+      { name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash (Padrão)' },
+      { name: 'models/gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' }
+  ]);
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('gemini_model') || 'models/gemini-2.5-flash');
   
-  // View State
-  const [activeView, setActiveView] = useState('questions'); 
-  
-  // Filters
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedArea, setSelectedArea] = useState('Todas');
-  const [selectedTopic, setSelectedTopic] = useState('Todos');
-  const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
-  const [selectedYear, setSelectedYear] = useState('Todos'); 
-  const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
-
-  // --- NOVOS FILTROS DE AUDITORIA ---
-  const [auditFilter, setAuditFilter] = useState('none'); // 'none', 'missing_meta', 'missing_topic', 'has_image', 'short_text'
-
-  // Students Filters
-  const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
-  const [studentRoleFilter, setStudentRoleFilter] = useState('all'); 
-  
-  // Edit/Action States
-  const [editingQuestion, setEditingQuestion] = useState(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [associatedReport, setAssociatedReport] = useState(null);
-  const [isCreatingUser, setIsCreatingUser] = useState(false);
-  const [viewingUserStats, setViewingUserStats] = useState(null); 
-  
-  // UI State
+  // Estados UI Básicos
+  const [rawText, setRawText] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isBatchAction, setIsBatchAction] = useState(false); 
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [parsedQuestions, setParsedQuestions] = useState([]);
+  const [activeTab, setActiveTab] = useState('input');
   const [notification, setNotification] = useState(null);
-  const [deleteModal, setDeleteModal] = useState(null); 
-  const [rejectReportModal, setRejectReportModal] = useState(null);
+  const [isValidatingKey, setIsValidatingKey] = useState(false);
+  const [isDoubleCheckEnabled, setIsDoubleCheckEnabled] = useState(true); 
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(true); 
+
+  // --- NOVA BLINDAGEM: COTA GLOBAL ---
+  const [searchQuota, setSearchQuota] = useState({ count: 0, lastReset: '' });
+  const [isSearchLimitEnabled, setIsSearchLimitEnabled] = useState(true); // O "Safe Mode"
+  const DAILY_SEARCH_LIMIT = 1400; // Margem de segurança (Max 1500)
+
+  // Estado para loading de imagem individual
+  const [uploadingImageId, setUploadingImageId] = useState(null);
+  
+  // --- Estado para Filtros Múltiplos (ATUALIZADO: text_only por padrão) ---
+  const [activeFilters, setActiveFilters] = useState(['verified', 'source', 'text_only']); 
+  const [filterLogic, setFilterLogic] = useState('AND'); 
+  
+  // Override States
+  const [overrideInst, setOverrideInst] = useState('');
+  const [overrideYear, setOverrideYear] = useState('');
+  const [overrideArea, setOverrideArea] = useState('');
+  const [overrideTopic, setOverrideTopic] = useState('');
+
+  // Modais
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [tempApiKeysText, setTempApiKeysText] = useState('');
+  const [showTutorial, setShowTutorial] = useState(false);
+  
+  const [confirmationModal, setConfirmationModal] = useState({
+      isOpen: false, type: null, data: null, title: '', message: '', confirmText: '', confirmColor: ''
+  });
   
   // Login Inputs
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const showNotification = (type, text, link = null) => setNotification({ type, text, link });
+  // --- BATCH IMAGE STATES ---
+  const [batchImages, setBatchImages] = useState([]); 
+  const [batchStatus, setBatchStatus] = useState('idle'); 
+  const [batchLogs, setBatchLogs] = useState([]);
 
-  // --- AUTH ---
+  // --- PDF PROCESSING STATES ---
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfStatus, setPdfStatus] = useState('idle');
+  const [pdfChunks, setPdfChunks] = useState([]); 
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
+  const [processingLogs, setProcessingLogs] = useState([]);
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+  
+  const [pdfStartPage, setPdfStartPage] = useState('');
+  const [pdfEndPage, setPdfEndPage] = useState('');
+
+  // --- SESSION STATE ---
+  const [lastSessionData, setLastSessionData] = useState(null);
+
+  const processorRef = useRef(null); 
+  const batchProcessorRef = useRef(null);
+  
+  // --- REFS ---
+  const pdfStatusRef = useRef(pdfStatus);
+  const pdfChunksRef = useRef(pdfChunks);
+  const batchImagesRef = useRef(batchImages);
+  const batchStatusRef = useRef(batchStatus);
+  const apiKeysRef = useRef(apiKeys);
+  const keyRotationIndex = useRef(0);
+  const doubleCheckRef = useRef(isDoubleCheckEnabled); 
+  const webSearchRef = useRef(isWebSearchEnabled); 
+  const overridesRef = useRef({ overrideInst, overrideYear, overrideArea, overrideTopic });
+  const currentChunkIndexRef = useRef(currentChunkIndex); 
+  const searchQuotaRef = useRef(searchQuota);
+  const isSearchLimitEnabledRef = useRef(isSearchLimitEnabled);
+
+  const CHUNK_SIZE = 10; 
+
+  // --- AUTH CHECK ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
         if (u) {
-            const userDoc = await getDoc(doc(db, "users", u.uid));
-            if (userDoc.exists() && userDoc.data().role === 'admin') {
-                setUser(u);
-                loadQuestions(true);
-            } else {
+            try {
+                const userDocRef = doc(db, "users", u.uid);
+                const userDoc = await getDoc(userDocRef);
+                if (userDoc.exists() && userDoc.data().role === 'admin') {
+                    setUser(u);
+                } else {
+                    await signOut(auth);
+                    setUser(null);
+                    showNotification('error', 'Acesso negado: Usuário não é administrador.');
+                }
+            } catch (error) {
+                console.error("Erro ao verificar role:", error);
                 await signOut(auth);
-                showNotification('error', 'Acesso negado: Apenas administradores.');
                 setUser(null);
             }
         } else {
@@ -165,1065 +383,2353 @@ export default function MedManager() {
     return () => unsubscribe();
   }, []);
 
-  // --- REALTIME REPORTS & PRIORITY FETCH ---
+  // --- SYNC REFS ---
+  useEffect(() => { pdfStatusRef.current = pdfStatus; }, [pdfStatus]);
+  useEffect(() => { pdfChunksRef.current = pdfChunks; }, [pdfChunks]);
+  useEffect(() => { batchImagesRef.current = batchImages; }, [batchImages]);
+  useEffect(() => { batchStatusRef.current = batchStatus; }, [batchStatus]);
+  useEffect(() => { apiKeysRef.current = apiKeys; }, [apiKeys]);
+  useEffect(() => { doubleCheckRef.current = isDoubleCheckEnabled; }, [isDoubleCheckEnabled]);
+  useEffect(() => { webSearchRef.current = isWebSearchEnabled; }, [isWebSearchEnabled]);
+  useEffect(() => { overridesRef.current = { overrideInst, overrideYear, overrideArea, overrideTopic }; }, [overrideInst, overrideYear, overrideArea, overrideTopic]);
+  useEffect(() => { currentChunkIndexRef.current = currentChunkIndex; }, [currentChunkIndex]);
+  useEffect(() => { searchQuotaRef.current = searchQuota; }, [searchQuota]);
+  useEffect(() => { isSearchLimitEnabledRef.current = isSearchLimitEnabled; }, [isSearchLimitEnabled]);
+
+  // --- SYNC CHAVES API ---
   useEffect(() => {
-    if (!user) return;
-    const qReports = query(collection(db, "reports"), where("status", "==", "pending"));
-    const unsubReports = onSnapshot(qReports, (snap) => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setReports(list);
-    });
-    return () => unsubReports();
+      if (!user) return;
+      const unsubscribe = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+          if (docSnap.exists()) {
+              const data = docSnap.data();
+              let newKeys = [];
+              if (data.geminiApiKeys && Array.isArray(data.geminiApiKeys)) {
+                  newKeys = data.geminiApiKeys;
+              } else if (data.geminiApiKey) {
+                  newKeys = [data.geminiApiKey];
+              }
+              const uniqueKeys = [...new Set(newKeys.filter(k => k && k.trim().length > 0))];
+              if (JSON.stringify(uniqueKeys) !== JSON.stringify(apiKeysRef.current)) {
+                  setApiKeys(uniqueKeys);
+                  localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
+              }
+              // Sync Search Limit Toggle Global
+              if (data.isSearchLimitEnabled !== undefined) {
+                  setIsSearchLimitEnabled(data.isSearchLimitEnabled);
+              }
+          }
+      }, (error) => console.error("Erro ao sincronizar chaves:", error));
+      return () => unsubscribe();
   }, [user]);
 
-  const reportsCountByQuestion = useMemo(() => {
-      const counts = {}; reports.forEach(r => { counts[r.questionId] = (counts[r.questionId] || 0) + 1; }); return counts;
-  }, [reports]);
-
-  // Busca automática das questões reportadas
+  // --- SYNC RASCUNHOS ---
   useEffect(() => {
-    const fetchMissing = async () => {
-        if (reports.length === 0) return;
-        
-        const reportedIds = Object.keys(reportsCountByQuestion);
-        const missingIds = reportedIds.filter(id => 
-            !questions.find(q => q.id === id) && 
-            !extraReportedQuestions.find(q => q.id === id)
-        );
+      if (!user) { setParsedQuestions([]); return; }
+      const q = query(collection(db, "draft_questions"), orderBy("createdAt", "desc"));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+          const drafts = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, status: 'draft' }));
+          setParsedQuestions(drafts);
+      });
+      return () => unsubscribe();
+  }, [user]);
 
-        if (missingIds.length === 0) return;
-
-        const newDocs = [];
-        const idsToFetch = missingIds.slice(0, 20); 
-
-        await Promise.all(idsToFetch.map(async (id) => {
-            try {
-                const snap = await getDoc(doc(db, "questions", id));
-                if (snap.exists()) {
-                    newDocs.push({ id: snap.id, ...snap.data() });
-                }
-            } catch (e) { console.error("Erro fetch reported q", id, e); }
-        }));
-
-        if (newDocs.length > 0) {
-            setExtraReportedQuestions(prev => [...prev, ...newDocs]);
-        }
-    };
-    
-    const timer = setTimeout(fetchMissing, 1000);
-    return () => clearTimeout(timer);
-  }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
-
-
-  // --- LOAD QUESTIONS (MODIFICADO PARA AUDITORIA) ---
-  const loadQuestions = async (reset = false) => {
-      if (loadingQuestions) return;
-      if (!reset && !hasMoreQuestions) return;
-
-      setLoadingQuestions(true);
-      setMissingIndexLink(null); 
-
-      try {
-          let q = collection(db, "questions");
-          let constraints = [];
-
-          // -- Lógica de Filtros de Auditoria (Prioridade) --
-          if (auditFilter === 'missing_meta') {
-              // Tenta achar campos vazios. Obs: Firestore não tem filtro "é vazio" nativo fácil,
-              // então ordenamos por institution para pegar os vazios primeiro (strings vazias vêm antes)
-              constraints.push(orderBy("institution")); 
-              constraints.push(where("institution", "==", "")); // Se seu DB salvar como string vazia
-          } else if (auditFilter === 'missing_topic') {
-              constraints.push(where("area", "==", ""));
-          } else if (auditFilter === 'has_image') {
-              // Assumindo que você tem um campo 'image' ou 'imageUrl' que não é nulo
-              constraints.push(orderBy("image"));
-              constraints.push(startAfter("")); // Pega qualquer coisa que tenha texto no campo image
-          } else {
-              // -- Modo Normal --
-              constraints.push(orderBy("createdAt", "desc"));
-              
-              if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
-              if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
-          }
-
-          // Paginação
-          if (!reset && lastQuestionDoc) {
-              constraints.push(startAfter(lastQuestionDoc));
-          }
-          
-          constraints.push(limit(ITEMS_PER_PAGE));
-          
-          const finalQuery = query(q, ...constraints);
-          const snapshot = await getDocs(finalQuery);
-          
-          const newQuestions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-          
-          if (reset) {
-              setQuestions(newQuestions);
-          } else {
-              setQuestions(prev => [...prev, ...newQuestions]);
-          }
-
-          setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
-          setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
-
-          if (reset && newQuestions.length === 0 && auditFilter === 'none') {
-             // Fallback: Se não achou nada no modo normal, tenta buscar sem order by complexo pra não travar tela
-             // Isso previne tela em branco se o indice de 'area' nao existir
-          }
-
-      } catch (error) {
-          console.error("Erro ao carregar questões:", error);
-          if (error.message.includes("requires an index")) {
-              const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
-              const link = linkMatch ? linkMatch[0] : null;
-              setMissingIndexLink(link);
-              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro.', link);
-          } else {
-              showNotification('error', 'Erro ao carregar dados: ' + error.message);
-          }
-      } finally {
-          setLoadingQuestions(false);
-      }
-  };
-
-  // --- SERVER SIDE SEARCH ---
-  const handleServerSearch = async () => {
-      const term = searchTerm.trim();
-      if (!term) {
-          loadQuestions(true);
+  // --- SYNC PROGRESSO DO PDF ---
+  useEffect(() => {
+      if (!user) {
+          setLastSessionData(null);
           return;
       }
-      setIsSearchingServer(true);
-      setMissingIndexLink(null);
-      let foundDocs = [];
+      const unsubscribe = onSnapshot(doc(db, "users", user.uid, "progress", "pdf_session"), (docSnap) => {
+          if (docSnap.exists()) {
+              setLastSessionData(docSnap.data());
+          } else {
+              setLastSessionData(null);
+          }
+      });
+      return () => unsubscribe();
+  }, [user]);
 
-      try {
-          // 1. Tenta buscar por ID exato
+  // --- SYNC COTA DE PESQUISA (NOVO) ---
+  useEffect(() => {
+      if (!user) return;
+      
+      const unsubscribe = onSnapshot(doc(db, "settings", "search_quota"), (docSnap) => {
+          const today = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+          if (!docSnap.exists()) {
+              // Cria se não existe
+              setDoc(doc(db, "settings", "search_quota"), { count: 0, lastReset: today });
+          } else {
+              const data = docSnap.data();
+              
+              // Reset Diário Automático (First-win logic)
+              if (data.lastReset !== today) {
+                  setDoc(doc(db, "settings", "search_quota"), { count: 0, lastReset: today }, { merge: true })
+                      .then(() => console.log("Cota diária resetada!"));
+                  setSearchQuota({ count: 0, lastReset: today });
+              } else {
+                  setSearchQuota(data);
+              }
+          }
+      });
+      return () => unsubscribe();
+  }, [user]);
+
+  // --- ROTATION HELPER ---
+  const executeWithKeyRotation = async (operationName, requestFn) => {
+      const keys = apiKeysRef.current;
+      if (!keys || keys.length === 0) throw new Error("Nenhuma chave API configurada.");
+
+      let lastError = null;
+      const startIndex = keyRotationIndex.current;
+
+      for (let i = 0; i < keys.length; i++) {
+          const currentIndex = (startIndex + i) % keys.length;
+          const currentKey = keys[currentIndex];
+          
+          keyRotationIndex.current = (currentIndex + 1) % keys.length;
+
           try {
-            const docRef = doc(db, "questions", term);
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                foundDocs.push({ id: docSnap.id, ...docSnap.data() });
+              return await requestFn(currentKey);
+          } catch (error) {
+              const msg = error.message || "";
+              const isQuotaError = msg.includes("Quota exceeded") || msg.includes("429") || msg.includes("Resource has been exhausted");
+              
+              if (isQuotaError) {
+                  const logFn = operationName.includes("Imagem") ? addBatchLog : addLog;
+                  logFn('warning', `[${operationName}] Chave ...${currentKey.slice(-4)} no limite. Rotacionando...`);
+                  lastError = error;
+                  continue; 
+              } else {
+                  throw error; 
+              }
+          }
+      }
+      throw lastError || new Error("Todas as chaves falharam. Aguardando recarga...");
+  };
+
+  // --- HELPER: SLEEP ---
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // --- HELPER: EXECUTOR BLINDADO (RETRY INFINITO COM PAUSA) ---
+  const executeBlindlyWithRetry = async (operationName, taskFn, setStatusLog, shouldStopFn) => {
+      let attempts = 0;
+      
+      while (true) {
+          // 1. CHECAGEM PRÉVIA: Se o usuário pediu pausa, aborta ANTES de tentar
+          if (shouldStopFn && shouldStopFn()) {
+               throw new Error("ABORT_RETRY"); 
+          }
+
+          try {
+              return await executeWithKeyRotation(operationName, taskFn);
+          } catch (error) {
+              // 2. CHECAGEM PÓS-ERRO: Se o usuário pediu pausa durante o erro, aborta
+              if (shouldStopFn && shouldStopFn()) {
+                   throw new Error("ABORT_RETRY");
+              }
+
+              // Se for erro de COTA GLOBAL, repassa o erro para parar o fluxo
+              if (error.message.includes("Cota de Pesquisa Diária Atingida")) {
+                  throw error;
+              }
+
+              attempts++;
+              const msg = error.message || "Erro desconhecido";
+              // O limite máximo de espera será de 2 minutos (120000 ms)
+              const waitTime = Math.min(2000 * Math.pow(2, attempts), 120000); 
+              
+              console.warn(`[${operationName}] Tentativa ${attempts} falhou. Retentando em ${waitTime/1000}s... Erro: ${msg}`);
+              
+              if (setStatusLog) {
+                  setStatusLog('warning', `[${operationName}] Falha ${attempts}. Aguardando ${Math.ceil(waitTime/1000)}s... (Pause para cancelar)`);
+              }
+
+              await sleep(waitTime);
+          }
+      }
+  };
+
+  // --- INCREMENTO ATÔMICO DE COTA ---
+  const incrementSearchCount = async () => {
+      try {
+          const ref = doc(db, "settings", "search_quota");
+          await updateDoc(ref, { count: increment(1) });
+      } catch (e) {
+          console.warn("Falha ao incrementar cota:", e);
+      }
+  };
+
+  // --- FUNÇÃO DE PESQUISA BLINDADA (COM CONTROLE DE COTA) ---
+  const searchQuestionSource = async (questionText, checkStop) => {
+      // 1. VERIFICAÇÃO DE COTA ANTES DE GASTAR
+      if (isSearchLimitEnabledRef.current) {
+          const quota = searchQuotaRef.current;
+          if (quota.count >= DAILY_SEARCH_LIMIT) {
+              throw new Error(`Cota de Pesquisa Diária Atingida (${quota.count}/${DAILY_SEARCH_LIMIT}). Pause ou desative o Limite.`);
+          }
+      }
+
+      const searchPromptText = questionText.length > 400 
+        ? questionText.substring(0, 400) + "..." 
+        : questionText;
+
+      const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
+
+      const result = await executeBlindlyWithRetry("Pesquisa Web", async (key) => {
+          const systemPrompt = `Você é um verificador de questões de residência médica.
+              Sua missão: Identificar a origem da questão usando a Pesquisa Google.
+              CRITÉRIOS DE ESCOLHA:
+              - Se a questão apareceu em múltiplas provas, escolha a ORIGINAL ou a MAIS RECENTE.
+              REGRAS DE FORMATAÇÃO DE NOME:
+              - Resuma nomes longos para o formato: "UF - Nome Curto / Sigla".
+              - Exemplo Ruim: "Secretaria da Saúde do Estado da Bahia (SESAB) - Processo Unificado"
+              - Exemplo Bom: "BA - SUS Bahia"
+              - Exemplo Bom: "SP - USP São Paulo"
+              - Exemplo Bom: "Nacional - ENARE"
+              {
+                "institution": "Nome da Instituição Resumido (ou vazio se não achar)",
+                "year": "Ano (apenas números, ou vazio se não achar)"
+              }`;
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: `IDENTIFICAR ORIGEM:\n${searchPromptText}` }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                tools: [{ google_search: {} }] 
+              })
             }
-          } catch(e) { }
+          );
 
-          // 2. Se não achou ID, busca por texto (prefixo)
-          if (foundDocs.length === 0) {
-              const qText = query(
-                  collection(db, "questions"),
-                  orderBy("text"),
-                  startAt(term),
-                  endAt(term + '\uf8ff'),
-                  limit(10)
-              );
-              const textSnap = await getDocs(qText);
-              textSnap.forEach(d => {
-                  if (!foundDocs.some(f => f.id === d.id)) {
-                      foundDocs.push({ id: d.id, ...d.data() });
-                  }
-              });
+          if (!response.ok) {
+              const errData = await response.json().catch(() => ({}));
+              throw new Error(errData.error?.message || "Erro HTTP na API Search");
           }
-
-          if (foundDocs.length > 0) {
-              setQuestions(foundDocs); 
-              setHasMoreQuestions(false); 
-              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
-          } else {
-              showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
-          }
-      } catch (error) {
-          console.error("Erro na busca:", error);
-          showNotification('error', 'Erro ao buscar no servidor.');
-      } finally {
-          setIsSearchingServer(false);
-      }
-  };
-
-  const handleKeyDownSearch = (e) => {
-      if (e.key === 'Enter') {
-          handleServerSearch();
-      }
-  };
-
-  // --- LOAD STUDENTS ---
-  const loadStudents = async (reset = false) => {
-      if (loadingStudents) return;
-      if (!reset && !hasMoreStudents) return;
-
-      setLoadingStudents(true);
-      try {
-          let q = collection(db, "users");
-          let constraints = [orderBy("name")]; 
-
-          if (studentRoleFilter !== 'all') {
-              constraints.push(where("role", "==", studentRoleFilter));
-          }
-
-          if (!reset && lastStudentDoc) {
-              constraints.push(startAfter(lastStudentDoc));
-          }
-
-          constraints.push(limit(ITEMS_PER_PAGE));
-
-          const finalQuery = query(q, ...constraints);
-          const snapshot = await getDocs(finalQuery);
-
-          const newStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-
-          if (reset) {
-              setStudents(newStudents);
-          } else {
-              setStudents(prev => [...prev, ...newStudents]);
-          }
-
-          setLastStudentDoc(snapshot.docs[snapshot.docs.length - 1]);
-          setHasMoreStudents(snapshot.docs.length === ITEMS_PER_PAGE);
-
-      } catch (error) {
-          console.error(error);
-          showNotification('error', 'Erro ao carregar alunos.');
-      } finally {
-          setLoadingStudents(false);
-      }
-  };
-
-  useEffect(() => {
-      if (activeView === 'students' && students.length === 0) {
-          loadStudents(true);
-      }
-  }, [activeView]);
-
-  useEffect(() => {
-      if(user) {
-         // Pequeno delay para evitar flood ao trocar filtros
-          const timer = setTimeout(() => {
-             if(!searchTerm) loadQuestions(true);
-          }, 500);
-          return () => clearTimeout(timer);
-      }
-  }, [selectedArea, selectedTopic, auditFilter]); 
-
-  useEffect(() => {
-      if(user && activeView === 'students') {
-          loadStudents(true);
-      }
-  }, [studentRoleFilter]);
-
-  // --- HELPER DATA ---
-  useEffect(() => {
-      const fetchReporters = async () => {
-        if (reports.length === 0) return;
-        const uids = new Set(reports.map(r => r.userId).filter(uid => uid));
-        const newProfiles = { ...userProfiles };
-        const toFetch = [];
-        uids.forEach(uid => { if (!newProfiles[uid]) toFetch.push(uid); });
-
-        if (toFetch.length === 0) return;
-
-        await Promise.all(toFetch.map(async (uid) => {
-            try {
-                const snap = await getDoc(doc(db, "users", uid));
-                if (snap.exists()) { newProfiles[uid] = snap.data(); } 
-                else { newProfiles[uid] = { name: 'Desconhecido', whatsapp: '' }; }
-            } catch (e) { console.error("Erro user", uid, e); }
-        }));
-        setUserProfiles(newProfiles);
-      };
-      fetchReporters();
-  }, [reports]);
-
-  // --- FILTERS MEMO & SORTING ---
-  const uniqueInstitutions = useMemo(() => ['Todas', ...Array.from(new Set(questions.map(q => q.institution).filter(i => i))).sort()], [questions]);
-  const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
-  
-  const filteredQuestions = useMemo(() => {
-      // 1. Merge: Junta a lista normal + a lista de questões com report
-      const allQuestionsMap = new Map();
-      questions.forEach(q => allQuestionsMap.set(q.id, q));
-      extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
-      
-      const allQuestions = Array.from(allQuestionsMap.values());
-
-      // 2. Filtra (Lógica melhorada para funcionar LOCALMENTE com o que foi baixado)
-      let result = allQuestions.filter(q => {
-          // Busca Textual Local (Case Insensitive)
-          const term = searchTerm.toLowerCase().trim();
-          const matchesSearch = term ? (
-              (q.text || '').toLowerCase().includes(term) || 
-              (q.institution || '').toLowerCase().includes(term) || 
-              q.id === term
-          ) : true;
           
-          // Filtros de Dropdown (Audit ou Normal)
-          // Se estiver em modo Auditoria, o loadQuestions já filtrou no servidor, 
-          // mas aplicamos aqui também para garantir visualização correta dos dados mistos
-          let matchesAudit = true;
-          if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
-          if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
-          if (auditFilter === 'has_image') matchesAudit = !!q.image;
-          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50; // Detecta enunciados quebrados
-
-          // Filtros Padrão (Area/Topic/Inst/Year)
-          // Normaliza as strings para evitar erro de espaço ou case
-          const qInst = (q.institution || '').trim();
-          const qYear = String(q.year || '').trim();
+          const data = await response.json();
+          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
           
-          const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
-          const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-          
-          const matchesInstitution = selectedInstitution === 'Todas' || qInst === selectedInstitution;
-          const matchesYear = selectedYear === 'Todos' || qYear === selectedYear;
-
-          // Se tiver search term, ignora alguns filtros para achar a questão
-          if (term) return matchesSearch;
-
-          // Se estiver em modo auditoria, respeita a auditoria E os filtros locais de inst/ano se selecionados
-          if (auditFilter !== 'none') {
-              return matchesAudit;
+          try { 
+              return JSON.parse(jsonString); 
+          } catch(e) { 
+              console.warn("JSON inválido na busca, assumindo não encontrado.");
+              return { institution: "", year: "" }; 
           }
+      }, addLog, checkStop);
 
-          return matchesArea && matchesTopic && matchesInstitution && matchesYear;
-      });
-
-      // 3. Ordena
-      result.sort((a, b) => {
-          const countA = reportsCountByQuestion[a.id] || 0;
-          const countB = reportsCountByQuestion[b.id] || 0;
-          if (countA > 0 || countB > 0) {
-              if (countA !== countB) return countB - countA; 
-          }
-          const dateA = new Date(a.createdAt || 0).getTime();
-          const dateB = new Date(b.createdAt || 0).getTime();
-          return dateB - dateA;
-      });
+      // 2. INCREMENTO ATÔMICO APÓS SUCESSO
+      await incrementSearchCount();
 
       return result;
-  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear, auditFilter]);
-
-  const filteredReports = useMemo(() => {
-      let result = reports;
-      if (reportFilterQuestionId) result = result.filter(r => r.questionId === reportFilterQuestionId);
-      if (activeView === 'reports' && searchTerm) {
-          const lower = searchTerm.toLowerCase();
-          result = result.filter(r => r.userId?.toLowerCase().includes(lower) || r.questionId?.toLowerCase().includes(lower) || r.text?.toLowerCase().includes(lower) || r.details?.toLowerCase().includes(lower) || (userProfiles[r.userId]?.name || '').toLowerCase().includes(lower));
-      }
-      return result;
-  }, [reports, reportFilterQuestionId, searchTerm, activeView, userProfiles]);
-
-  const filteredStudents = useMemo(() => {
-      if (activeView !== 'students') return [];
-      const lower = searchTerm.toLowerCase();
-      return students.filter(s => {
-          const matchesSearch = s.name?.toLowerCase().includes(lower) || s.email?.toLowerCase().includes(lower) || s.id?.toLowerCase().includes(lower);
-          const isPremium = s.subscriptionUntil && new Date(s.subscriptionUntil) > new Date();
-          let matchesStatus = true;
-          if (studentStatusFilter === 'active') matchesStatus = isPremium;
-          if (studentStatusFilter === 'expired') matchesStatus = !isPremium;
-          return matchesSearch && matchesStatus;
-      });
-  }, [students, searchTerm, activeView, studentStatusFilter]);
-
-
-  // --- ACTIONS ---
-  const handleLogout = async () => {
-      try {
-          await signOut(auth);
-          setUser(null);
-          setQuestions([]); setReports([]); setStudents([]); setExtraReportedQuestions([]);
-          setActiveView('questions');
-      } catch (error) { console.error(error); }
   };
 
-  const handleGoToReports = (questionId) => {
-      setReportFilterQuestionId(questionId);
-      setSearchTerm('');
-      setActiveView('reports');
-  };
-
-  const handleClearReportFilter = () => setReportFilterQuestionId(null);
-  
-  const handleClearQuestionFilters = () => { 
-      setSearchTerm(''); 
-      setSelectedArea('Todas'); 
-      setSelectedTopic('Todos'); 
-      setSelectedInstitution('Todas'); 
-      setSelectedYear('Todos'); 
-      setAuditFilter('none');
-      loadQuestions(true); // Força reload
-  };
-
-  // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
-  const handleCreateUser = async (e) => {
-      e.preventDefault();
-      setIsSaving(true);
-      const formData = new FormData(e.target);
-      const userData = Object.fromEntries(formData);
+  // --- LOGIC: VERIFICATION AGENT BLINDADO ---
+  const verifyQuestionWithAI = async (questionData, checkStop) => {
+      //Fixado no PRO por que ele valida melhor (Tirar o // e colocar no de baixo se quiser habilitar o PRO fixo pra auditoria:
+      //const modelNameClean = "gemini-2.5-pro";
+      const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
       
-      const appName = `SecondaryApp-${Date.now()}`;
-      let secondaryApp;
+      return executeBlindlyWithRetry("Auditoria", async (key) => {
+          const verifyPrompt = `
+    Você é um Auditor Sênior de Questões Médicas.
+    Sua missão é validar se esta questão é SEGURA e COERENTE para um banco de dados de estudo.
+    ATENÇÃO: Você NÃO tem acesso à internet. Use exclusivamente seu conhecimento médico treinado.
 
-      try {
-          secondaryApp = initializeApp(firebaseConfig, appName);
-          const secondaryAuth = getAuth(secondaryApp);
-          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
-          const newUser = userCredential.user;
-          await updateProfile(newUser, { displayName: userData.name });
-          const newUserId = newUser.uid; 
-          
-          const newUserObj = {
-              id: newUserId,
-              name: userData.name,
-              email: userData.email,
-              role: userData.role || 'student',
-              createdAt: new Date().toISOString(),
-              subscriptionUntil: userData.subscriptionUntil || null,
-              whatsapp: userData.whatsapp || '',
-              dailyGoal: 50,
-              stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
-          };
-          
-          await setDoc(doc(db, "users", newUserId), newUserObj);
-          await setDoc(doc(db, "users", newUserId, "stats", "main"), {
-              correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null
+    DADOS DA QUESTÃO:
+    Banca: ${questionData.institution || "Não informada"}
+    Ano: ${questionData.year || "Não informado"}
+    Enunciado: "${questionData.text}"
+    Alternativas: ${JSON.stringify(questionData.options)}
+    Gabarito Proposto: ${questionData.correctOptionId}
+    Explicação Gerada: "${questionData.explanation}"
+
+    PASSO A PASSO DA AUDITORIA:
+    1. Analise se o gabarito faz sentido clinicamente.
+    2. Verifique se a "Explicação Gerada" realmente justifica o gabarito.
+    3. Aplique as REGRAS DE JULGAMENTO abaixo.
+
+    REGRAS DE JULGAMENTO (HIERARQUIA DE DECISÃO):
+
+    [NÍVEL 1: FATOS OBJETIVOS E ABSURDOS - TOLERÂNCIA ZERO]
+    - Se a questão contém ERROS GRAVES de números (Doses letais, Anatomia impossível).
+    - Se o gabarito é ABSURDAMENTE errado (ex: tratar parada cardíaca com dipirona).
+    - Se a Explicação contradiz o próprio Gabarito.
+    -> AÇÃO: REPROVE ("isValid": false).
+
+    [NÍVEL 2: ANACRONISMO (IMPORTANTE)]
+    - Se a questão parece "errada" hoje, mas estava CERTA no Ano da questão (mudança de diretriz/protocolo).
+    -> AÇÃO: APROVE com ressalva no motivo ("isValid": true, "reason": "Correto para a época").
+
+    [NÍVEL 3: ZONA CINZENTA E CONDUTAS]
+    - Se houver divergência na literatura médica.
+    - Se o gabarito for defendido por PELO MENOS UMA corrente bibliográfica (Harrison, Cecil, MS, UpToDate).
+    -> AÇÃO: APROVE ("isValid": true).
+
+    [NÍVEL 4: "NA DÚVIDA"]
+    - Se não for um erro médico grosseiro.
+    -> AÇÃO: APROVE ("isValid": true).
+
+    SAÍDA OBRIGATÓRIA (JSON):
+    {
+        "isValid": boolean, 
+        "reason": "Explicação breve e direta (máx 15 palavras)"
+    }
+`;
+
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                contents: [{ parts: [{ text: verifyPrompt }] }], 
+            })
           });
           
-          setStudents(prev => [newUserObj, ...prev]);
-          showNotification('success', 'Aluno criado com acesso ao sistema!');
-          setIsCreatingUser(false);
+          if (!response.ok) {
+               const errData = await response.json().catch(() => ({}));
+               throw new Error(errData.error?.message || "Erro na API Audit");
+          }
+
+          const data = await response.json();
+          let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+          const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
+          if (jsonMatch) jsonString = jsonMatch[0];
+          return safeJsonParse(jsonString);
+          
+      }, addLog, checkStop).then(result => {
+          return {
+              status: result.isValid ? 'verified' : 'suspicious',
+              reason: result.reason || (result.isValid ? "Validado (Web/Lógica)" : "Erro Fatual ou Divergência Grave")
+          };
+      });
+  };
+
+  // --- COMMON: LOGS ---
+  const addLog = (type, message) => {
+      const time = new Date().toLocaleTimeString();
+      setProcessingLogs(prev => [{ type, message, time }, ...prev].slice(0, 50)); 
+  };
+  
+  const addBatchLog = (type, message) => {
+      const time = new Date().toLocaleTimeString();
+      setBatchLogs(prev => [{ type, message, time }, ...prev].slice(0, 50));
+  };
+
+  // --- FILTROS COM LÓGICA 'OR' (SOMA) ---
+  const toggleFilter = (filterKey) => {
+      setActiveFilters(prev => {
+          if (filterKey === 'all') return ['all'];
+          let newFilters = prev.filter(f => f !== 'all');
+          
+          if (newFilters.includes(filterKey)) {
+              newFilters = newFilters.filter(f => f !== filterKey);
+          } else {
+              newFilters.push(filterKey);
+          }
+          
+          if (newFilters.length === 0) return ['all'];
+          return newFilters;
+      });
+  };
+
+  const getFilteredQuestions = () => {
+    if (activeFilters.includes('all')) return parsedQuestions;
+    
+    return parsedQuestions.filter(q => {
+      if (!activeFilters.includes('duplicates') && q.isDuplicate) return false;
+
+      const results = activeFilters.map(filterKey => {
+          if (filterKey === 'verified') return q.verificationStatus === 'verified';
+          if (filterKey === 'suspicious') return q.verificationStatus === 'suspicious';
+          if (filterKey === 'source') return !!q.sourceFound;
+          if (filterKey === 'no_source') return !q.sourceFound;
+          if (filterKey === 'duplicates') return !!q.isDuplicate;
+          if (filterKey === 'needs_image') return !!q.needsImage; 
+          if (filterKey === 'text_only') return !q.needsImage; 
+          return true;
+      });
+
+      if (filterLogic === 'AND') {
+          return results.every(r => r === true);
+      } else {
+          return results.some(r => r === true);
+      }
+    });
+  };
+
+  // --- FILTER CONFIG (ATUALIZADA) ---
+  const filterLabels = {
+      'all': 'Todas',
+      'verified': 'Verificadas',
+      'source': 'Com Fonte',
+      'no_source': 'Sem Fonte', 
+      'suspicious': 'Suspeitas',
+      'duplicates': 'Duplicadas',
+      'needs_image': 'Requer Imagem',
+      'text_only': 'Texto Puro (Sem Imagem)' 
+  };
+
+  // --- UPLOAD MULTI-IMAGEM ---
+  const handleImageUploadToQuestion = async (e, idx, questionData) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      setUploadingImageId(questionData.id);
+
+      try {
+          const optimizedFile = await optimizeImageForWeb(file);
+          const timestamp = Date.now();
+          const fileName = `${questionData.id}_${timestamp}.webp`;
+          const storageRef = ref(storage, `questions_images/${fileName}`);
+          
+          const snapshot = await uploadBytes(storageRef, optimizedFile);
+          const downloadURL = await getDownloadURL(snapshot.ref);
+
+          await updateDoc(doc(db, "draft_questions", questionData.id), {
+              images: arrayUnion(downloadURL), 
+              hasImage: true
+          });
+
+          const newQ = [...parsedQuestions];
+          if (newQ[idx]) {
+              const currentImages = newQ[idx].images || [];
+              newQ[idx].images = [...currentImages, downloadURL];
+              newQ[idx].hasImage = true;
+              setParsedQuestions(newQ);
+          }
+          
+          showNotification('success', 'Imagem adicionada à galeria!');
+
       } catch (error) {
           console.error(error);
-          if (error.code === 'auth/email-already-in-use') {
-              showNotification('error', 'Este email já está em uso.');
-          } else {
-              showNotification('error', 'Erro ao criar: ' + error.message);
-          }
+          showNotification('error', 'Erro ao enviar: ' + error.message);
       } finally {
-          if (secondaryApp) {
-              try { await deleteApp(secondaryApp); } catch (e) { console.error("Erro ao limpar app secundário", e); }
+          setUploadingImageId(null);
+      }
+  };
+  
+  const deleteImageFromQuestion = async (idx, questionData, urlToDelete) => {
+      if (!window.confirm("Remover esta imagem específica?")) return;
+
+      try {
+          try {
+              const fileRef = ref(storage, urlToDelete);
+              await deleteObject(fileRef);
+          } catch (e) { console.warn("Erro storage:", e); }
+
+          await updateDoc(doc(db, "draft_questions", questionData.id), {
+              images: arrayRemove(urlToDelete)
+          });
+
+          const newQ = [...parsedQuestions];
+          if (newQ[idx]) {
+              newQ[idx].images = newQ[idx].images.filter(url => url !== urlToDelete);
+              if (newQ[idx].images.length === 0) newQ[idx].hasImage = false;
+              setParsedQuestions(newQ);
           }
-          setIsSaving(false);
+          showNotification('success', 'Imagem removida.');
+      } catch (error) {
+          showNotification('error', 'Erro ao remover imagem.');
       }
   };
 
-  const updateLocalList = (listType, id, newData) => {
-      if (listType === 'questions') {
-          setQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
-          setExtraReportedQuestions(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
-      } else if (listType === 'students') {
-          setStudents(prev => prev.map(item => item.id === id ? { ...item, ...newData } : item));
+  // --- LOGIC: BATCH IMAGE PROCESSING ---
+  const handleBatchImageUpload = (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+
+      const newImages = files.map(file => ({
+          id: Math.random().toString(36).substr(2, 9),
+          file,
+          name: file.name,
+          preview: URL.createObjectURL(file),
+          status: 'pending',
+          errorMsg: ''
+      }));
+
+      setBatchImages(prev => [...prev, ...newImages]);
+      addBatchLog('info', `${files.length} imagens adicionadas à fila.`);
+  };
+
+  const handleBatchPaste = (e) => {
+      const items = e.clipboardData.items;
+      const newImages = [];
+      for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+              const blob = items[i].getAsFile();
+              newImages.push({
+                  id: Math.random().toString(36).substr(2, 9),
+                  file: blob,
+                  name: `Colada_${new Date().getTime()}_${i}.png`,
+                  preview: URL.createObjectURL(blob),
+                  status: 'pending',
+                  errorMsg: ''
+              });
+          }
+      }
+      if (newImages.length > 0) {
+          setBatchImages(prev => [...prev, ...newImages]);
+          addBatchLog('info', `${newImages.length} imagens coladas (Ctrl+V) na fila.`);
       }
   };
 
-  const removeLocalList = (listType, id) => {
-      if (listType === 'questions') {
-          setQuestions(prev => prev.filter(item => item.id !== id));
-          setExtraReportedQuestions(prev => prev.filter(item => item.id !== id));
-      } else if (listType === 'students') {
-          setStudents(prev => prev.filter(item => item.id !== id));
+  const removeBatchImage = (id) => {
+      setBatchImages(prev => prev.filter(img => img.id !== id));
+  };
+
+  const clearBatchQueue = () => {
+      if (batchStatus === 'processing' || batchStatus === 'pausing') return;
+      setBatchImages([]);
+      addBatchLog('info', 'Fila de imagens limpa.');
+      setBatchLogs([]);
+  };
+
+  const toggleBatchProcessing = () => {
+      const currentStatus = batchStatusRef.current;
+      
+      if (currentStatus === 'processing') {
+          setBatchStatus('pausing');
+          addBatchLog('warning', 'Solicitando pausa... Aguardando a imagem atual finalizar.');
+      } else if (currentStatus === 'paused' || currentStatus === 'idle') {
+          setBatchStatus('processing');
+          addBatchLog('info', 'Iniciando processamento de imagens...');
+          batchProcessorRef.current = false;
+          setTimeout(() => processNextBatchImage(), 100);
       }
   };
 
-  const handleInlineUserUpdate = async (id, field, value) => {
-      try {
-          await updateDoc(doc(db, "users", id), { [field]: value });
-          updateLocalList('students', id, { [field]: value }); 
-          showNotification('success', 'Atualizado com sucesso!');
-      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
+  const fileToBase64 = (file) => {
+      return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = error => reject(error);
+      });
   };
 
-  const handleAdd30Days = async (student) => {
-      const now = new Date(); let newDate = new Date();
-      if (student.subscriptionUntil) { const currentExpiry = new Date(student.subscriptionUntil); if (currentExpiry > now) { newDate = new Date(currentExpiry); } }
-      newDate.setDate(newDate.getDate() + 30);
-      try {
-          const isoDate = newDate.toISOString();
-          await updateDoc(doc(db, "users", student.id), { subscriptionUntil: isoDate });
-          updateLocalList('students', student.id, { subscriptionUntil: isoDate });
-          showNotification('success', '+30 dias adicionados!');
-      } catch (error) { showNotification('error', 'Erro: ' + error.message); }
-  };
+  const processNextBatchImage = async () => {
+      if (batchProcessorRef.current) return;
 
-  const handleDeleteUser = async () => {
-      if (!deleteModal || !deleteModal.email) return; 
-      try {
-          await deleteDoc(doc(db, "users", deleteModal.id));
-          removeLocalList('students', deleteModal.id);
-          showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
-  };
+      const currentStatus = batchStatusRef.current;
+      if (currentStatus === 'pausing') {
+          setBatchStatus('paused');
+          addBatchLog('warning', 'Processamento pausado com segurança.');
+          return;
+      }
+      if (currentStatus !== 'processing') return;
 
-  const fetchUserStats = async (student) => {
-      setViewingUserStats({ ...student, loading: true });
-      try {
-          const statsSnap = await getDoc(doc(db, "users", student.id, "stats", "main"));
-          if (statsSnap.exists()) { setViewingUserStats({ ...student, stats: statsSnap.data(), loading: false }); } 
-          else { setViewingUserStats({ ...student, stats: null, loading: false }); }
-      } catch (e) { console.error(e); setViewingUserStats({ ...student, stats: null, loading: false }); }
-  };
+      const queue = batchImagesRef.current;
+      const nextImg = queue.find(img => img.status === 'pending');
 
-  const handleSave = async (shouldResolveReport = false) => {
-      setIsSaving(true);
+      if (!nextImg) {
+          setBatchStatus('idle');
+          addBatchLog('success', 'Fila de imagens finalizada!');
+          showNotification('success', 'Todas as imagens foram processadas.');
+          return;
+      }
+
+      batchProcessorRef.current = true;
+      const ovr = overridesRef.current;
+      addBatchLog('info', `Processando imagem: ${nextImg.name}...`);
+
       try {
+          const base64Data = await fileToBase64(nextImg.file);
+          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
+
+          // Define callback de parada para o Batch
+          const shouldStopBatch = () => batchStatusRef.current === 'pausing';
+
+          const questions = await executeBlindlyWithRetry("Imagem Batch", async (key) => {
+              const systemPrompt = `
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
+                 - Comece o texto direto no conteúdo do caso clínico.
+
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
+
+              3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
+                 - MARQUE "needsImage": true SE:
+                   * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
+
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre "explanation".
+
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
+
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      contents: [{
+                          parts: [
+                              { text: systemPrompt },
+                              { inline_data: { mime_type: nextImg.file.type, data: base64Data } }
+                          ]
+                      }]
+                  })
+              });
+
+              if (!response.ok) {
+                   const errData = await response.json().catch(() => ({}));
+                   throw new Error(errData.error?.message || "Erro na API Gemini");
+              }
+
+              const data = await response.json();
+              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              const parsed = safeJsonParse(jsonString);
+              return parsed.filter(q => q.options && q.options.length >= 2);
+          }, addBatchLog, shouldStopBatch);
+
+          // Pós-Processamento Inteligente
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
+
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
+
+              const shouldRunAPIs = !isDuplicate; 
+
+              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
+              let preCleanedInst = cleanInstitutionText(q.institution);
+              
+              let finalInst = preCleanedInst;
+              let finalYear = q.year;
+              let sourceFound = false;
+              let verificationStatus = 'unchecked';
+              let verificationReason = '';
+
+              if (shouldRunAPIs) {
+                  const doWebSearch = webSearchRef.current; 
+                  const doDoubleCheck = doubleCheckRef.current; 
+
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { 
+                         return await searchQuestionSource(q.text, shouldStopBatch);
+                      }
+                      return null;
+                  })();
+
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          return await verifyQuestionWithAI(q, shouldStopBatch);
+                      }
+                      return { status: 'unchecked', reason: '' };
+                  })();
+
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
+                  }
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
+
+              } else {
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; 
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
+              }
+
+              finalInst = cleanInstitutionText(finalInst);
+
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic };
+              if (ovr.overrideInst) finalInst = ovr.overrideInst;
+              if (ovr.overrideYear) finalYear = ovr.overrideYear;
+
+              return {
+                  ...q,
+                  institution: finalInst,
+                  year: finalYear,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic,
+                  sourceFound,
+                  verificationStatus,
+                  verificationReason,
+                  hashId,
+                  isDuplicate
+              };
+          }));
+        
           const batch = writeBatch(db);
-          const { id, ...data } = editingQuestion;
-          batch.update(doc(db, "questions", id), data);
-          if (shouldResolveReport && associatedReport) {
-              batch.update(doc(db, "reports", associatedReport.id), { status: 'resolved', resolvedBy: user.email, resolvedAt: new Date().toISOString() });
+          let savedCount = 0;
+          
+          for (const q of processedQuestions) {
+              const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+              const docRef = doc(db, "draft_questions", docId);
+              batch.set(docRef, {
+                  ...q,
+                  institution: q.institution || "", 
+                  year: q.year || "",
+                  createdAt: new Date().toISOString(),
+                  createdBy: user.email,
+                  sourceFile: nextImg.name,
+                  hasImage: true 
+              });
+              savedCount++;
           }
           await batch.commit();
-          updateLocalList('questions', id, data);
-          showNotification('success', shouldResolveReport ? 'Salvo e resolvido!' : 'Atualizado!');
-          setEditingQuestion(null);
-          setAssociatedReport(null);
-      } catch (error) { console.error(error); showNotification('error', error.message); } finally { setIsSaving(false); }
-  };
+          
+          addBatchLog('success', `Sucesso em ${nextImg.name}: ${savedCount} questões salvas.`);
+          setBatchImages(prev => prev.filter(img => img.id !== nextImg.id));
 
-  const handleRejectReport = async () => {
-      if (!rejectReportModal) return;
-      try {
-          await deleteDoc(doc(db, "reports", rejectReportModal.id));
-          showNotification('success', 'Reporte excluído.');
-          if (associatedReport && associatedReport.id === rejectReportModal.id) { setAssociatedReport(null); setEditingQuestion(null); }
-          setRejectReportModal(null);
-      } catch (error) { showNotification('error', error.message); }
-  };
+          setTimeout(() => {
+              batchProcessorRef.current = false;
+              processNextBatchImage();
+          }, 1000);
 
-  const handleOpenFromReport = async (report) => {
-      let question = questions.find(q => q.id === report.questionId) || extraReportedQuestions.find(q => q.id === report.questionId);
-      if (!question) {
-          try {
-              const qSnap = await getDoc(doc(db, "questions", report.questionId));
-              if (qSnap.exists()) { question = { id: qSnap.id, ...qSnap.data() }; }
-          } catch (e) { console.error(e); }
-      }
-      if (question) {
-          let qToEdit = { ...question };
-          if (report.category === "metadata_suggestion" || report.category === "suggestion_update") {
-              if (report.suggestedInstitution) qToEdit.institution = report.suggestedInstitution;
-              if (report.suggestedYear) qToEdit.year = report.suggestedYear;
+      } catch (error) {
+          console.error(error);
+          
+          if (error.message === 'ABORT_RETRY') {
+              addBatchLog('warning', `Processamento interrompido manualmente pelo usuário.`);
+              setBatchStatus('paused');
+              batchProcessorRef.current = false;
+              showNotification('info', 'Pausado! Agora você pode remover a imagem se desejar.');
+              return;
           }
-          setEditingQuestion(qToEdit);
-          setAssociatedReport(report);
-      } else { showNotification('error', 'Questão não encontrada.'); }
-  };
+          
+          if (error.message.includes("Cota de Pesquisa")) {
+              addBatchLog('error', error.message);
+              setBatchStatus('paused');
+              batchProcessorRef.current = false;
+              showNotification('error', error.message);
+              return;
+          }
 
-  const handleDeleteQuestion = async () => {
-      if (!deleteModal || deleteModal.email) return; 
-      try {
-          await deleteDoc(doc(db, "questions", deleteModal.id));
-          removeLocalList('questions', deleteModal.id); 
-          showNotification('success', 'Questão excluída.');
-          if (editingQuestion && editingQuestion.id === deleteModal.id) { setEditingQuestion(null); setAssociatedReport(null); }
-          setDeleteModal(null);
-      } catch (error) { showNotification('error', 'Erro ao excluir.'); }
-  };
-
-  const copyToClipboard = async (text) => {
-      try {
-          await navigator.clipboard.writeText(text);
-          showNotification('success', 'Copiado!');
-      } catch (err) { showNotification('error', 'Erro ao copiar.'); }
-  };
-
-  const formatReportCategory = (c) => ({'metadata_suggestion':'Sugestão Metadados','suggestion_update':'Sugestão Atualização','Enunciado incorreto/confuso':'Enunciado Errado'}[c] || c || 'Geral');
-  const getUserDetails = (uid) => { const p = userProfiles[uid]; return { name: p?.name || '...', whatsapp: p?.whatsapp || '' }; };
-  const checkSubscriptionStatus = (d, role) => { 
-      if (role === 'admin') return { status: 'Admin', color: 'indigo', label: 'Admin' };
-      if (!d) return { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-      return new Date(d) > new Date() ? { status: 'Ativo', color: 'emerald', label: 'Ativo' } : { status: 'Expirado', color: 'red', label: 'Expirado' }; 
-  };
-  const getReportDetails = (r) => {
-      if (r.category === "metadata_suggestion" || r.category === "suggestion_update") {
-          return (
-              <div className="flex gap-4 mt-2">
-                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Banca Sugerida</span><span className="text-sm font-medium text-slate-800">{r.suggestedInstitution || 'N/A'}</span></div>
-                 <div className="flex flex-col"><span className="text-xs uppercase text-gray-500 font-bold">Ano Sugerido</span><span className="text-sm font-medium text-slate-800">{r.suggestedYear || 'N/A'}</span></div>
-              </div>
-          );
+          const errorMessage = error.message || "Erro desconhecido";
+          addBatchLog('error', `Falha em ${nextImg.name}: ${errorMessage}`);
+          setBatchImages(prev => prev.map(img => img.id === nextImg.id ? { ...img, status: 'error', errorMsg: errorMessage } : img));
+          
+          setTimeout(() => {
+              batchProcessorRef.current = false;
+              processNextBatchImage();
+          }, 1000);
       }
-      return <p className="text-slate-700 text-sm italic mt-1">"{r.details || r.text || 'Sem detalhes'}"</p>;
   };
 
-  const availableTopics = selectedArea === 'Todas' ? [] : (themesMap[selectedArea] || []);
-  const pendingReportsCount = reports.length;
+  // --- LOGIC: PDF HANDLING ---
+  const handlePdfUpload = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.type !== 'application/pdf') return showNotification('error', 'Por favor, envie um arquivo PDF.');
+      
+      setPdfFile(file);
+      setPdfStatus('reading');
+      setProcessingLogs([]);
+      addLog('info', `Iniciando leitura de: ${file.name}`);
 
+      try {
+          const pdfjs = await loadPdfJs();
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+          
+          addLog('info', `PDF carregado. Total: ${pdf.numPages} págs.`);
+          
+          let startP = parseInt(pdfStartPage) || 1;
+          let endP = parseInt(pdfEndPage) || pdf.numPages;
+
+          if (startP < 1) startP = 1;
+          if (endP > pdf.numPages) endP = pdf.numPages;
+          if (startP > endP) {
+               startP = 1; 
+               endP = pdf.numPages;
+               showNotification('warning', 'Intervalo inválido. Usando PDF completo.');
+          } else {
+               if (startP !== 1 || endP !== pdf.numPages) {
+                   addLog('info', `Recortando páginas: ${startP} até ${endP}`);
+               }
+          }
+
+          let chunks = [];
+          let currentChunkText = "";
+          let chunkStartPage = startP;
+          let lastPageContent = "";
+
+          for (let i = startP; i <= endP; i++) {
+              const page = await pdf.getPage(i);
+              const content = await page.getTextContent();
+              const text = content.items.map(item => item.str).join(' ');
+              
+              lastPageContent = text; 
+
+              const pageTextFormatted = `\n--- PÁGINA ${i} ---\n${text}`;
+              currentChunkText += pageTextFormatted;
+
+              if ((i - startP + 1) % CHUNK_SIZE === 0 || i === endP) {
+                  
+                  let finalChunkText = currentChunkText;
+
+                  if (i < endP) {
+                      try {
+                          const nextPage = await pdf.getPage(i + 1);
+                          const nextContent = await nextPage.getTextContent();
+                          const nextText = nextContent.items.map(item => item.str).join(' ');
+                          finalChunkText += `\n\n--- CONTEXTO DA PRÓXIMA PÁGINA (${i+1}) ---\n${nextText}`;
+                      } catch (err) {
+                          console.warn("Não foi possível buscar o contexto da próxima página:", err);
+                      }
+                  }
+
+                  chunks.push({
+                      id: `chunk_${chunkStartPage}_${i}`,
+                      pages: `${chunkStartPage} a ${i}`,
+                      text: finalChunkText,
+                      status: 'pending',
+                      errorCount: 0
+                  });
+                  
+                  if (i < endP) {
+                      currentChunkText = `\n--- CONTEXTO DA PÁGINA ANTERIOR (${i}) ---\n${lastPageContent}`;
+                  } else {
+                      currentChunkText = "";
+                  }
+                  
+                  chunkStartPage = i + 1;
+              }
+          }
+
+          setPdfChunks(chunks);
+          setPdfStatus('ready');
+          addLog('success', `Pronto! ${chunks.length} partes geradas (${startP}-${endP}).`);
+
+          if (lastSessionData && lastSessionData.fileName === file.name) {
+              const lastIdx = lastSessionData.lastChunkIndex;
+              const nextIndex = lastIdx + 1;
+
+              if (nextIndex < chunks.length) {
+                  setCurrentChunkIndex(nextIndex);
+                  
+                  for(let i = 0; i < nextIndex; i++) {
+                      chunks[i].status = 'restored';
+                  }
+
+                  addLog('info', `Sessão encontrada no DB! Agulha movida para a fatia ${chunks[nextIndex].pages}.`);
+                  showNotification('info', `Retomando ${file.name} a partir da fatia ${chunks[nextIndex].pages}.`);
+              } else {
+                  setCurrentChunkIndex(chunks.length - 1);
+                  chunks.forEach(c => c.status = 'restored');
+                  
+                  addLog('success', `Este arquivo já foi finalizado na última sessão.`);
+                  showNotification('success', 'Arquivo já finalizado anteriormente.');
+              }
+          } else {
+              const newSession = {
+                  fileName: file.name,
+                  lastChunkIndex: -1, 
+                  lastChunkPages: 'Início',
+                  timestamp: new Date().toISOString()
+              };
+              
+              if (user) {
+                  try {
+                      await setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), newSession);
+                      addLog('info', 'Novo arquivo detectado. Progresso resetado no banco.');
+                  } catch (e) {
+                      console.error("Erro ao salvar inicio de sessão:", e);
+                  }
+              }
+          }
+
+      } catch (error) {
+          console.error(error);
+          setPdfStatus('error');
+          addLog('error', `Erro crítico ao ler PDF: ${error.message}`);
+          showNotification('error', 'Erro ao ler PDF.');
+      }
+  };
+
+  const handleResetPdf = () => {
+      if (pdfStatus === 'processing' || pdfStatus === 'pausing') return; 
+      setPdfFile(null);
+      setPdfChunks([]);
+      setPdfStatus('idle');
+      setCurrentChunkIndex(0);
+      setProcessingLogs([]);
+      setConsecutiveErrors(0);
+      setPdfStartPage('');
+      setPdfEndPage('');
+  };
+
+  const handleRestartPdf = () => {
+      if (!pdfFile || pdfStatus === 'processing' || pdfStatus === 'pausing') return;
+      const resetChunks = pdfChunks.map(c => ({ ...c, status: 'pending', errorCount: 0 }));
+      setPdfChunks(resetChunks);
+      setCurrentChunkIndex(0);
+      setPdfStatus('ready');
+      setProcessingLogs([]);
+      setConsecutiveErrors(0);
+      
+      const resetSession = {
+          fileName: pdfFile.name,
+          lastChunkIndex: -1,
+          lastChunkPages: 'Início',
+          timestamp: new Date().toISOString()
+      };
+      
+      if (user) {
+          setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), resetSession)
+            .catch(e => console.error("Erro ao resetar sessão:", e));
+      }
+      
+      addLog('info', 'Processamento reiniciado do zero.');
+  };
+
+  const handleJumpToChunk = (index) => {
+      if (pdfStatus === 'processing' || pdfStatus === 'idle' || pdfStatus === 'pausing' || pdfStatus === 'reading') return;
+      
+      const chunk = pdfChunks[index];
+      addLog('info', `Agulha movida para fatia ${chunk.pages} (Aguardando Início)...`);
+      
+      setCurrentChunkIndex(index);
+
+      setPdfChunks(prev => {
+          const newChunks = [...prev];
+          newChunks[index] = { ...newChunks[index], status: 'pending', errorCount: 0 };
+          return newChunks;
+      });
+  };
+
+  const processNextChunk = async () => {
+      const currentStatus = pdfStatusRef.current;
+      const currentChunks = pdfChunksRef.current;
+      const doDoubleCheck = doubleCheckRef.current;
+      const doWebSearch = webSearchRef.current; 
+      const ovr = overridesRef.current; 
+      const currentFile = pdfFile; 
+      const activeIndex = currentChunkIndexRef.current;
+
+      if (currentStatus === 'pausing' || currentStatus === 'paused') {
+          if (currentStatus === 'pausing') {
+              setPdfStatus('paused');
+              addLog('warning', 'Pausa solicitada. Sistema parado com segurança.');
+          }
+          processorRef.current = false; 
+          return; 
+      }
+      
+      if (processorRef.current) return; 
+      if (currentStatus === 'completed') return;
+      
+      if (activeIndex >= currentChunks.length) {
+           setPdfStatus('completed');
+           addLog('success', 'Processamento Completo!');
+           showNotification('success', 'Todas as partes selecionadas foram processadas.');
+           return;
+      }
+
+      const chunk = currentChunks[activeIndex];
+
+      if (currentStatus !== 'pausing' && currentStatus !== 'processing') setPdfStatus('processing');
+      
+      processorRef.current = true; 
+      addLog('info', `Processando fatia ${chunk.pages}...`);
+
+      try {
+          const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
+
+          // Define callback de parada para o PDF
+          const shouldStopPdf = () => pdfStatusRef.current === 'pausing';
+
+          const questions = await executeBlindlyWithRetry("Geração", async (key) => {
+              const systemPrompt = `
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+
+              OBSERVAÇÃO SOBRE CONTEXTO (CRÍTICO PARA PDF):
+              - O texto contém seções de 'CONTEXTO' (Anterior e Próxima). 
+              - Use essas seções APENAS para reconstruir questões quebradas nas bordas do conteúdo principal.
+              - Se uma questão estiver 100% contida dentro de uma área de contexto, ignore-a (ela será processada no outro lote).
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
+                 - Comece o texto direto no conteúdo do caso clínico.
+                 
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
+
+              3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
+                 - MARQUE "needsImage": true SE:
+                   * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
+
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
+                - Se o gabarito estiver no texto, use-o. Se NÃO, RESOLVA a questão.
+                - Gere sempre um campo "explanation".
+                 - Classifique CADA questão em uma das Áreas e Tópicos da lista abaixo.
+                  - É CRUCIAL que a classificação esteja correta.
+                  - LISTA DE CLASSIFICAÇÃO VÁLIDA:
+                   ${JSON.stringify(activeThemesMap)}
+
+              5. DADOS DE CABEÇALHO:
+                  - IGNORE nomes de cursos preparatórios (Medgrupo, Medcurso, Estratégia, etc) no campo "institution".
+                  - Procure pelo nome do HOSPITAL ou BANCA.
+                  - Se não encontrar, deixe "".
+
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
+            
+              const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.replace('models/', '')}:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: systemPrompt + "\n\nTEXTO DO PDF:\n" + chunk.text }] }]
+                })
+              });
+
+              if (!response.ok) {
+                  const errData = await response.json().catch(() => ({}));
+                  throw new Error(errData.error?.message || "Erro na API Geração");
+              }
+
+              const data = await response.json();
+              let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              const parsed = safeJsonParse(jsonString);
+              return parsed.filter(q => q.options && q.options.length >= 2);
+          }, addLog, shouldStopPdf);
+
+          addLog('info', `Pós-processando ${questions.length} questões (Search + Audit)...`);
+
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
+
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
+
+              const shouldRunAPIs = !isDuplicate; 
+
+              let preCleanedInst = cleanInstitutionText(q.institution);
+              let finalInst = preCleanedInst;
+              let finalYear = q.year;
+              let sourceFound = false;
+              let verificationStatus = 'unchecked';
+              let verificationReason = '';
+
+              if (shouldRunAPIs) {
+                  const doWebSearch = webSearchRef.current; 
+                  const doDoubleCheck = doubleCheckRef.current; 
+
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { 
+                         return await searchQuestionSource(q.text, shouldStopPdf);
+                      }
+                      return null;
+                  })();
+
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          return await verifyQuestionWithAI(q, shouldStopPdf);
+                      }
+                      return { status: 'unchecked', reason: '' };
+                  })();
+
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
+                  }
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
+
+              } else {
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; 
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
+              }
+
+              finalInst = cleanInstitutionText(finalInst);
+
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; 
+              if (ovr.overrideInst) finalInst = ovr.overrideInst;
+              if (ovr.overrideYear) finalYear = ovr.overrideYear;
+
+              return {
+                  ...q,
+                  institution: finalInst,
+                  year: finalYear,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic,
+                  sourceFound,
+                  verificationStatus,
+                  verificationReason,
+                  hashId,
+                  isDuplicate
+              };
+          }));
+
+          const batch = writeBatch(db);
+          processedQuestions.forEach(q => {
+              const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+              const docRef = doc(db, "draft_questions", docId);
+              
+              batch.set(docRef, {
+                  ...q,
+                  institution: q.institution || "", 
+                  year: q.year || "",
+                  createdAt: new Date().toISOString(),
+                  createdBy: user.email,
+                  sourceFile: pdfFile.name,
+                  sourcePages: chunk.pages,
+                  hasImage: false
+              });
+          });
+          await batch.commit();
+
+          addLog('success', `Sucesso fatia ${chunk.pages}: ${processedQuestions.length} questões salvas.`);
+          setPdfChunks(prev => {
+              const newChunks = [...prev];
+              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'success' };
+              return newChunks;
+          });
+          setConsecutiveErrors(0); 
+
+          if (currentFile && currentFile.name && user) {
+              const sessionData = {
+                  fileName: currentFile.name,
+                  lastChunkIndex: activeIndex, 
+                  lastChunkPages: chunk.pages,
+                  timestamp: new Date().toISOString()
+              };
+              setDoc(doc(db, "users", user.uid, "progress", "pdf_session"), sessionData)
+                .catch(err => console.error("Erro ao salvar progresso no DB:", err));
+          }
+
+          if (pdfStatusRef.current === 'pausing') {
+              setPdfStatus('paused');
+              addLog('warning', 'Pausa solicitada. Ciclo atual concluído e salvo.');
+              processorRef.current = false;
+              return; 
+          }
+
+          if (pdfStatusRef.current === 'paused' || pdfStatusRef.current === 'idle') {
+              processorRef.current = false;
+              return;
+          }
+
+          setCurrentChunkIndex(prev => prev + 1);
+          setTimeout(() => {
+              processorRef.current = false; 
+              processNextChunk(); 
+          }, 500); 
+
+      } catch (error) {
+          console.error(error);
+          
+          if (error.message === 'ABORT_RETRY') {
+              addLog('warning', `Processamento interrompido manualmente pelo usuário.`);
+              setPdfStatus('paused');
+              processorRef.current = false;
+              return;
+          }
+
+          if (error.message.includes("Cota de Pesquisa")) {
+              addLog('error', error.message);
+              setPdfStatus('paused');
+              processorRef.current = false;
+              showNotification('error', error.message);
+              return;
+          }
+
+          const errorMessage = error.message || "";
+          const newErrorCount = chunk.errorCount + 1;
+          const delay = 3000 * Math.pow(2, newErrorCount);
+          
+          if (newErrorCount >= 3) {
+              addLog('error', `Fatia ${chunk.pages} marcada com ERRO APÓS 3 TENTATIVAS.`);
+              setPdfChunks(prev => {
+                  const newChunks = [...prev];
+                  newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'error', errorCount: newErrorCount };
+                  return newChunks;
+              });
+              setConsecutiveErrors(0);
+              processorRef.current = false;
+              
+              setCurrentChunkIndex(prev => prev + 1);
+              setTimeout(() => processNextChunk(), 1000); 
+              return;
+          }
+
+          setPdfChunks(prev => {
+              const newChunks = [...prev];
+              newChunks[activeIndex] = { ...newChunks[activeIndex], status: 'pending' };
+              return newChunks;
+          });
+
+          setTimeout(() => {
+              processorRef.current = false;
+              processNextChunk();
+          }, delay);
+      }
+  };
+
+  const togglePdfProcessing = () => {
+      const currentStatus = pdfStatusRef.current;
+      if (currentStatus === 'processing') {
+          setPdfStatus('pausing');
+          addLog('warning', 'Solicitando pausa... Aguardando conclusão da fatia atual.');
+      } else if (currentStatus === 'paused' || currentStatus === 'ready') {
+          setPdfStatus('processing');
+          addLog('info', currentStatus === 'ready' ? 'Iniciando processamento...' : 'Retomando...');
+          processorRef.current = false; 
+          setTimeout(() => processNextChunk(), 100);
+      }
+  };
+
+  // --- HELPER FUNCTIONS ---
+  const saveApiKeyFromModal = async () => {
+      const rawKeys = tempApiKeysText.split('\n').map(k => k.trim()).filter(k => k.length > 0);
+      const uniqueKeys = [...new Set(rawKeys)];
+
+      if (uniqueKeys.length === 0) return showNotification('error', 'Adicione pelo menos uma chave.');
+      
+      setIsSavingKey(true);
+      try {
+          setApiKeys(uniqueKeys);
+          localStorage.setItem('gemini_api_keys', JSON.stringify(uniqueKeys));
+          apiKeysRef.current = uniqueKeys;
+          keyRotationIndex.current = 0; 
+
+          await setDoc(doc(db, "settings", "global"), {
+              geminiApiKeys: uniqueKeys, 
+              geminiApiKey: uniqueKeys[0], 
+              updatedBy: user.email,
+              updatedAt: new Date().toISOString()
+          }, { merge: true });
+          
+          setShowApiKeyModal(false);
+          setShowTutorial(false);
+          showNotification('success', `${uniqueKeys.length} Chaves API Salvas!`);
+          
+          if (pdfStatus === 'paused') addLog('success', 'Novas chaves detectadas! Clique em "Continuar".');
+
+      } catch (error) {
+          showNotification('error', 'Erro ao salvar: ' + error.message);
+      } finally {
+          setIsSavingKey(false);
+      }
+  };
+  
+  // Função para salvar o estado do toggle globalmente
+  const toggleSearchLimit = async () => {
+      const newState = !isSearchLimitEnabled;
+      setIsSearchLimitEnabled(newState);
+      
+      try {
+          await setDoc(doc(db, "settings", "global"), { isSearchLimitEnabled: newState }, { merge: true });
+      } catch (e) {
+          console.error("Erro ao salvar toggle:", e);
+      }
+  };
+
+  const handleGetKey = () => { window.open('https://aistudio.google.com/app/api-keys', '_blank'); setShowTutorial(true); };
+  const handleModelChange = (modelName) => { setSelectedModel(modelName); localStorage.setItem('gemini_model', modelName); };
+  const showNotification = (type, text) => { setNotification({ type, text }); };
+  const closeNotification = () => { setNotification(null); };
+  const handleLogout = () => { signOut(auth); setParsedQuestions([]); setActiveTab('input'); };
+
+  const validateKeyAndFetchModels = async () => {
+      const currentKey = apiKeysRef.current[0]; 
+      if (!currentKey) return showNotification('error', 'Configure as chaves API primeiro.');
+      setIsValidatingKey(true);
+      try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${currentKey}`);
+          const data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          if (!data.models) throw new Error("Sem acesso a modelos.");
+          const genModels = data.models.filter(m => m.supportedGenerationMethods?.includes("generateContent") && (m.name.includes("gemini")));
+          if (genModels.length > 0) {
+              setAvailableModels(genModels);
+              showNotification('success', `${genModels.length} modelos liberados!`);
+          } else {
+              showNotification('error', 'Chave válida mas sem modelos.');
+          }
+      } catch (error) {
+          showNotification('error', `Erro na chave principal: ${error.message}`);
+      } finally {
+          setIsValidatingKey(false);
+      }
+  };
+
+  // --- PROCESSAMENTO IA (Texto Único) ---
+  const processWithAI = async () => {
+    if (activeTab === 'input' && !rawText.trim()) return showNotification('error', 'Cole o texto.');
+    
+    setIsProcessing(true);
+
+    const ovr = { overrideInst, overrideYear, overrideArea, overrideTopic };
+    
+    try {
+        const activeThemesMap = ovr.overrideArea ? { [ovr.overrideArea]: themesMap[ovr.overrideArea] } : themesMap;
+
+        const questions = await executeWithKeyRotation("Processamento Único", async (key) => {
+            const systemPrompt = `
+              Você é um especialista em banco de dados médicos (MedMaps).
+              Analise o conteúdo e gere um JSON ESTRITO.
+              
+              CONTEXTO (Informacional):
+              - Instituição: ${ovr.overrideInst ? ovr.overrideInst : "Não informado (Detectar do texto)"}
+              - Ano: ${ovr.overrideYear ? ovr.overrideYear : "Não informado (Detectar do texto)"}
+
+              REGRAS DE EXTRAÇÃO E LIMPEZA:
+              1. LIMPEZA DE INÍCIO:
+                 - Remova APENAS índices/rótulos de questão (ex: "1)", "159048)", "05.", "Questão 1:", "Enunciado:").
+                 - MANTENHA números que fazem parte da frase (ex: "3 pacientes...", "40 anos...").
+                 - Comece o texto direto no conteúdo do caso clínico.
+
+              2. SEPARAÇÃO DAS ALTERNATIVAS:
+                 - O campo "text" DEVE TERMINAR antes das alternativas.
+                 - NUNCA inclua "A) ... B) ..." ou "a. ... b. ..." dentro do campo "text".
+                 - As alternativas DEVEM ser extraídas separadamente no array "options".
+
+              3. DETECÇÃO DE IMAGEM (LÓGICA CONTEXTUAL):
+                 - MARQUE "needsImage": true SE:
+                   * O texto MANDA olhar: "Vide figura", "Observe a imagem", "A figura abaixo", "Ver anexo".
+                   * O texto DEPENDE do visual: "De acordo com o exame de imagem", "Baseado no ECG apresentado".
+                   * O texto é vago sobre o resultado: "O Raio-X revela... (e não diz o que)".
+                 - MARQUE "needsImage": false SE:
+                   * O texto já DESCREVE o resultado: "ECG normal", "Raio-X evidenciando fratura".
+                   * Apenas cita que o exame foi feito: "Foi solicitada tomografia".
+
+              4. CLASSIFICAÇÃO E RESOLUÇÃO:
+                 - Classifique usando a lista: ${JSON.stringify(activeThemesMap)}
+                 - Tente encontrar o gabarito. Se não houver, RESOLVA a questão.
+                 - Gere sempre "explanation".
+
+              Formato Saída JSON:
+              [
+                {
+                  "institution": "String", "year": Number|String, "area": "String", "topic": "String",
+                  "text": "String", "options": [{"id": "a", "text": "String"}],
+                  "correctOptionId": "char", "explanation": "String",
+                  "needsImage": boolean
+                }
+              ]
+            `;
+
+            let contentsPayload = [{ parts: [{ text: systemPrompt + "\n\nCONTEÚDO:\n" + rawText }] }];
+            
+            const modelNameClean = selectedModel.startsWith('models/') ? selectedModel.replace('models/', '') : selectedModel;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelNameClean}:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: contentsPayload })
+            });
+            
+            if (!response.ok) {
+                 const errData = await response.json().catch(() => ({}));
+                 throw new Error(errData.error?.message || "Erro na API Geração");
+            }
+
+            const data = await response.json();
+            let jsonString = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const parsed = safeJsonParse(jsonString);
+            return parsed.filter(q => q.options && q.options.length >= 2);
+        });
+
+        showNotification('info', `Pós-processando ${questions.length} questões...`);
+
+          let processedQuestions = await Promise.all(questions.map(async (q) => {
+              const hashId = await generateQuestionHash(q.text);
+              let isDuplicate = false;
+              let oldData = null;
+
+              if (hashId) {
+                  const existingDoc = await getDoc(doc(db, "questions", hashId));
+                  if (existingDoc.exists()) {
+                      isDuplicate = true;
+                      oldData = existingDoc.data();
+                  }
+              }
+
+              const shouldRunAPIs = !isDuplicate; 
+
+              // --- FIX: PRÉ-LIMPEZA DE INSTITUIÇÃO ---
+              let preCleanedInst = cleanInstitutionText(q.institution);
+
+              let finalInst = preCleanedInst;
+              let finalYear = q.year;
+              let sourceFound = false;
+              let verificationStatus = 'unchecked';
+              let verificationReason = '';
+
+              if (shouldRunAPIs) {
+                  const doWebSearch = webSearchRef.current; 
+                  const doDoubleCheck = doubleCheckRef.current; 
+
+                  const searchPromise = (async () => {
+                      if (doWebSearch && (!preCleanedInst || !q.year)) { // VALOR LIMPO
+                         // ATENÇÃO: Agora com retry interno
+                         return await searchQuestionSource(q.text);
+                      }
+                      return null;
+                  })();
+
+                  const auditPromise = (async () => {
+                      if (doDoubleCheck) {
+                          // ATENÇÃO: Agora com retry interno
+                          return await verifyQuestionWithAI(q);
+                      }
+                      return { status: 'unchecked', reason: '' };
+                  })();
+
+                  const [searchResult, auditResult] = await Promise.all([searchPromise, auditPromise]);
+
+                  if (searchResult) {
+                      if (searchResult.institution) { finalInst = searchResult.institution; sourceFound = true; }
+                      if (searchResult.year) finalYear = searchResult.year;
+                  }
+                  verificationStatus = auditResult.status;
+                  verificationReason = auditResult.reason;
+
+              } else {
+                  if (oldData) {
+                      finalInst = oldData.institution || q.institution;
+                      finalYear = oldData.year || q.year;
+                      sourceFound = oldData.sourceFound || false; 
+                      
+                      verificationStatus = oldData.verificationStatus || 'unchecked';
+                      verificationReason = oldData.verificationReason || 'Duplicata recuperada';
+                  }
+              }
+
+              // Limpeza Final
+              finalInst = cleanInstitutionText(finalInst);
+
+              const ovr = overridesRef.current || { overrideInst, overrideYear, overrideArea, overrideTopic }; 
+              if (ovr.overrideInst) finalInst = ovr.overrideInst;
+              if (ovr.overrideYear) finalYear = ovr.overrideYear;
+
+              return {
+                  ...q,
+                  institution: finalInst,
+                  year: finalYear,
+                  area: ovr.overrideArea || q.area,
+                  topic: ovr.overrideTopic || q.topic,
+                  sourceFound,
+                  verificationStatus,
+                  verificationReason,
+                  hashId,
+                  isDuplicate
+              };
+          }));
+
+        let savedCount = 0;
+        const batch = writeBatch(db);
+        
+        for (const q of processedQuestions) {
+            const docId = q.hashId || doc(collection(db, "draft_questions")).id;
+            const docRef = doc(db, "draft_questions", docId);
+            
+            batch.set(docRef, {
+                ...q,
+                institution: q.institution || "", 
+                year: q.year || "",
+                createdAt: new Date().toISOString(),
+                createdBy: user.email,
+                hasImage: false
+            });
+            savedCount++;
+        }
+        
+        if (savedCount > 0) await batch.commit();
+
+        setRawText('');
+        setActiveTab('review');
+        
+        showNotification('success', `${savedCount} questões enviadas para fila (inclusive duplicatas)!`);
+
+    } catch (error) {
+        console.error(error);
+        showNotification('error', 'Erro: ' + error.message);
+    } finally {
+        setIsProcessing(false);
+    }
+  };
+
+  // --- BULK METADATA CLEANING ---
+  const clearAllField = (field) => {
+      const targetQuestions = getFilteredQuestions();
+      if (targetQuestions.length === 0) return;
+      
+      setConfirmationModal({
+          isOpen: true,
+          type: field === 'institution' ? 'clear_institution' : 'clear_year',
+          data: null,
+          title: `Limpar ${field === 'institution' ? 'Instituições' : 'Anos'}?`,
+          message: `Deseja limpar o campo "${field === 'institution' ? 'Instituição' : 'Ano'}" de ${targetQuestions.length} questões exibidas?`,
+          confirmText: 'Sim, Limpar',
+          confirmColor: 'red'
+      });
+  };
+
+  // --- FUNÇÕES DE MODAL DE CONFIRMAÇÃO ---
+  const handleDiscardOneClick = (q) => {
+      setConfirmationModal({
+          isOpen: true,
+          type: 'delete_one',
+          data: q,
+          title: 'Excluir Rascunho?',
+          message: 'Tem certeza que deseja excluir esta questão?',
+          confirmText: 'Sim, Excluir',
+          confirmColor: 'red'
+      });
+  };
+
+  const handleApproveFilteredClick = () => {
+      const targetQuestions = getFilteredQuestions();
+      if (targetQuestions.length === 0) return;
+      
+      const count = targetQuestions.length;
+
+      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
+
+      setConfirmationModal({
+          isOpen: true,
+          type: 'approve_filtered',
+          data: null,
+          title: `Aprovar ${count} Questões?`,
+          message: `Você está prestes a publicar (ou atualizar) ${count} questões dos filtros: ${activeLabels}.`,
+          confirmText: 'Sim, Publicar/Atualizar',
+          confirmColor: 'emerald'
+      });
+  };
+
+  const handleDiscardFilteredClick = () => {
+      const targetQuestions = getFilteredQuestions();
+      if (targetQuestions.length === 0) return;
+
+      const activeLabels = activeFilters.map(f => filterLabels[f]).join(' + ');
+
+      setConfirmationModal({
+          isOpen: true,
+          type: 'delete_filtered',
+          data: null,
+          title: `Excluir ${targetQuestions.length} Questões?`,
+          message: `Isso excluirá permanentemente as questões dos filtros: ${activeLabels}.`,
+          confirmText: 'Sim, Excluir',
+          confirmColor: 'red'
+      });
+  };
+
+  const executeConfirmationAction = async () => {
+      const { type, data } = confirmationModal;
+      setConfirmationModal({ ...confirmationModal, isOpen: false }); 
+
+      if (type === 'clear_institution' || type === 'clear_year') {
+          const field = type === 'clear_institution' ? 'institution' : 'year';
+          const targetQuestions = getFilteredQuestions();
+          
+          const updated = parsedQuestions.map(q => {
+              if (targetQuestions.some(t => t.id === q.id)) {
+                  return { ...q, [field]: '' };
+              }
+              return q;
+          });
+          setParsedQuestions(updated);
+
+          const batch = writeBatch(db);
+          targetQuestions.forEach(q => {
+              const docRef = doc(db, "draft_questions", q.id);
+              batch.update(docRef, { [field]: '' });
+          });
+          batch.commit().then(() => {
+              showNotification('success', `Campo ${field === 'institution' ? 'Instituição' : 'Ano'} limpo em ${targetQuestions.length} questões.`);
+          }).catch(err => {
+              console.error(err);
+              showNotification('error', 'Erro ao salvar limpeza no banco.');
+          });
+          return;
+      }
+
+      if (type === 'delete_one') {
+          if (!data || !data.id) return;
+          try { await deleteDoc(doc(db, "draft_questions", data.id)); showNotification('success', 'Excluído.'); } catch (e) { showNotification('error', e.message); }
+      } 
+      else if (type === 'approve_filtered') {
+          setIsBatchAction(true);
+          let count = 0;
+          const targetQuestions = getFilteredQuestions();
+
+          try {
+              for (const q of targetQuestions) {
+                  const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
+                  if (q.area && q.topic && q.text) {
+                     await setDoc(doc(db, "questions", id), { 
+                         ...finalData, 
+                         updatedAt: new Date().toISOString(), 
+                         approvedBy: user.email
+                     });
+                     await deleteDoc(doc(db, "draft_questions", id));
+                     count++;
+                  }
+              }
+              showNotification('success', `${count} questões processadas (criadas ou atualizadas)!`);
+          } catch (e) { showNotification('error', e.message); } finally { setIsBatchAction(false); }
+      }
+      else if (type === 'delete_filtered') {
+          setIsBatchAction(true);
+          const targetQuestions = getFilteredQuestions();
+          try {
+              const batch = writeBatch(db);
+              targetQuestions.forEach(q => batch.delete(doc(db, "draft_questions", q.id)));
+              await batch.commit();
+              showNotification('success', 'Fila limpa.');
+          } catch (e) { showNotification('error', e.message); } finally { setIsBatchAction(false); }
+      }
+  };
+
+  const approveQuestion = async (q) => {
+    if (!q.area || !q.topic || !q.text || !q.options || q.options.length < 2) {
+      return showNotification('error', 'Preencha os campos obrigatórios.');
+    }
+    try {
+      const { id, status, createdAt, createdBy, verificationStatus, verificationReason, isDuplicate, hashId, sourceFound, ...finalData } = q;
+      
+      await setDoc(doc(db, "questions", id), {
+        ...finalData,
+        updatedAt: new Date().toISOString(), 
+        approvedBy: user.email
+      });
+      
+      await deleteDoc(doc(db, "draft_questions", id));
+      
+      if (q.isDuplicate) {
+          showNotification('success', 'Questão original ATUALIZADA com sucesso!');
+      } else {
+          showNotification('success', 'Publicada!');
+      }
+    } catch (error) {
+      showNotification('error', 'Erro: ' + error.message);
+    }
+  };
+
+  // --- FUNÇÕES DE ATUALIZAÇÃO (CORRIGIDO PARA USAR ID) ---
+  const updateQuestionField = (id, field, val) => {
+      setParsedQuestions(prev => prev.map(q => q.id === id ? { ...q, [field]: val } : q));
+  };
+
+  const updateOptionText = (qId, optIdx, val) => {
+      setParsedQuestions(prev => prev.map(q => {
+          if (q.id === qId) {
+              const newOptions = [...q.options];
+              newOptions[optIdx].text = val;
+              return { ...q, options: newOptions };
+          }
+          return q;
+      }));
+  };
+
+  const currentFilteredList = getFilteredQuestions();
+
+  // --- RENDER LOGIN ---
   if (isLoadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Loader2 className="text-white animate-spin" size={48} /></div>;
+  
   if (!user) return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center">
-              <div className="flex justify-center mb-4"><div className="bg-blue-100 p-4 rounded-full"><Lock className="w-8 h-8 text-blue-600"/></div></div>
-              <h1 className="text-2xl font-bold text-slate-800 mb-2">MedManager</h1>
-              <p className="text-sm text-gray-500 mb-6">Acesso restrito a administradores</p>
-              <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', "Erro de login: " + err.message)); }} className="space-y-4">
-                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
-                  <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required/>
-                  <button className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition-colors">Entrar</button>
-              </form>
+        <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-300">
+          <div className="flex items-center gap-3 mb-6 justify-center">
+             <div className="bg-blue-600 p-3 rounded-xl shadow-lg shadow-blue-900/20"><Brain className="text-white" size={32} /></div>
+             <h1 className="text-2xl font-bold text-slate-800">MedImporter Admin</h1>
           </div>
-          <NotificationToast notification={notification} onClose={() => setNotification(null)} />
+          <p className="text-slate-500 text-center mb-6">Acesso restrito a administradores.</p>
+          <form onSubmit={(e) => { e.preventDefault(); signInWithEmailAndPassword(auth, email, password).catch(err => showNotification('error', err.message)); }} className="space-y-4">
+            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none transition-all"/>
+            <input type="password" placeholder="Senha" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none transition-all"/>
+            <button className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2"><Lock size={18} /> Acessar Sistema</button>
+          </form>
+        </div>
+        <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed bottom-4 right-4" />
       </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-slate-800 flex">
-      <NotificationToast notification={notification} onClose={() => setNotification(null)} />
+    <div className="min-h-screen bg-gray-50 font-sans text-slate-800 pb-20">
       
-      {/* SIDEBAR */}
-      <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
-          <div className="p-6 border-b border-gray-100">
-              <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.5</p>
+      {/* HEADER */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <button onClick={() => window.location.href = '/'} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Voltar para o App Principal"><ArrowLeft size={24} /></button>
+            <div className="flex items-center gap-2"><Brain className="text-blue-600" size={28} /><h1 className="text-xl font-bold text-slate-800">MedImporter</h1></div>
           </div>
           
-          <div className="p-4 flex-1 overflow-y-auto space-y-2">
-              <button onClick={() => { setActiveView('questions'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'questions' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><List size={18} /> Questões</span></button>
-              <button onClick={() => { setActiveView('reports'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'reports' ? 'bg-red-50 text-red-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><MessageSquare size={18} /> Reportes</span>{pendingReportsCount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-full">{pendingReportsCount}</span>}</button>
-              <button onClick={() => { setActiveView('students'); setReportFilterQuestionId(null); setSearchTerm(''); }} className={`w-full flex items-center justify-between p-3 rounded-xl font-bold text-sm transition-all ${activeView === 'students' ? 'bg-purple-50 text-purple-700' : 'text-gray-500 hover:bg-gray-50'}`}><span className="flex items-center gap-2"><Users size={18} /> Alunos</span></button>
-              
-              {/* FILTERS FOR QUESTIONS */}
-              {activeView === 'questions' && (
-                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
-                    <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros & Auditoria</label>
-                        <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
-                    </div>
-                    {missingIndexLink && (
-                        <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="block text-xs bg-red-100 text-red-700 p-2 rounded border border-red-200 hover:bg-red-200 transition-colors mb-2 font-bold animate-pulse">
-                            <AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui
-                        </a>
-                    )}
-                    
-                    {/* Filtro de Auditoria */}
-                    <div className="relative">
-                        <ScanLine size={16} className={`absolute left-3 top-3 ${auditFilter !== 'none' ? 'text-red-500' : 'text-gray-400'}`} />
-                        <select 
-                            value={auditFilter} 
-                            onChange={e => { setAuditFilter(e.target.value); loadQuestions(true); }} 
-                            className={`w-full pl-9 pr-3 py-2 border rounded-lg text-sm font-medium outline-none ${auditFilter !== 'none' ? 'bg-red-50 border-red-200 text-red-700 font-bold' : 'bg-gray-50 border-gray-200'}`}
-                        >
-                            <option value="none">Navegação Padrão</option>
-                            <option value="missing_meta">⚠️ Banca/Ano Vazios</option>
-                            <option value="missing_topic">⚠️ Sem Tópico/Área</option>
-                            <option value="has_image">🖼️ Com Imagem (Check)</option>
-                            <option value="short_text">📝 Enunciado Curto (Erro?)</option>
-                        </select>
-                    </div>
-                    
-                    {auditFilter === 'none' && (
-                        <>
-                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca.</div>
-                            <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
-                            <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                        </>
-                    )}
-                    
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais (Resultados)</label>
-                    <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
-                    <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
-                </div>
-              )}
+          <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto items-center">
+            
+            {/* --- DISPLAY DA COTA DIÁRIA (NOVO) --- */}
+            <div className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-bold ${searchQuota.count >= DAILY_SEARCH_LIMIT ? 'bg-red-50 text-red-700 border-red-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`} title="Contador Global de Pesquisas Google (Todos os Admins)">
+                <BarChart3 size={16}/>
+                <span>{searchQuota.count} / {DAILY_SEARCH_LIMIT}</span>
+            </div>
 
-              {/* FILTERS FOR STUDENTS */}
-              {activeView === 'students' && (
-                <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
-                    <div className="relative"><Shield size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentRoleFilter} onChange={e => setStudentRoleFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todas as Funções</option><option value="student">Alunos</option><option value="admin">Admins</option></select></div>
-                    <div className="relative"><Award size={16} className="absolute left-3 top-3 text-gray-400" /><select value={studentStatusFilter} onChange={e => setStudentStatusFilter(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="all">Todos os Status</option><option value="active">Ativos</option><option value="expired">Expirados</option></select></div>
-                </div>
-              )}
-          </div>
-          
-          <div className="p-4 border-t border-gray-100 space-y-1">
-              <button onClick={() => window.location.href = '/'} className="flex items-center gap-2 text-gray-500 hover:text-blue-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-gray-50 transition-colors"><ArrowLeft size={16} /> Voltar ao App</button>
-              <button onClick={handleLogout} className="flex items-center gap-2 text-red-400 hover:text-red-600 text-sm font-bold w-full p-2 rounded-lg hover:bg-red-50 transition-colors"><LogOut size={16} /> Sair</button>
-          </div>
-      </aside>
+            <div 
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isSearchLimitEnabled ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}
+                onClick={toggleSearchLimit}
+                title="Ativar/Desativar Limite Seguro de 1400 Pesquisas/Dia"
+            >
+                {isSearchLimitEnabled ? <ToggleRight size={24} className="text-emerald-600"/> : <ToggleLeft size={24}/>}
+                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
+                    {isSearchLimitEnabled ? <ShieldCheck size={16}/> : <AlertTriangle size={16}/>}
+                    Limite
+                </span>
+            </div>
 
-      {/* MAIN CONTENT */}
-      <main className="ml-64 flex-1 p-8 overflow-y-auto">
-          
-          {/* SEARCH HEADER */}
-          <div className="flex items-center justify-between mb-8 gap-4">
-              <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-                  {activeView === 'questions' && <><List className="text-blue-600"/> Questões</>}
-                  {activeView === 'reports' && <><MessageSquare className="text-red-600"/> Reportes <span className="text-sm font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{pendingReportsCount} Pendentes</span></>}
-                  {activeView === 'students' && <><Users className="text-purple-600"/> Gestão de Alunos</>}
-              </h2>
-              <div className="relative flex-1 max-w-md group">
-                  <Search onClick={handleServerSearch} className="absolute left-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600 z-10" size={20} />
-                  <input 
-                    type="text" 
-                    placeholder="Cole o começo do enunciado ou o ID..." 
-                    value={searchTerm} 
-                    onChange={e => setSearchTerm(e.target.value)} 
-                    onKeyDown={handleKeyDownSearch}
-                    className="w-full pl-12 pr-10 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" 
-                  />
-                  {isSearchingServer && <div className="absolute right-4 top-3.5"><Loader2 className="animate-spin text-blue-600" size={20}/></div>}
-                  <div className="absolute right-3 top-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-help" title="Busca exata por ID ou pelo COMEÇO do texto"><HelpCircle size={16}/></div>
+            <div 
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isWebSearchEnabled ? 'bg-teal-50 border-teal-200 text-teal-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
+                onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                title="A IA vai pesquisar no Google a origem de cada questão"
+            >
+                {isWebSearchEnabled ? <ToggleRight size={24} className="text-teal-600"/> : <ToggleLeft size={24}/>}
+                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
+                    {isWebSearchEnabled ? <Globe size={16}/> : null}
+                    Busca Web
+                </span>
+            </div>
+
+            <div 
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all border ${isDoubleCheckEnabled ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
+                onClick={() => setIsDoubleCheckEnabled(!isDoubleCheckEnabled)}
+                title="A IA vai auditar cada questão gerada (Double Check)"
+            >
+                {isDoubleCheckEnabled ? <ToggleRight size={24} className="text-indigo-600"/> : <ToggleLeft size={24}/>}
+                <span className="text-sm font-bold whitespace-nowrap flex items-center gap-1">
+                    {isDoubleCheckEnabled ? <ShieldCheck size={16}/> : null}
+                    Auditoria
+                </span>
+            </div>
+
+            <button onClick={() => { 
+                setTempApiKeysText(apiKeys.join('\n')); 
+                setShowApiKeyModal(true); 
+                setShowTutorial(false); 
+            }} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-2 text-sm font-medium"><Settings size={18} /><span className="hidden md:inline">API</span></button>
+            
+            <div className="relative group flex-1 md:flex-none w-full md:w-auto flex items-center gap-2">
+                <div className="relative">
+                    <Cpu size={16} className="absolute left-3 top-3 text-gray-500" />
+                    <select value={selectedModel} onChange={(e) => handleModelChange(e.target.value)} className="w-full md:w-56 pl-9 pr-3 py-2 text-sm bg-gray-100 border-none rounded-lg font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 cursor-pointer appearance-none">
+                        {availableModels.map(model => (<option key={model.name} value={model.name}>{model.displayName || model.name}</option>))}
+                    </select>
+                </div>
+                <button onClick={validateKeyAndFetchModels} disabled={isValidatingKey || apiKeys.length === 0} className="p-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50" title="Sincronizar Modelos">
+                    {isValidatingKey ? <Loader2 size={18} className="animate-spin"/> : <RefreshCw size={18} />}
+                </button>
+            </div>
+            <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Sair"><LogOut size={20} /></button>
+          </div>
+        </div>
+      </header>
+
+      {/* NOTIFICATION */}
+      <NotificationToast notification={notification} onClose={closeNotification} positionClass="fixed top-24 right-4" />
+
+      {/* API KEY MODAL */}
+      {showApiKeyModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-y-auto">
+                  <button onClick={() => setShowApiKeyModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                  <h2 className="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2"><Settings size={20} className="text-blue-600"/> Configurar API Gemini</h2>
+                  <div className="mb-4">
+                      <label className="block text-sm font-bold text-gray-600 mb-2">Chaves da API (Uma por linha)</label>
+                      <div className="flex flex-col gap-2">
+                        <textarea 
+                            value={tempApiKeysText} 
+                            onChange={e => setTempApiKeysText(e.target.value)} 
+                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm h-32 resize-y" 
+                            placeholder="AIza...&#10;AIza...&#10;AIza..."
+                        />
+                        <button onClick={handleGetKey} className="self-end px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl hover:bg-indigo-100 font-bold whitespace-nowrap flex items-center gap-2 transition-colors text-sm"><Key size={16} /> Gerar Nova Chave</button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2 flex items-center gap-1"><Layers size={14}/> Dica: Adicione múltiplas chaves para evitar limites de uso (Erro 429). O sistema fará o rodízio automático.</p>
+                  </div>
+                  {showTutorial && (
+                      <div className="mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100 animate-in slide-in-from-top-2">
+                          <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><ExternalLink size={16}/> Como gerar chaves extras:</h3>
+                          <ol className="text-sm text-blue-800/80 space-y-1.5 list-decimal list-inside">
+                              <li>Clique em "Gerar Nova Chave" para abrir o Google AI Studio.</li>
+                              <li>Clique em "Create API key".</li>
+                              <li>Escolha <strong>"Create API key in new project"</strong>.</li>
+                              <li>Copie a chave e cole uma em cada linha acima.</li>
+                              <li>Repita para criar quantos projetos quiser (cada projeto tem sua cota).</li>
+                          </ol>
+                      </div>
+                  )}
+                  <div className="flex justify-end gap-3 mt-auto pt-2">
+                      <button onClick={() => setShowApiKeyModal(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-bold">Cancelar</button>
+                      <button onClick={saveApiKeyFromModal} disabled={isSavingKey} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSavingKey ? <Loader2 size={16} className="animate-spin" /> : null} Salvar Chaves</button>
+                  </div>
               </div>
-              {activeView === 'students' && (
-                  <button onClick={() => setIsCreatingUser(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105">
-                      <UserPlus size={20} /> Novo Aluno
-                  </button>
-              )}
           </div>
+      )}
 
-          {/* VIEW: QUESTIONS */}
-          {activeView === 'questions' && (
-              <div className="space-y-4 pb-10">
-                  {missingIndexLink && (
-                       <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-xl flex items-center gap-4 mb-4">
-                           <AlertTriangle size={32} className="flex-shrink-0"/>
-                           <div>
-                               <h3 className="font-bold text-lg">Índice do Firebase Ausente</h3>
-                               <p className="text-sm mb-2">Para filtrar por Área e Tópico, o Firebase exige um índice composto.</p>
-                               <a href={missingIndexLink} target="_blank" rel="noopener noreferrer" className="bg-red-600 text-white px-4 py-2 rounded-lg font-bold text-sm inline-flex items-center gap-2 hover:bg-red-700">
-                                   <ExternalLink size={16}/> Criar Índice Agora
-                               </a>
-                           </div>
-                       </div>
-                  )}
+      {/* CONFIRMATION MODAL */}
+      {confirmationModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative animate-in zoom-in-95 duration-200">
+                  <div className="flex flex-col items-center text-center">
+                    <div className={`p-3 rounded-full mb-4 ${confirmationModal.confirmColor === 'red' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}><AlertTriangle size={32} /></div>
+                    <h2 className="text-xl font-bold mb-2 text-slate-800">{confirmationModal.title}</h2>
+                    <p className="text-gray-600 mb-6 text-sm">{confirmationModal.message}</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setConfirmationModal({ ...confirmationModal, isOpen: false })} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-colors">Cancelar</button>
+                        <button onClick={executeConfirmationAction} className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors ${confirmationModal.confirmColor === 'red' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'}`}>{confirmationModal.confirmText}</button>
+                    </div>
+                  </div>
+              </div>
+          </div>
+      )}
 
-                  {auditFilter !== 'none' && (
-                       <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold mb-4">
-                           <ScanLine size={16}/>
-                           Modo de Auditoria Ativo: Mostrando questões filtradas por problemas ou critérios específicos.
-                       </div>
-                  )}
+      <main className="max-w-7xl mx-auto p-4 md:p-6">
+        <div className="flex justify-center mb-8">
+            <div className="bg-white p-1 rounded-xl shadow-sm border border-gray-200 inline-flex overflow-x-auto max-w-full">
+                <button onClick={() => setActiveTab('input')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'input' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><FileText size={18} /> Texto</button>
+                <button onClick={() => setActiveTab('batch_images')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'batch_images' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Files size={18} /> Imagens (Lote)</button>
+                <button onClick={() => setActiveTab('pdf')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'pdf' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}><Database size={18} /> PDF Massivo</button>
+                <button onClick={() => setActiveTab('review')} className={`whitespace-nowrap px-6 py-2.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${activeTab === 'review' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>
+                    <CloudLightning size={18} /> Fila de Aprovação 
+                    {parsedQuestions.length > 0 && <span className="ml-2 bg-orange-500 text-white text-xs px-2 py-0.5 rounded-full">{parsedQuestions.length}</span>}
+                </button>
+            </div>
+        </div>
 
-                  {loadingQuestions && questions.length === 0 ? (
-                      <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-blue-600 w-10 h-10"/></div>
-                  ) : (
-                      <>
-                        {filteredQuestions.map(q => {
-                            const reportCount = reportsCountByQuestion[q.id] || 0;
-                            // Checagens Rápidas
-                            const missingMeta = !q.institution || !q.year;
-                            const missingTopic = !q.area || !q.topic || q.area === 'Todas';
+        {/* OVERRIDES SECTION */}
+        {(activeTab === 'input' || activeTab === 'pdf' || activeTab === 'batch_images') && (
+            <div className="max-w-4xl mx-auto mb-6 animate-in slide-in-from-top-4">
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
+                        <Filter size={16} className="text-gray-500"/>
+                        <span className="text-sm font-bold text-slate-700">Filtros de Pré-definição (Forçar Dados)</span>
+                        <span className="text-xs text-gray-400 font-normal ml-auto">Opcional • Se preenchido, a IA será obrigada a usar</span>
+                    </div>
+                    <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Instituição</label>
+                            <input value={overrideInst} onChange={e=>setOverrideInst(e.target.value)} placeholder="Ex: ENARE" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ano</label>
+                            <input type="number" value={overrideYear} onChange={e=>setOverrideYear(e.target.value)} placeholder="Ex: 2026" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"/>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Área Forçada</label>
+                            <select value={overrideArea} onChange={e=>{setOverrideArea(e.target.value); setOverrideTopic('');}} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                <option value="">Automático (IA)</option>
+                                {areasBase.map(a => <option key={a} value={a}>{a}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tópico Forçado</label>
+                            <select value={overrideTopic} onChange={e=>setOverrideTopic(e.target.value)} disabled={!overrideArea} className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white disabled:bg-gray-50 disabled:text-gray-400">
+                                <option value="">Automático (IA)</option>
+                                {(themesMap[overrideArea] || []).map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    {(overrideInst || overrideYear || overrideArea) && (
+                        <div className="bg-blue-50 px-4 py-2 border-t border-blue-100 flex justify-between items-center">
+                            <span className="text-xs text-blue-700 font-medium">As próximas questões serão geradas com esses dados fixos.</span>
+                            <button onClick={()=>{setOverrideInst('');setOverrideYear('');setOverrideArea('');setOverrideTopic('');}} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center gap-1"><Eraser size={12}/> Limpar Filtros</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* INPUT TABS */}
+        {activeTab === 'input' && (
+            <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <label className="block text-lg font-bold text-slate-800 mb-2">
+                        Cole suas questões (Texto)
+                    </label>
+                    <p className="text-sm text-gray-500 mb-4">A IA vai analisar e enviar para a fila de aprovação (Database).</p>
+                    
+                    <textarea value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="Cole aqui o texto..." className="w-full h-96 p-4 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800 font-mono text-sm resize-y mb-4"/>
+
+                    <div className="flex justify-end gap-3 mt-4">
+                        <button onClick={() => { setRawText(''); }} className="px-4 py-3 text-gray-500 hover:bg-gray-100 rounded-xl font-bold">Limpar</button>
+                        <button onClick={processWithAI} disabled={isProcessing || apiKeys.length === 0} className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center gap-2 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isProcessing ? <><Loader2 className="animate-spin" size={20} /> Processando...</> : <><Wand2 size={20} /> Enviar para Fila</>}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* BATCH IMAGES TAB */}
+        {activeTab === 'batch_images' && (
+            <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                            <label className="block text-lg font-bold text-slate-800 mb-1">
+                                Importador de Imagens (Lote ou Única)
+                            </label>
+                            <p className="text-sm text-gray-500">Adicione ou cole (Ctrl+V) várias imagens. As processadas com sucesso serão removidas automaticamente.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button onClick={clearBatchQueue} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} title="Limpar Tudo" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30"><Trash2 size={20}/></button>
                             
-                            return (
-                                <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200'}`}>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex flex-wrap items-center gap-y-2 gap-x-3 mb-3">
-                                            <span onClick={() => copyToClipboard(q.id)} className="bg-slate-100 text-slate-500 text-xs font-mono px-2 py-1 rounded cursor-pointer hover:bg-slate-200 flex items-center gap-1 border border-slate-200" title="Copiar ID"><Hash size={10}/> {q.id.slice(0, 8)}...</span>
-                                            {reportCount > 0 && (
-                                                <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
-                                            )}
-                                            <div className="flex items-center gap-2">
-                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.institution ? 'bg-red-100 text-red-600 border-red-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}><Building size={10}/> {q.institution || 'SEM BANCA'}</span>
-                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.year ? 'bg-red-100 text-red-600 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}><Calendar size={10}/> {q.year || 'SEM ANO'}</span>
-                                            </div>
-                                            <div className="flex items-center flex-wrap gap-1">
-                                                {missingTopic ? (
-                                                    <span className="text-xs font-bold text-red-500 bg-red-50 px-1 rounded">Sem Classificação!</span>
-                                                ) : (
-                                                    <><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></>
-                                                )}
-                                            </div>
-                                            {q.image && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Com Imagem</span>}
-                                        </div>
-                                        <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
-                                    </div>
-                                    <div className="flex items-center gap-2 self-start md:self-center">
-                                        <button onClick={() => setEditingQuestion(q)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg hover:border-blue-100 border border-transparent"><Edit3 size={18}/></button>
-                                        <button onClick={() => setDeleteModal(q)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg hover:border-red-100 border border-transparent"><Trash2 size={18}/></button>
-                                    </div>
+                            {batchStatus === 'processing' ? (
+                                <button onClick={toggleBatchProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
+                            ) : batchStatus === 'pausing' ? (
+                                <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
+                            ) : (
+                                <button onClick={toggleBatchProcessing} disabled={batchImages.length === 0} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {batchStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
+                            )}
+                        </div>
+                    </div>
+
+                    <div 
+                        onPaste={handleBatchPaste}
+                        className="w-full h-32 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        tabIndex="0"
+                    >
+                        <div className="text-center pointer-events-none p-4">
+                            <UploadCloud size={32} className="mx-auto text-gray-400 mb-2" />
+                            <p className="text-gray-600 font-bold text-sm">Arraste, Clique ou Cole (Ctrl+V)</p>
+                        </div>
+                        <input type="file" accept="image/*" multiple onChange={handleBatchImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    </div>
+
+                    <div className="flex flex-col lg:flex-row gap-6">
+                        <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-200 h-[500px] overflow-y-auto">
+                            <h3 className="text-xs font-bold text-gray-500 uppercase mb-3 flex justify-between">
+                                <span>Fila ({batchImages.length})</span>
+                                {batchStatus === 'processing' && <span className="text-blue-600 flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Processando...</span>}
+                                {batchStatus === 'pausing' && <span className="text-amber-600 flex items-center gap-1"><Clock size={10} className="animate-spin"/> Pausando...</span>}
+                            </h3>
+                            
+                            {batchImages.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+                                    <Files size={48} className="mb-2"/>
+                                    <p className="text-sm">Nenhuma imagem na fila</p>
                                 </div>
-                            );
-                        })}
-                        
-                        {/* LOAD MORE BUTTON */}
-                        {hasMoreQuestions && !missingIndexLink && (
-                            <button 
-                                onClick={() => loadQuestions(false)} 
-                                disabled={loadingQuestions}
-                                className="w-full py-4 mt-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-colors"
-                            >
-                                {loadingQuestions ? <Loader2 className="animate-spin" size={20}/> : <ChevronDown size={20}/>}
-                                {loadingQuestions ? 'Carregando...' : 'Carregar Mais Questões'}
-                            </button>
-                        )}
-                        {!hasMoreQuestions && questions.length > 0 && (
-                            <p className="text-center text-gray-400 text-sm py-4">Fim da lista.</p>
-                        )}
-                        {questions.length === 0 && !loadingQuestions && (
-                            <div className="text-center py-10 text-gray-500">
-                                <Database size={48} className="mx-auto mb-2 opacity-20"/>
-                                <p>Nenhuma questão encontrada com estes filtros.</p>
-                                <button onClick={handleClearQuestionFilters} className="mt-4 text-blue-600 font-bold hover:underline">Limpar Filtros</button>
+                            ) : (
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                    {batchImages.map((img) => (
+                                        <div key={img.id} className={`relative group rounded-lg overflow-hidden border bg-white aspect-square shadow-sm ${img.status === 'error' ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'}`}>
+                                            <img src={img.preview} alt="Preview" className="w-full h-full object-cover" />
+                                            <button onClick={() => removeBatchImage(img.id)} disabled={batchStatus === 'processing' || batchStatus === 'pausing'} className="absolute top-1 right-1 bg-white/80 p-1 rounded-full text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"><X size={14}/></button>
+                                            
+                                            {img.status === 'error' && (
+                                                <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center p-2 text-center">
+                                                    <span className="text-xs font-bold text-white bg-red-600 px-2 py-1 rounded shadow-sm truncate max-w-full">{img.errorMsg || 'Erro'}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="w-full lg:w-1/3 flex flex-col h-[500px]">
+                            <div className="bg-slate-900 rounded-xl overflow-hidden shadow-inner flex flex-col h-full">
+                                <div className="p-3 bg-slate-800 border-b border-slate-700 text-gray-400 text-xs font-bold flex items-center gap-2">
+                                    <Terminal size={14}/> Console de Imagens
+                                </div>
+                                <div className="flex-1 p-4 overflow-y-auto font-mono text-xs text-gray-300 space-y-1">
+                                    {batchLogs.length === 0 && <span className="opacity-50">Aguardando logs de imagem...</span>}
+                                    {batchLogs.map((log, i) => (
+                                        <div key={i} className={`mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-amber-400' : 'text-blue-300'}`}>
+                                            <span className="opacity-50 mr-2">[{log.time}]</span>
+                                            {log.message}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* PDF TAB */}
+        {activeTab === 'pdf' && (
+            <div className="max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex justify-between items-start mb-6">
+                        <div>
+                            <label className="block text-lg font-bold text-slate-800 mb-1">
+                                Importador Massivo de PDF (Até 1000 pgs)
+                            </label>
+                            <p className="text-sm text-gray-500">Fatiamento automático: 10 páginas por ciclo. Detecção de erros e pausa inteligente.</p>
+                        </div>
+                        {pdfStatus !== 'idle' && (
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleResetPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Cancelar e Novo PDF" className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><XCircle size={20}/></button>
+                                <button onClick={handleRestartPdf} disabled={pdfStatus === 'processing' || pdfStatus === 'pausing'} title="Reiniciar Processamento" className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors mr-2 disabled:opacity-30 disabled:cursor-not-allowed"><RotateCcw size={20}/></button>
+                                
+                                {pdfStatus === 'processing' ? (
+                                    <button onClick={togglePdfProcessing} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold flex items-center gap-2 hover:bg-amber-200 transition-colors"><Pause size={18}/> Pausar</button>
+                                ) : pdfStatus === 'pausing' ? (
+                                    <button disabled className="px-4 py-2 bg-amber-50 text-amber-400 border border-amber-100 rounded-lg font-bold flex items-center gap-2 cursor-wait"><Loader2 size={18} className="animate-spin"/> Pausando...</button>
+                                ) : (
+                                    <button onClick={togglePdfProcessing} disabled={pdfStatus === 'reading' || pdfStatus === 'completed' || pdfStatus === 'error'} className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-200 transition-colors disabled:opacity-50"><Play size={18}/> {pdfStatus === 'paused' ? 'Continuar' : 'Iniciar'}</button>
+                                )}
                             </div>
                         )}
-                      </>
-                  )}
-              </div>
-          )}
+                    </div>
+                    
+                    {pdfStatus === 'idle' && (
+                        <div className="space-y-4">
+                             {lastSessionData && (
+                                 <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-4 animate-in slide-in-from-top-2">
+                                     <div className="bg-blue-200 text-blue-700 p-2 rounded-lg">
+                                         <History size={24} />
+                                     </div>
+                                     <div className="flex-1">
+                                         <p className="text-xs font-bold text-blue-500 uppercase">Última Sessão Detectada</p>
+                                         <p className="font-bold text-slate-700 text-sm">Arquivo: {lastSessionData.fileName}</p>
+                                         <p className="text-xs text-slate-500">Parou na fatia: <strong>{lastSessionData.lastChunkPages || 'Desconhecido'}</strong></p>
+                                     </div>
+                                     <div className="text-xs text-blue-400 bg-white/50 px-2 py-1 rounded">
+                                         Se enviar este arquivo novamente,<br/>o sistema continuará automaticamente.
+                                     </div>
+                                 </div>
+                             )}
 
-          {/* VIEW: REPORTS */}
-          {activeView === 'reports' && (
-              <div className="max-w-4xl mx-auto space-y-6">
-                  {reportFilterQuestionId && (
-                      <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center justify-between">
-                          <div className="flex items-center gap-2 font-medium"><Filter size={18} /> Filtrando reportes da questão <span className="font-mono bg-white px-2 py-0.5 rounded border border-amber-100">{reportFilterQuestionId}</span></div>
-                          <button onClick={handleClearReportFilter} className="text-sm underline hover:text-amber-900 font-bold">Limpar Filtro</button>
-                      </div>
-                  )}
-                  {filteredReports.map(report => {
-                      const reporter = getUserDetails(report.userId);
-                      return (
-                          <div key={report.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 relative overflow-hidden">
-                              <div className="flex justify-between items-start mb-4">
-                                  <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400"><User size={20} /></div>
-                                      <div><p className="text-sm font-bold text-slate-800">{reporter.name}</p><div onClick={() => copyToClipboard(report.userId)} className="text-xs text-gray-500 flex items-center gap-1 cursor-pointer hover:text-blue-600" title="Copiar ID">ID: {report.userId.slice(0,8)}... <Copy size={10} /></div></div>
-                                  </div>
-                                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${report.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{report.type === 'error' ? <AlertTriangle size={12}/> : <MessageSquare size={12}/>}{formatReportCategory(report.category)}</span>
-                              </div>
-                              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 mb-4">{getReportDetails(report)}</div>
-                              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                                  <button onClick={() => setRejectReportModal(report)} className="px-4 py-2 text-orange-600 hover:bg-orange-50 rounded-lg font-bold text-sm flex items-center gap-2"><ThumbsDown size={16}/> Recusar</button>
-                                  <button onClick={() => handleOpenFromReport(report)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm flex items-center gap-2"><Edit3 size={16}/> Ver Questão</button>
-                              </div>
-                          </div>
-                      );
-                  })}
-              </div>
-          )}
+                             <div className="flex items-end gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><BookOpen size={12}/> De pg.</label>
+                                    <input type="number" min="1" value={pdfStartPage} onChange={e=>setPdfStartPage(e.target.value)} placeholder="Início" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
+                                </div>
+                                <div className="flex-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 flex items-center gap-1"><SkipForward size={12}/> Até pg.</label>
+                                    <input type="number" min="1" value={pdfEndPage} onChange={e=>setPdfEndPage(e.target.value)} placeholder="Fim" className="w-full p-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"/>
+                                </div>
+                                <div className="text-xs text-gray-400 pb-2 w-1/3 leading-tight">
+                                    Deixe em branco para processar o PDF inteiro.
+                                </div>
+                             </div>
 
-          {/* VIEW: STUDENTS TABLE */}
-          {activeView === 'students' && (
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden pb-4">
-                  <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm text-slate-600">
-                          <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500 border-b border-gray-200">
-                              <tr>
-                                  <th className="px-6 py-4">Aluno / Email</th>
-                                  <th className="px-6 py-4">Função</th>
-                                  <th className="px-6 py-4">ID</th>
-                                  <th className="px-6 py-4">Status / Vencimento</th>
-                                  <th className="px-6 py-4 text-right">Ações</th>
-                              </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                              {filteredStudents.map(student => {
-                                  const subStatus = checkSubscriptionStatus(student.subscriptionUntil, student.role);
-                                  const isAdmin = student.role === 'admin';
-                                  
-                                  return (
-                                      <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                                          <td className="px-6 py-4">
-                                              <div className="font-bold text-slate-900">{student.name || 'Sem Nome'}</div>
-                                              <div className="text-xs text-gray-500 mb-1">{student.email}</div>
-                                              {student.whatsapp && (
-                                                  <div className="text-xs text-emerald-600 flex items-center gap-1 font-medium">
-                                                      <Phone size={12}/> {student.whatsapp}
-                                                  </div>
-                                              )}
-                                          </td>
-                                          <td className="px-6 py-4">
-                                              <select 
-                                                  value={student.role} 
-                                                  onChange={(e) => handleInlineUserUpdate(student.id, 'role', e.target.value)}
-                                                  className={`px-2 py-1 rounded text-xs font-bold uppercase outline-none cursor-pointer border-none bg-transparent ${student.role === 'admin' ? 'text-indigo-700 bg-indigo-100' : 'text-gray-600 bg-gray-100'}`}
-                                              >
-                                                  <option value="student">Aluno</option>
-                                                  <option value="admin">Admin</option>
-                                              </select>
-                                          </td>
-                                          <td className="px-6 py-4 font-mono text-xs text-gray-400 flex items-center gap-1 cursor-pointer hover:text-purple-600" onClick={()=>copyToClipboard(student.id)}>
-                                              {student.id.slice(0, 8)}... <Copy size={12}/>
-                                          </td>
-                                          <td className="px-6 py-4">
-                                              {!isAdmin ? (
-                                                  <>
-                                                      <div className={`text-xs font-bold uppercase mb-1 ${subStatus.color === 'emerald' ? 'text-emerald-600' : 'text-red-500'}`}>{subStatus.label}</div>
-                                                      <div className="flex items-center gap-2">
-                                                          <input 
-                                                              type="date" 
-                                                              value={student.subscriptionUntil ? student.subscriptionUntil.split('T')[0] : ''}
-                                                              onChange={(e) => handleInlineUserUpdate(student.id, 'subscriptionUntil', e.target.value ? new Date(e.target.value).toISOString() : null)}
-                                                              className="text-xs text-gray-500 bg-transparent border-b border-dashed border-gray-300 focus:border-purple-500 outline-none hover:border-gray-400 cursor-pointer w-24"
-                                                          />
-                                                          <button onClick={() => handleAdd30Days(student)} className="bg-purple-100 hover:bg-purple-200 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors" title="Adicionar 30 dias"><PlusCircle size={10}/> +30</button>
-                                                      </div>
-                                                  </>
-                                              ) : ( <span className="text-gray-400 text-sm font-medium">–</span> )}
-                                          </td>
-                                          <td className="px-6 py-4 text-right">
-                                              <div className="flex justify-end gap-2">
-                                                  <button onClick={() => fetchUserStats(student)} className="p-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors" title="Ver Desempenho"><TrendingUp size={18}/></button>
-                                                  <button onClick={() => setDeleteModal(student)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Excluir"><Trash2 size={18}/></button>
-                                              </div>
-                                          </td>
-                                      </tr>
-                                  );
-                              })}
-                          </tbody>
-                      </table>
-                  </div>
-                  {/* PAGINATION FOR STUDENTS */}
-                  <div className="p-4 border-t border-gray-100">
-                      {loadingStudents && <div className="text-center py-2"><Loader2 className="animate-spin inline text-purple-600"/> Carregando alunos...</div>}
-                      {hasMoreStudents && !loadingStudents && (
-                          <button onClick={() => loadStudents(false)} className="w-full py-2 bg-gray-50 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-100">Carregar Mais Alunos</button>
-                      )}
-                  </div>
-              </div>
-          )}
+                             <div className="w-full h-56 border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-gray-50 relative overflow-hidden transition-all hover:border-blue-400">
+                                <div className="text-center pointer-events-none p-4">
+                                    <FileText size={48} className="mx-auto text-gray-400 mb-3" />
+                                    <p className="text-gray-600 font-bold mb-1">Arraste seu PDF aqui</p>
+                                    <p className="text-gray-400 text-sm">Suporta arquivos grandes (100MB+)</p>
+                                </div>
+                                <input type="file" accept="application/pdf" onChange={handlePdfUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                             </div>
+                        </div>
+                    )}
+
+                    {pdfStatus !== 'idle' && (
+                        <div className="space-y-6">
+                            <div className="bg-gray-100 rounded-xl p-4 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={`p-2 rounded-lg 
+                                        ${pdfStatus === 'error' ? 'bg-red-100 text-red-600' : 
+                                          pdfStatus === 'processing' ? 'bg-blue-100 text-blue-600 animate-pulse' : 
+                                          pdfStatus === 'pausing' ? 'bg-amber-100 text-amber-600 animate-pulse' :
+                                          'bg-gray-200 text-gray-600'}`}>
+                                        {pdfStatus === 'reading' && <Loader2 className="animate-spin" size={24}/>}
+                                        {pdfStatus === 'ready' && <CheckCircle size={24}/>}
+                                        {pdfStatus === 'processing' && <Cpu size={24}/>}
+                                        {pdfStatus === 'pausing' && <Clock size={24}/>}
+                                        {pdfStatus === 'paused' && <Pause size={24}/>}
+                                        {pdfStatus === 'completed' && <CheckCircle size={24}/>}
+                                        {pdfStatus === 'error' && <AlertOctagon size={24}/>}
+                                    </div>
+                                    <div>
+                                        <p className="font-bold text-slate-800 text-sm uppercase">
+                                            {pdfStatus === 'reading' ? 'Lendo Arquivo...' : 
+                                             pdfStatus === 'pausing' ? 'Pausando...' : pdfStatus}
+                                        </p>
+                                        <p className="text-xs text-gray-500">{pdfFile?.name} • {pdfChunks.length} fatias</p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-2xl font-bold text-slate-700">{Math.round((parsedQuestions.filter(q => q.sourceFile === pdfFile?.name).length))} <span className="text-sm font-normal text-gray-400">questões</span></p>
+                                </div>
+                            </div>
+
+                            <div className="border border-gray-200 rounded-xl p-4 max-h-60 overflow-y-auto">
+                                <p className="text-xs font-bold text-gray-400 uppercase mb-2 flex justify-between">
+                                    <span>Timeline (Navegação)</span>
+                                    {pdfStatus === 'paused' && <span className="text-blue-500 text-[10px]">Clique para Navegar (Seek)</span>}
+                                </p>
+                                <div className="grid grid-cols-5 md:grid-cols-8 lg:grid-cols-10 gap-2">
+                                    {pdfChunks.map((chunk, idx) => (
+                                        <button key={chunk.id} 
+                                            onClick={() => handleJumpToChunk(idx)}
+                                            disabled={pdfStatus === 'reading' || pdfStatus === 'processing' || pdfStatus === 'pausing'}
+                                            className={`h-8 rounded-md flex items-center justify-center text-xs font-bold transition-all border
+                                            ${chunk.status === 'pending' ? 'bg-gray-50 text-gray-400 border-gray-200' : ''}
+                                            ${chunk.status === 'success' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : ''}
+                                            ${chunk.status === 'restored' ? 'bg-indigo-100 text-indigo-600 border-indigo-200 shadow-sm' : ''} 
+                                            ${chunk.status === 'error' ? 'bg-red-500 text-white border-red-600 shadow-sm' : ''}
+                                            ${idx === currentChunkIndex && (pdfStatus === 'processing' || pdfStatus === 'pausing') ? 'ring-2 ring-blue-500 ring-offset-1 bg-blue-50 text-blue-600 border-blue-200 animate-pulse' : ''}
+                                            ${(pdfStatus === 'paused' || pdfStatus === 'ready' || pdfStatus === 'completed') ? 'hover:bg-blue-100 hover:text-blue-600 cursor-pointer hover:border-blue-300' : ''}
+                                            ${(pdfStatus === 'processing' || pdfStatus === 'pausing') && idx !== currentChunkIndex ? 'opacity-50 cursor-not-allowed' : ''}
+                                            `}
+                                            title={`Páginas ${chunk.pages} | Erros: ${chunk.errorCount}`}
+                                        >
+                                            {idx + 1}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900 rounded-xl p-4 font-mono text-xs text-gray-300 h-48 overflow-y-auto shadow-inner flex flex-col-reverse">
+                                {processingLogs.length === 0 && <span className="opacity-50">Aguardando logs...</span>}
+                                {processingLogs.map((log, i) => (
+                                    <div key={i} className={`mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-emerald-400' : log.type === 'warning' ? 'text-amber-400' : 'text-blue-300'}`}>
+                                        <span className="opacity-50 mr-2">[{log.time}]</span>
+                                        {log.message}
+                                    </div>
+                                ))}
+                                <div className="text-gray-500 border-b border-gray-800 mb-2 pb-1 flex items-center gap-2 sticky top-0 bg-slate-900"><Terminal size={12}/> Console de PDF</div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
+        {/* REVIEW TAB (ATUALIZADA) */}
+        {activeTab === 'review' && (
+            <div className="max-w-4xl mx-auto space-y-4">
+                {parsedQuestions.length > 0 && (
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex flex-col gap-3 sticky top-20 z-10 animate-in slide-in-from-top-2">
+                        
+                        {/* CABEÇALHO: Título + Lógica + Contador */}
+                        <div className="flex justify-between items-center px-1">
+                            <div className="flex items-center gap-3">
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1"><Filter size={10}/> Filtros</span>
+                                
+                                <button 
+                                    onClick={() => setFilterLogic(prev => prev === 'OR' ? 'AND' : 'OR')}
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded border flex items-center gap-1 transition-all ${filterLogic === 'AND' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}
+                                    title={filterLogic === 'AND' ? "Mostra questões que têm TODAS as características" : "Mostra questões que têm QUALQUER uma das características"}
+                                >
+                                    {filterLogic === 'AND' ? <ToggleRight size={12}/> : <ToggleLeft size={12}/>}
+                                    {filterLogic === 'AND' ? 'E (Restritivo)' : 'OU (Soma)'}
+                                </button>
+                            </div>
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">{currentFilteredList.length} questões</span>
+                        </div>
+                        
+                        {/* --- ÁREA DOS BOTÕES (DIVIDIDA EM 2 LINHAS FIXAS) --- */}
+                        <div className="flex flex-col gap-1.5">
+                            
+                            {/* LINHA 1: STATUS & VALIDAÇÃO */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <button onClick={() => toggleFilter('all')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold transition-all border ${activeFilters.includes('all') ? 'bg-blue-600 text-white border-blue-700 shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}>
+                                    Todas
+                                </button>
+                                <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                                <button onClick={() => toggleFilter('verified')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('verified') ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <ShieldCheck size={12}/> Verificadas
+                                </button>
+                                <button onClick={() => toggleFilter('suspicious')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('suspicious') ? 'bg-red-100 text-red-700 border-red-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <AlertTriangle size={12}/> Suspeitas
+                                </button>
+                                <button onClick={() => toggleFilter('duplicates')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('duplicates') ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <Copy size={12}/> Duplicadas
+                                </button>
+                            </div>
+
+                            {/* LINHA 2: CONTEÚDO & FONTE */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[9px] font-bold text-gray-300 uppercase mr-1 select-none">Tipo:</span>
+                                <button onClick={() => toggleFilter('source')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('source') ? 'bg-teal-100 text-teal-700 border-teal-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <Globe size={12}/> Com Fonte
+                                </button>
+                                <button onClick={() => toggleFilter('no_source')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('no_source') ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <AlertOctagon size={12}/> Sem Fonte
+                                </button>
+                                <button onClick={() => toggleFilter('needs_image')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('needs_image') ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <ImageIcon size={12}/> Requer Imagem
+                                </button>
+                                <button onClick={() => toggleFilter('text_only')} className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold border flex items-center gap-1.5 transition-all ${activeFilters.includes('text_only') ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                                    <FileType size={12}/> Texto Puro
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="h-px bg-gray-100 w-full"></div>
+
+                        <div className="flex justify-between items-center gap-2">
+                            <div className="flex items-center gap-1.5">
+                                <button onClick={() => clearAllField('institution')} className="text-[10px] bg-gray-50 border border-gray-200 text-slate-500 px-2 py-1.5 rounded hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-bold flex items-center gap-1 whitespace-nowrap"><Eraser size={10}/> Inst.</button>
+                                <button onClick={() => clearAllField('year')} className="text-[10px] bg-gray-50 border border-gray-200 text-slate-500 px-2 py-1.5 rounded hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-bold flex items-center gap-1 whitespace-nowrap"><Eraser size={10}/> Ano</button>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <button onClick={handleDiscardFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="bg-white border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap">
+                                    <Trash2 size={14} /> Descartar
+                                </button>
+                                
+                                <button onClick={handleApproveFilteredClick} disabled={isBatchAction || currentFilteredList.length === 0} className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-1.5 rounded-lg shadow-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 whitespace-nowrap">
+                                    {isBatchAction ? <Loader2 className="animate-spin" size={14}/> : <CheckCircle size={14} />} 
+                                    Aprovar {currentFilteredList.length}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- LISTAGEM DAS QUESTÕES (CORRIGIDO: Passando q.id em vez de idx) --- */}
+                {currentFilteredList.length === 0 ? (
+                    <div className="text-center py-20 opacity-50">
+                        <Database size={64} className="mx-auto mb-4 text-gray-300" />
+                        <p className="text-xl font-medium text-gray-500">Nenhuma questão encontrada neste filtro.</p>
+                        {parsedQuestions.length === 0 && <button onClick={() => setActiveTab('input')} className="mt-4 text-blue-600 font-bold hover:underline">Adicionar novas</button>}
+                    </div>
+                ) : (
+                    currentFilteredList.map((q, idx) => (
+                        <div key={q.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden relative group transition-colors ${q.isDuplicate ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'}`}>
+                            
+                            <div className="h-1.5 w-full bg-gray-100"><div className="h-full bg-orange-400 w-full animate-pulse"></div></div>
+                            
+                            <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex justify-end items-center gap-2 flex-wrap min-h-[40px]">
+                                <div className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 max-w-[250px] ${q.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-700' : q.verificationStatus === 'suspicious' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`} title={q.verificationReason || "Status da verificação"}>
+                                    {q.verificationStatus === 'verified' && <><ShieldCheck size={12} className="flex-shrink-0"/> Double-Checked</>}
+                                    {q.verificationStatus === 'suspicious' && <><ShieldAlert size={12} className="flex-shrink-0"/> <span className="truncate">Suspeita: {q.verificationReason}</span></>}
+                                    {(!q.verificationStatus || q.verificationStatus === 'unchecked') && 'Não Verificada'}
+                                </div>
+                                {q.sourceFound && <div className="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1"><Globe size={12}/> FONTE OK</div>}
+                                {q.isDuplicate && <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse"><Copy size={12}/> DUPLICADA</div>}
+                                {q.needsImage && <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 animate-pulse border border-purple-200"><ImageIcon size={12}/> REQUER IMAGEM</div>}
+                            </div>
+
+                            <div className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Inst</label><input value={q.institution} onChange={e=>updateQuestionField(q.id,'institution',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Ano</label><input type="number" value={q.year} onChange={e=>updateQuestionField(q.id,'year',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"/></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Área</label><select value={q.area} onChange={e=>updateQuestionField(q.id,'area',e.target.value)} className="w-full p-2 bg-blue-50 border border-blue-100 rounded-lg text-sm font-bold text-blue-800"><option value="">Selecione...</option>{areasBase.map(a=><option key={a} value={a}>{a}</option>)}</select></div>
+                                    <div><label className="text-xs font-bold text-gray-500 uppercase">Tópico</label><select value={q.topic} onChange={e=>updateQuestionField(q.id,'topic',e.target.value)} className="w-full p-2 bg-gray-50 border rounded-lg text-sm font-bold"><option value="">Selecione...</option>{(themesMap[q.area]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+                                </div>
+
+                                <div className="mb-6"><label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Enunciado</label><textarea value={q.text} onChange={e=>updateQuestionField(q.id,'text',e.target.value)} rows={4} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-slate-800 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none"/></div>
+
+                                <div className="mb-6 p-4 bg-gray-50 border border-dashed border-gray-300 rounded-xl">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1"><ImageIcon size={12}/> Galeria de Imagens ({q.images?.length || 0})</label>
+                                        {uploadingImageId === q.id && <span className="text-xs text-blue-600 animate-pulse font-bold flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Enviando...</span>}
+                                    </div>
+                                    <div className="flex flex-wrap gap-3 items-start">
+                                        {q.images?.map((imgUrl, i) => (
+                                            <div key={i} className="relative group w-24 h-24 sm:w-32 sm:h-32 bg-white rounded-lg border border-gray-200 shadow-sm flex-shrink-0">
+                                                <img src={imgUrl} alt={`Img ${i}`} className="w-full h-full object-cover rounded-lg" />
+                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 rounded-lg">
+                                                    <a href={imgUrl} target="_blank" rel="noreferrer" className="text-white hover:text-blue-300"><ExternalLink size={16}/></a>
+                                                    <button onClick={() => deleteImageFromQuestion(idx, q, imgUrl)} className="text-white hover:text-red-400"><Trash2 size={16}/></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <label className={`cursor-pointer w-24 h-24 sm:w-32 sm:h-32 bg-white hover:bg-blue-50 border-2 border-dashed border-gray-300 hover:border-blue-400 rounded-lg flex flex-col items-center justify-center gap-2 text-gray-400 hover:text-blue-500 transition-all ${uploadingImageId === q.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            <UploadCloud size={24}/> <span className="text-[10px] font-bold uppercase">Adicionar</span>
+                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUploadToQuestion(e, idx, q)} disabled={uploadingImageId === q.id}/>
+                                        </label>
+                                    </div>
+                                    {q.needsImage && (!q.images || q.images.length === 0) && <p className="mt-2 text-xs text-purple-600 flex items-center gap-1 animate-pulse font-bold"><AlertCircle size={12}/> Esta questão pede imagem!</p>}
+                                </div>
+                              
+                                <div className="space-y-2 mb-6">
+                                    {q.options?.map((opt, optIdx) => (
+                                        <div key={opt.id} className="flex items-center gap-3">
+                                            <div onClick={()=>updateQuestionField(q.id,'correctOptionId',opt.id)} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold text-sm flex-shrink-0 ${q.correctOptionId===opt.id?'bg-emerald-500 text-white':'bg-gray-100 text-gray-400'}`}>{opt.id ? opt.id.toUpperCase() : '?'}</div>
+                                            <input value={opt.text} onChange={e=>updateOptionText(q.id,optIdx,e.target.value)} className={`w-full p-2 border rounded-lg text-sm ${q.correctOptionId===opt.id?'border-emerald-200 bg-emerald-50':'bg-white'}`}/>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
+                                    <label className="text-xs font-bold text-amber-700 uppercase flex items-center gap-1 mb-2"><Brain size={12}/> Comentário IA</label>
+                                    <textarea value={q.explanation} onChange={e=>updateQuestionField(q.id,'explanation',e.target.value)} rows={3} className="w-full p-3 bg-white/50 border border-amber-200/50 rounded-lg text-slate-700 text-sm focus:bg-white focus:ring-2 focus:ring-amber-400 outline-none"/>
+                                </div>
+                            </div>
+
+                            <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t border-gray-100">
+                                <button onClick={()=>handleDiscardOneClick(q)} className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-1"><Trash2 size={16}/> Descartar</button>
+                                <button onClick={()=>approveQuestion(q)} className={`font-bold text-sm px-6 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition-all ${q.isDuplicate ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
+                                    {q.isDuplicate ? <Copy size={18}/> : <CheckCircle size={18}/>} 
+                                    {q.isDuplicate ? 'Atualizar Duplicata' : 'Aprovar e Publicar'}
+                                </button>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+        )}
       </main>
-
-      {/* --- MODALS --- */}
-
-      {/* EDIT QUESTION MODAL */}
-      {editingQuestion && (
-          <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200">
-              <div className="max-w-4xl mx-auto p-6 pb-20">
-                  {associatedReport && (
-                      <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between shadow-sm">
-                          <div className="flex items-start gap-3 w-full">
-                              <div className="bg-amber-100 p-2 rounded-full text-amber-600 mt-1 flex-shrink-0"><MessageSquare size={20}/></div>
-                              <div className="w-full">
-                                  <h3 className="font-bold text-amber-900 text-sm flex items-center gap-2">Atenção: Reporte Pendente <span className="text-xs font-normal bg-white/50 px-2 py-0.5 rounded text-amber-800">{formatReportCategory(associatedReport.category)}</span></h3>
-                                  <div className="mt-2 bg-white/60 p-3 rounded-lg border border-amber-100 text-amber-900 text-sm">{getReportDetails(associatedReport)}</div>
-                              </div>
-                          </div>
-                      </div>
-                  )}
-                  <div className="flex items-center justify-between mb-8 sticky top-0 bg-white py-4 border-b border-gray-100 z-10">
-                      <div className="flex items-center gap-3">
-                          <button onClick={() => { setEditingQuestion(null); setAssociatedReport(null); }} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={24} /></button>
-                          <h2 className="text-2xl font-bold text-slate-900">Editar Questão</h2>
-                      </div>
-                      <div className="flex gap-3">
-                          {associatedReport && <button onClick={() => setRejectReportModal(associatedReport)} className="px-6 py-2 bg-orange-600 text-white hover:bg-orange-700 shadow-lg rounded-lg font-bold flex items-center gap-2"><ThumbsDown size={18} /> <span className="hidden sm:inline">Recusar</span></button>}
-                          {associatedReport ? (
-                              <button onClick={() => handleSave(true)} disabled={isSaving} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <ThumbsUp size={20} />} Aprovar</button>
-                          ) : (
-                              <button onClick={() => handleSave(false)} disabled={isSaving} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2">{isSaving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />} Salvar</button>
-                          )}
-                          <button onClick={() => setDeleteModal(editingQuestion)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100 ml-2" title="Excluir Questão"><Trash2 size={20} /></button>
-                      </div>
-                  </div>
-                  <form className="space-y-8">
-                      <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label><input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: SUS-SP"/></div>
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="2025"/></div>
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                          {/* Campo de Imagem adicionado */}
-                          <div className="col-span-1 md:col-span-2">
-                              <label className="block text-sm font-bold text-gray-600 mb-2">URL da Imagem (Opcional)</label>
-                              <div className="flex gap-2">
-                                <input value={editingQuestion.image || ''} onChange={e => setEditingQuestion({...editingQuestion, image: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://..."/>
-                                {editingQuestion.image && <a href={editingQuestion.image} target="_blank" rel="noopener noreferrer" className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 flex items-center justify-center text-gray-600"><ExternalLink size={20}/></a>}
-                              </div>
-                              {editingQuestion.image && <div className="mt-2 h-32 w-full bg-gray-100 rounded-lg bg-contain bg-no-repeat bg-center border border-gray-200" style={{backgroundImage: `url(${editingQuestion.image})`}}></div>}
-                          </div>
-                      </div>
-                      <div><label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label><textarea value={editingQuestion.text} onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})} rows={6} className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"/></div>
-                      <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
-                      <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100"><label className="block text-sm font-bold text-amber-800 uppercase tracking-wider mb-3">Comentário / Explicação</label><textarea value={editingQuestion.explanation} onChange={e => setEditingQuestion({...editingQuestion, explanation: e.target.value})} rows={5} className="w-full p-4 bg-white border border-amber-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-slate-700"/></div>
-                  </form>
-              </div>
-          </div>
-      )}
-
-      {/* CREATE USER MODAL */}
-      {isCreatingUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl relative">
-                  <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4">
-                      <div className="bg-purple-100 p-2 rounded-lg text-purple-600"><UserPlus size={24}/></div>
-                      <h2 className="text-xl font-bold text-slate-800">Novo Aluno</h2>
-                  </div>
-                  <form onSubmit={handleCreateUser} className="space-y-4">
-                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome Completo</label><input name="name" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="Ex: Ana Silva" /></div>
-                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">E-mail</label><input name="email" type="email" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="email@exemplo.com" /></div>
-                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha (Provisória)</label><input name="password" type="text" required className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="123456" /></div>
-                      <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">WhatsApp (Opcional)</label><input name="whatsapp" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" placeholder="31999999999" /></div>
-                      <div className="grid grid-cols-2 gap-4">
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Função</label><select name="role" className="w-full p-3 border rounded-xl outline-none bg-white"><option value="student">Aluno</option><option value="admin">Administrador</option></select></div>
-                          <div><label className="block text-xs font-bold text-gray-500 uppercase mb-1">Vencimento</label><input name="subscriptionUntil" type="date" className="w-full p-3 border rounded-xl outline-none bg-white"/></div>
-                      </div>
-                      <div className="flex gap-3 pt-4">
-                          <button type="button" onClick={() => setIsCreatingUser(false)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                          <button type="submit" disabled={isSaving} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg">{isSaving ? <Loader2 className="animate-spin mx-auto"/> : 'Criar Aluno'}</button>
-                      </div>
-                  </form>
-              </div>
-          </div>
-      )}
-
-      {/* USER STATS MODAL */}
-      {viewingUserStats && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl relative">
-                  <button onClick={() => setViewingUserStats(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20}/></button>
-                  <div className="flex items-center gap-4 mb-6">
-                      <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-2xl">
-                          {viewingUserStats.name ? viewingUserStats.name.charAt(0) : 'U'}
-                      </div>
-                      <div>
-                          <h2 className="text-xl font-bold text-slate-800">{viewingUserStats.name}</h2>
-                          <p className="text-sm text-gray-500">{viewingUserStats.email}</p>
-                          <div className="flex gap-2 mt-1">
-                              {checkSubscriptionStatus(viewingUserStats.subscriptionUntil, viewingUserStats.role).status === 'Ativo' ? <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded font-bold">Premium</span> : <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded font-bold">Free</span>}
-                              <span className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-bold flex items-center gap-1"><Target size={10}/> Meta: {viewingUserStats.dailyGoal || 50}</span>
-                          </div>
-                      </div>
-                  </div>
-                  {viewingUserStats.loading ? (
-                      <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-purple-600" size={32} /></div>
-                  ) : (
-                      <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-orange-50 p-4 rounded-xl text-center border border-orange-100"><div className="flex justify-center text-orange-600 mb-1"><Zap size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.streak || 0}</div><div className="text-xs uppercase font-bold text-orange-600">Dias em Sequência</div></div>
-                          <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100"><div className="flex justify-center text-blue-600 mb-1"><CheckSquare size={24}/></div><div className="text-3xl font-bold text-slate-800">{viewingUserStats.stats?.totalAnswers || 0}</div><div className="text-xs uppercase font-bold text-blue-600">Questões Totais</div></div>
-                          <div className="bg-emerald-50 p-4 rounded-xl text-center border border-emerald-100 col-span-2">
-                              <div className="flex justify-between items-center mb-2"><span className="text-sm font-bold text-emerald-800 flex items-center gap-1"><Award size={16}/> Taxa de Acerto</span><span className="text-2xl font-bold text-emerald-600">{viewingUserStats.stats?.totalAnswers > 0 ? Math.round((viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100) : 0}%</span></div>
-                              <div className="w-full bg-emerald-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${viewingUserStats.stats?.totalAnswers > 0 ? (viewingUserStats.stats.correctAnswers / viewingUserStats.stats.totalAnswers) * 100 : 0}%` }}></div></div>
-                              <p className="text-xs text-emerald-600 mt-2 text-right">{viewingUserStats.stats?.correctAnswers || 0} acertos em {viewingUserStats.stats?.totalAnswers || 0} tentativas</p>
-                          </div>
-                      </div>
-                  )}
-              </div>
-          </div>
-      )}
-
-      {/* DELETE MODAL */}
-      {deleteModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
-                  <div className="flex flex-col items-center text-center">
-                    <div className="bg-red-100 p-3 rounded-full text-red-600 mb-4"><AlertTriangle size={32}/></div>
-                    <h2 className="text-xl font-bold mb-2 text-slate-800">Excluir Definitivamente?</h2>
-                    <p className="text-gray-600 mb-6 text-sm">{deleteModal.email ? `O aluno ${deleteModal.name} será removido.` : 'Essa questão será removida do banco de dados oficial.'}</p>
-                    <div className="flex gap-3 w-full">
-                        <button onClick={() => setDeleteModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                        <button onClick={deleteModal.email ? handleDeleteUser : handleDeleteQuestion} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Excluir</button>
-                    </div>
-                  </div>
-              </div>
-          </div>
-      )}
-
-      {/* REJECT REPORT MODAL */}
-      {rejectReportModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
-                  <div className="flex flex-col items-center text-center">
-                    <div className="bg-orange-100 p-3 rounded-full text-orange-600 mb-4"><ThumbsDown size={32}/></div>
-                    <h2 className="text-xl font-bold mb-2 text-slate-800">Recusar Sugestão?</h2>
-                    <p className="text-gray-600 mb-6 text-sm">Esta ação vai <strong>APAGAR</strong> o reporte do banco de dados.</p>
-                    <div className="flex gap-3 w-full">
-                        <button onClick={() => setRejectReportModal(null)} className="flex-1 py-3 border border-gray-200 rounded-xl font-bold text-gray-600 hover:bg-gray-50">Cancelar</button>
-                        <button onClick={handleRejectReport} className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-200">Sim, Apagar</button>
-                    </div>
-                  </div>
-              </div>
-          </div>
-      )}
     </div>
   );
 }
