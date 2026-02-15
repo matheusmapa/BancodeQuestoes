@@ -6,22 +6,18 @@ import {
 import ReportModal from './components/ReportModal';
 
 export default function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress, addToast }) {
-  // --- CORREÇÃO PRINCIPAL ---
-  // Não usamos mais useState para 'questions'. Lemos direto de initialData.
-  // Assim, se initialData demorar um pouco pra chegar, a variável atualiza sozinha.
+  // Debug: Ver o que está chegando
+  // console.log("QuestionView recebeu:", initialData);
+
   const questions = initialData?.questionsData || [];
   
-  // Para userAnswers e currentIndex, precisamos de state (pois mudam), 
-  // mas vamos garantir que eles existam mesmo se initialData vier vazio no começo.
   const [userAnswers, setUserAnswers] = useState(initialData?.answersData || {}); 
   const [currentIndex, setCurrentIndex] = useState(initialData?.currentIndex || 0);
 
-  // Efeito para Sincronizar dados caso cheguem "atrasados" (Resume Exam ou Race Condition)
+  // Efeito para Sincronizar dados
   useEffect(() => {
     if (initialData) {
-        // Se as respostas no estado estiverem vazias mas no initialData tiver coisa, atualiza
         setUserAnswers(prev => Object.keys(prev).length === 0 ? (initialData.answersData || {}) : prev);
-        // O mesmo para o índice (se estiver no 0 e o salvo for outro)
         setCurrentIndex(prev => prev === 0 ? (initialData.currentIndex || 0) : prev);
     }
   }, [initialData]);
@@ -32,7 +28,7 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
   const [suggestionModalOpen, setSuggestionModalOpen] = useState(false);
   const [suggestionType, setSuggestionType] = useState(null); 
 
-  // Notifica o componente pai sobre mudanças para o "Autosave"
+  // Notifica o componente pai sobre mudanças
   useEffect(() => {
      if (onUpdateProgress) {
          onUpdateProgress(questions, userAnswers, currentIndex, initialData?.id);
@@ -40,6 +36,7 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
   }, [questions, userAnswers, currentIndex, onUpdateProgress, initialData?.id]);
 
   useEffect(() => {
+    // Só roda se a questão atual existir
     if (questions && questions[currentIndex]) {
         if (userAnswers[currentIndex]) {
           setSelectedOption(userAnswers[currentIndex]);
@@ -55,18 +52,24 @@ export default function QuestionView({ area, initialData, user, onExit, onFinish
   const currentQuestion = questions[currentIndex];
 
   // --- PROTEÇÃO DE LOADING ---
-  // Se ainda não tiver questão carregada, mostra o loading e espera os dados chegarem
   if (!currentQuestion) {
       return (
-          <div className="min-h-screen flex items-center justify-center bg-gray-50 pb-20">
-              <div className="text-center animate-pulse">
+          <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 pb-20 p-4">
+              <div className="text-center animate-pulse mb-6">
                   <div className="w-12 h-12 bg-gray-200 rounded-full mx-auto mb-4"></div>
                   <p className="text-gray-400 font-medium">Carregando questão...</p>
               </div>
+              {/* Botão de Emergência caso trave */}
+              <button 
+                  onClick={onExit} 
+                  className="px-6 py-2 bg-white border border-gray-300 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                  Cancelar e Voltar
+              </button>
           </div>
       );
   }
-
+  
   // --- HANDLERS ---
   const handleConfirmAnswer = () => { 
       if (!selectedOption) return; 
