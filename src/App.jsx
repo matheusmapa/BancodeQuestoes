@@ -650,12 +650,94 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  const handleLaunchExam = (filters = {}, limit = 5) => {
+ const handleLaunchExam = (filters = {}, limit = 5) => {
+    // 1. Filtra as questões válidas do banco
     const validQuestionsPool = allQuestions.filter(q => {
+        if (!q || !q.id) return false; // Proteção extra contra nulos
         if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
         if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
         return true;
     });
+
+    if (validQuestionsPool.length === 0) {
+      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros.", type: "info" });
+      return;
+    }
+
+    let finalSelection = [];
+
+    // --- MODO 1: TÓPICOS ESPECÍFICOS ---
+    if (filters.topics && filters.topics.length > 0) {
+        const questionsByTopic = {};
+        filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
+
+        validQuestionsPool.forEach(q => {
+            if (questionsByTopic[q.topic]) {
+                if (excludedIds.has(q.id)) {
+                    questionsByTopic[q.topic].old.push(q);
+                } else {
+                    questionsByTopic[q.topic].new.push(q);
+                }
+            }
+        });
+
+        const targetPerTopic = Math.ceil(limit / filters.topics.length);
+        let backupPool = [];
+
+        Object.keys(questionsByTopic).forEach(topic => {
+            const { new: newQs, old: oldQs } = questionsByTopic[topic];
+            const shuffledNew = newQs.sort(() => 0.5 - Math.random());
+            const takeNew = shuffledNew.slice(0, targetPerTopic);
+            finalSelection.push(...takeNew);
+            const needed = targetPerTopic - takeNew.length;
+            if (needed > 0) {
+                const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
+                const takeOld = shuffledOld.slice(0, needed);
+                finalSelection.push(...takeOld);
+                backupPool.push(...shuffledOld.slice(needed));
+            } else {
+                 backupPool.push(...oldQs);
+            }
+            backupPool.push(...shuffledNew.slice(targetPerTopic));
+        });
+
+        if (finalSelection.length < limit && backupPool.length > 0) {
+            const missing = limit - finalSelection.length;
+            backupPool.sort((a, b) => {
+                const aIsOld = excludedIds.has(a.id);
+                const bIsOld = excludedIds.has(b.id);
+                return aIsOld === bIsOld ? 0.5 - Math.random() : aIsOld ? 1 : -1;
+            });
+            finalSelection.push(...backupPool.slice(0, missing));
+        }
+        
+        // LIMITAR e EMBARALHAR
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
+
+    } else {
+        // --- MODO 2: GERAL/ALEATÓRIO ---
+        const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
+        const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
+        finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
+        if (finalSelection.length < limit) {
+            const missing = limit - finalSelection.length;
+            finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
+        }
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random());
+    }
+
+    // --- PROTEÇÃO FINAL ---
+    // Removemos qualquer undefined que possa ter entrado
+    finalSelection = finalSelection.filter(item => item && item.id);
+
+    if (finalSelection.length === 0) {
+        setNotification({ title: "Erro", message: "Erro ao selecionar questões. Tente novamente.", type: "error" });
+        return;
+    }
+
+    setActiveExamData({ questionsData: finalSelection, answersData: {}, currentIndex: 0, id: Date.now() });
+    handleViewSwitch('question_mode');
+  };
 
     if (validQuestionsPool.length === 0) {
       setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros.", type: "info" });
