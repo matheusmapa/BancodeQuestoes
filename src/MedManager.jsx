@@ -6,7 +6,7 @@ import {
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
   Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine,
-  RotateCcw, CloudLightning
+  RotateCcw, SaveAll, CloudLightning
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -14,7 +14,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
-  limit, startAfter, getDocs, startAt, endAt, documentId // IMPORTANTE: documentId adicionado
+  limit, startAfter, getDocs, startAt, endAt
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -101,7 +101,6 @@ export default function MedManager() {
   const [cachedInstitutions, setCachedInstitutions] = useState([]);
   const [cachedYears, setCachedYears] = useState([]);
   const [isSyncingMeta, setIsSyncingMeta] = useState(false);
-  const [syncProgress, setSyncProgress] = useState(''); // Novo estado para mostrar progresso
 
   const [students, setStudents] = useState([]); 
   const [lastStudentDoc, setLastStudentDoc] = useState(null);
@@ -164,7 +163,7 @@ export default function MedManager() {
                 if (userDoc.exists() && userDoc.data().role === 'admin') {
                     setUser(u);
                     loadQuestions(true);
-                    loadMetadata(); 
+                    loadMetadata(); // Carrega as listas de Banca/Ano salvas
                 } else {
                     await signOut(auth);
                     showNotification('error', 'Acesso negado: Apenas administradores.');
@@ -182,8 +181,9 @@ export default function MedManager() {
     return () => unsubscribe();
   }, []);
 
-  // --- METADATA SYSTEM (LÓGICA BLINDADA COM BATCHES) ---
+  // --- METADATA SYSTEM (A IDEIA GENIAL) ---
   
+  // 1. Carregar listas salvas (Rápido, 1 leitura)
   const loadMetadata = async () => {
       try {
           const metaSnap = await getDoc(doc(db, "system", "metadata"));
@@ -197,60 +197,31 @@ export default function MedManager() {
       }
   };
 
-  // Sincronização em Lotes (Batches) para não travar
+  // 2. Sincronizar listas (Varre o banco e atualiza - Pesado, mas sob demanda)
   const handleSyncDatabaseFilters = async () => {
       if (isSyncingMeta) return;
       setIsSyncingMeta(true);
-      setSyncProgress('Iniciando...');
       
       try {
-          showNotification('success', 'Iniciando varredura segura (em lotes de 1000)...');
+          showNotification('success', 'Iniciando varredura do banco... Aguarde.');
+          
+          // Busca APENAS os campos necessários para economizar banda (mas ainda conta leituras)
+          const q = query(collection(db, "questions")); // Infelizmente Firestore não tem "select distinct" nativo barato
+          const snapshot = await getDocs(q);
           
           const institutionsSet = new Set();
           const yearsSet = new Set();
           
-          let lastVisible = null;
-          let totalRead = 0;
-          let hasMore = true;
-          
-          while (hasMore) {
-              // Ordena por ID do documento para garantir paginação estável
-              let constraints = [
-                  orderBy(documentId()), 
-                  limit(1000) 
-              ];
-              
-              if (lastVisible) {
-                  constraints.push(startAfter(lastVisible));
-              }
-              
-              const q = query(collection(db, "questions"), ...constraints);
-              const snapshot = await getDocs(q);
-              
-              if (snapshot.empty) {
-                  hasMore = false;
-                  break;
-              }
-              
-              snapshot.forEach(doc => {
-                  const data = doc.data();
-                  if (data.institution) institutionsSet.add(data.institution.trim());
-                  if (data.year) yearsSet.add(String(data.year).trim());
-              });
-              
-              totalRead += snapshot.docs.length;
-              lastVisible = snapshot.docs[snapshot.docs.length - 1];
-              
-              // Feedback Visual
-              setSyncProgress(`Lendo... (${totalRead} questões)`);
-              
-              // Pausa de 100ms para o navegador "respirar" e não travar a UI
-              await new Promise(resolve => setTimeout(resolve, 100));
-          }
+          snapshot.forEach(doc => {
+              const data = doc.data();
+              if (data.institution) institutionsSet.add(data.institution.trim());
+              if (data.year) yearsSet.add(String(data.year).trim());
+          });
           
           const institutionsList = Array.from(institutionsSet).filter(Boolean).sort();
           const yearsList = Array.from(yearsSet).filter(Boolean).sort().reverse();
           
+          // Salva no documento de sistema
           await setDoc(doc(db, "system", "metadata"), {
               institutions: institutionsList,
               years: yearsList,
@@ -260,14 +231,13 @@ export default function MedManager() {
           setCachedInstitutions(institutionsList);
           setCachedYears(yearsList);
           
-          showNotification('success', `Varredura completa! ${totalRead} questões analisadas. Filtros atualizados.`);
+          showNotification('success', `Sincronização concluída! ${institutionsList.length} Bancas e ${yearsList.length} Anos encontrados.`);
           
       } catch (error) {
           console.error("Erro na sync:", error);
-          showNotification('error', 'Erro ao sincronizar: ' + error.message);
+          showNotification('error', 'Erro ao sincronizar filtros: ' + error.message);
       } finally {
           setIsSyncingMeta(false);
-          setSyncProgress('');
       }
   };
 
@@ -353,6 +323,9 @@ export default function MedManager() {
 
               // 3. ANO - BUSCA EXATA
               if (serverYear.trim()) {
+                  const yearNum = parseInt(serverYear.trim());
+                  // Tenta buscar como string (mais comum se veio de JSON) ou numero
+                  // Se o DB estiver misto, isso pode ser um problema, mas vamos assumir string pela consistência do select
                   constraints.push(where("year", "==", serverYear.trim())); 
               }
 
@@ -858,7 +831,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v5.3</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v5.2</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -911,8 +884,8 @@ export default function MedManager() {
                     
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4 flex items-center justify-between">
                          Banca & Ano (BD)
-                         <button onClick={handleSyncDatabaseFilters} disabled={isSyncingMeta} className={`text-[10px] px-1.5 py-0.5 rounded transition-colors flex items-center gap-1 ${isSyncingMeta ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`} title="Sincronizar Lista de Filtros">
-                             {isSyncingMeta ? <Loader2 className="animate-spin" size={10}/> : <CloudLightning size={10}/>} {isSyncingMeta ? syncProgress || 'Atualizando...' : 'Atualizar'}
+                         <button onClick={handleSyncDatabaseFilters} disabled={isSyncingMeta} className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-200 transition-colors flex items-center gap-1" title="Sincronizar Lista de Filtros">
+                             {isSyncingMeta ? <Loader2 className="animate-spin" size={10}/> : <CloudLightning size={10}/>} Atualizar
                          </button>
                     </label>
                     <p className="text-[10px] text-gray-400 mb-2 leading-tight">Selecione para filtrar. Use o botão acima se adicionar questões novas.</p>
