@@ -1286,10 +1286,8 @@ function SimulationSummaryView({ results, onHome, onNewExam, onReview }) {
 
 function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExam, onBack }) {
     const [scope, setScope] = useState('Todas'); 
-    const [topicSort, setTopicSort] = useState('worst'); // 'worst' or 'best'
+    const [topicSort, setTopicSort] = useState('worst'); 
     const [areaSort, setAreaSort] = useState('default');
-    const [filteredTopics, setFilteredTopics] = useState([]);
-    const [isAnalyzing, setIsAnalyzing] = useState(true);
 
     // Estado para o Modal de Treinamento
     const [trainModalOpen, setTrainModalOpen] = useState(false);
@@ -1299,7 +1297,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
     const { totalQuestions, totalCorrect } = detailedStats;
     const globalPercentage = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
 
-    // Calcular estatísticas dos Últimos 7 Dias
+    // --- 1. DADOS DOS ÚLTIMOS 7 DIAS ---
     const statsLast7Days = useMemo(() => {
         const today = new Date();
         const sevenDaysAgo = new Date();
@@ -1329,72 +1327,58 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
         return { total, correct };
     }, [simulations, allQuestions]);
 
-    // Calcular Tópicos (Otimizado para Reatividade Máxima)
-    useEffect(() => {
-        // 1. TRAVA DE SEGURANÇA: Se o BD ainda não entregou as questões, segura o loading.
-        if (allQuestions.length === 0) {
-            setIsAnalyzing(true);
-            return;
-        }
+    // --- 2. CÁLCULO BRUTO DE TODOS OS TÓPICOS (Só roda se os DADOS mudarem) ---
+    const allTopicsRaw = useMemo(() => {
+        if (simulations.length === 0 || allQuestions.length === 0) return [];
 
-        // 2. Se não tem simulados feitos, para o loading e mostra vazio imediatamente.
-        if (simulations.length === 0) {
-            setFilteredTopics([]);
-            setIsAnalyzing(false);
-            return;
-        }
-
-        setIsAnalyzing(true);
-
-        // 3. O TRUQUE DE PERFORMANCE: setTimeout com 0ms.
-        // Isso joga o cálculo pesado para o final da fila de tarefas do navegador.
-        // Garante que o spinner "Analisando..." apareça na tela ANTES do cálculo começar,
-        // mas assim que o cálculo termina (seja em 1ms ou 100ms), ele libera o resultado.
-        const timer = setTimeout(() => {
-            const stats = {};
+        const stats = {};
+        simulations.forEach(sim => {
+            if (sim.status !== 'finished' || !sim.answersData) return;
+            const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
             
-            // Loop de cálculo (Pesado)
-            simulations.forEach(sim => {
-                if (sim.status !== 'finished' || !sim.answersData) return;
-                const questions = sim.questionsData || (sim.questionIds ? sim.questionIds.map(id => allQuestions.find(q => q.id === id)).filter(Boolean) : []);
+            questions.forEach((q, idx) => {
+                const userAnswer = sim.answersData[idx];
+                if (!userAnswer) return; 
+
+                const isCorrect = userAnswer === q.correctOptionId;
+                const key = q.topic;
                 
-                questions.forEach((q, idx) => {
-                    const userAnswer = sim.answersData[idx];
-                    if (!userAnswer) return; 
-
-                    const isCorrect = userAnswer === q.correctOptionId;
-                    const key = q.topic;
-                    
-                    if (!stats[key]) {
-                        stats[key] = { name: key, area: q.area, total: 0, correct: 0 };
-                    }
-                    stats[key].total++;
-                    if (isCorrect) stats[key].correct++;
-                });
+                if (!stats[key]) {
+                    stats[key] = { name: key, area: q.area, total: 0, correct: 0 };
+                }
+                stats[key].total++;
+                if (isCorrect) stats[key].correct++;
             });
+        });
 
-            let filtered = Object.values(stats).map(item => ({
-                ...item,
-                percentage: Math.round((item.correct / item.total) * 100)
-            }));
+        return Object.values(stats).map(item => ({
+            ...item,
+            percentage: Math.round((item.correct / item.total) * 100)
+        }));
+    }, [simulations, allQuestions]);
 
-            if (scope !== 'Todas') {
-                filtered = filtered.filter(t => t.area === scope);
-            }
+    // --- 3. FILTRO E ORDENAÇÃO (Roda instantaneamente quando você clica nos botões) ---
+    const filteredTopics = useMemo(() => {
+        let filtered = [...allTopicsRaw]; // Cria uma cópia para não alterar o original
 
-            filtered.sort((a, b) => {
-                if (topicSort === 'best') return b.percentage - a.percentage || b.total - a.total;
-                return a.percentage - b.percentage || b.total - a.total; 
-            });
+        if (scope !== 'Todas') {
+            filtered = filtered.filter(t => t.area === scope);
+        }
 
-            setFilteredTopics(filtered.slice(0, 5));
-            setIsAnalyzing(false); // Libera assim que terminar, sem esperar timer artificial
-        }, 0); 
+        filtered.sort((a, b) => {
+            if (topicSort === 'best') return b.percentage - a.percentage || b.total - a.total;
+            return a.percentage - b.percentage || b.total - a.total; 
+        });
 
-        return () => clearTimeout(timer);
-    }, [simulations, allQuestions, scope, topicSort]);
+        return filtered.slice(0, 5);
+    }, [allTopicsRaw, scope, topicSort]);
 
-    // Ordenação das Áreas
+    // --- 4. ESTADO DE LOADING REAL ---
+    // Só mostra carregando se realmente não tiver dados do banco ainda
+    const isAnalyzing = allQuestions.length === 0;
+
+
+    // Ordenação das Áreas (Mantida igual)
     const sortedAreas = useMemo(() => {
         const areasWithStats = areasBase.map(area => {
             const st = detailedStats.byArea[area.title] || { total: 0, correct: 0 };
@@ -1503,7 +1487,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                 </div>
              </div>
 
-             {/* RADAR DE DESEMPENHO (ALTERADO) */}
+             {/* RADAR DE DESEMPENHO */}
              <div className="mb-10 bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-sm">
                 
                 {/* TÍTULO */}
@@ -1540,7 +1524,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                     {isAnalyzing ? (
                         <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 gap-3">
                             <Loader2 size={32} className="animate-spin text-blue-500" />
-                            <span className="font-medium animate-pulse">Analisando desempenho...</span>
+                            <span className="font-medium animate-pulse">Carregando dados...</span>
                         </div>
                     ) : filteredTopics.length > 0 ? (
                         <div className="divide-y divide-gray-200">
@@ -1562,7 +1546,7 @@ function PerformanceView({ detailedStats, simulations, allQuestions, onLaunchExa
                     ) : (
                         <div className="flex flex-col items-center justify-center h-[200px] text-gray-400 italic p-4 text-center">
                             <p>Nenhum dado suficiente encontrado para esta seleção.</p>
-                            <span className="text-xs mt-2">Tente resolver mais questões desta área.</span>
+                            <span className="text-xs mt-2">Resolva mais questões desta área para ver estatísticas.</span>
                         </div>
                     )}
                 </div>
