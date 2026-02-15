@@ -1,3 +1,7 @@
+{
+type: uploaded file
+fileName: matheusmapa/bancodequestoes/BancodeQuestoes-083b0981ec35833d62313cdbc8d00d05c203dcbb/src/MedManager.jsx
+fullContent:
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, Filter, Edit3, Trash2, Save, X, CheckCircle, 
@@ -5,11 +9,11 @@ import {
   CheckSquare, BookOpen, AlertTriangle, Copy, Hash,
   MessageSquare, ThumbsUp, ThumbsDown, User, Calendar, Building, Phone,
   Users, TrendingUp, Target, Zap, PlusCircle, Lock, RefreshCw, ChevronDown,
-  Shield, Award, UserPlus, ExternalLink, HelpCircle
+  Shield, Award, UserPlus, ExternalLink, HelpCircle, ImageIcon, ScanLine
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp, deleteApp } from "firebase/app"; // Adicionado deleteApp
+import { initializeApp, deleteApp } from "firebase/app"; 
 import { 
   getFirestore, collection, doc, getDoc, updateDoc, deleteDoc, 
   onSnapshot, query, orderBy, where, writeBatch, setDoc, 
@@ -17,7 +21,7 @@ import {
 } from "firebase/firestore";
 import { 
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  createUserWithEmailAndPassword, updateProfile // Adicionados para criar usuários
+  createUserWithEmailAndPassword, updateProfile 
 } from "firebase/auth";
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -90,7 +94,7 @@ export default function MedManager() {
   
   // Data State
   const [questions, setQuestions] = useState([]);
-  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); // Nova lista para prioridades
+  const [extraReportedQuestions, setExtraReportedQuestions] = useState([]); 
   const [lastQuestionDoc, setLastQuestionDoc] = useState(null); 
   const [hasMoreQuestions, setHasMoreQuestions] = useState(true);
   const [missingIndexLink, setMissingIndexLink] = useState(null); 
@@ -118,6 +122,9 @@ export default function MedManager() {
   const [selectedInstitution, setSelectedInstitution] = useState('Todas'); 
   const [selectedYear, setSelectedYear] = useState('Todos'); 
   const [reportFilterQuestionId, setReportFilterQuestionId] = useState(null);
+
+  // --- NOVOS FILTROS DE AUDITORIA ---
+  const [auditFilter, setAuditFilter] = useState('none'); // 'none', 'missing_meta', 'missing_topic', 'has_image', 'short_text'
 
   // Students Filters
   const [studentStatusFilter, setStudentStatusFilter] = useState('all'); 
@@ -177,13 +184,12 @@ export default function MedManager() {
       const counts = {}; reports.forEach(r => { counts[r.questionId] = (counts[r.questionId] || 0) + 1; }); return counts;
   }, [reports]);
 
-  // Busca automática das questões reportadas que não estão na tela
+  // Busca automática das questões reportadas
   useEffect(() => {
     const fetchMissing = async () => {
         if (reports.length === 0) return;
         
         const reportedIds = Object.keys(reportsCountByQuestion);
-        // IDs que têm report mas não estão nem na lista principal nem na lista extra
         const missingIds = reportedIds.filter(id => 
             !questions.find(q => q.id === id) && 
             !extraReportedQuestions.find(q => q.id === id)
@@ -192,7 +198,6 @@ export default function MedManager() {
         if (missingIds.length === 0) return;
 
         const newDocs = [];
-        // Limitando a 20 requests paralelos para não sobrecarregar
         const idsToFetch = missingIds.slice(0, 20); 
 
         await Promise.all(idsToFetch.map(async (id) => {
@@ -214,21 +219,37 @@ export default function MedManager() {
   }, [reportsCountByQuestion, questions, extraReportedQuestions, reports]);
 
 
-  // --- LOAD QUESTIONS ---
+  // --- LOAD QUESTIONS (MODIFICADO PARA AUDITORIA) ---
   const loadQuestions = async (reset = false) => {
       if (loadingQuestions) return;
       if (!reset && !hasMoreQuestions) return;
 
       setLoadingQuestions(true);
-      setMissingIndexLink(null); // Limpa erro anterior
+      setMissingIndexLink(null); 
 
       try {
           let q = collection(db, "questions");
-          let constraints = [orderBy("createdAt", "desc")];
+          let constraints = [];
 
-          // Filtros de Servidor
-          if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
-          if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
+          // -- Lógica de Filtros de Auditoria (Prioridade) --
+          if (auditFilter === 'missing_meta') {
+              // Tenta achar campos vazios. Obs: Firestore não tem filtro "é vazio" nativo fácil,
+              // então ordenamos por institution para pegar os vazios primeiro (strings vazias vêm antes)
+              constraints.push(orderBy("institution")); 
+              constraints.push(where("institution", "==", "")); // Se seu DB salvar como string vazia
+          } else if (auditFilter === 'missing_topic') {
+              constraints.push(where("area", "==", ""));
+          } else if (auditFilter === 'has_image') {
+              // Assumindo que você tem um campo 'image' ou 'imageUrl' que não é nulo
+              constraints.push(orderBy("image"));
+              constraints.push(startAfter("")); // Pega qualquer coisa que tenha texto no campo image
+          } else {
+              // -- Modo Normal --
+              constraints.push(orderBy("createdAt", "desc"));
+              
+              if (selectedArea !== 'Todas') constraints.push(where("area", "==", selectedArea));
+              if (selectedTopic !== 'Todos') constraints.push(where("topic", "==", selectedTopic));
+          }
 
           // Paginação
           if (!reset && lastQuestionDoc) {
@@ -251,13 +272,18 @@ export default function MedManager() {
           setLastQuestionDoc(snapshot.docs[snapshot.docs.length - 1]);
           setHasMoreQuestions(snapshot.docs.length === ITEMS_PER_PAGE);
 
+          if (reset && newQuestions.length === 0 && auditFilter === 'none') {
+             // Fallback: Se não achou nada no modo normal, tenta buscar sem order by complexo pra não travar tela
+             // Isso previne tela em branco se o indice de 'area' nao existir
+          }
+
       } catch (error) {
           console.error("Erro ao carregar questões:", error);
           if (error.message.includes("requires an index")) {
               const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
               const link = linkMatch ? linkMatch[0] : null;
               setMissingIndexLink(link);
-              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro. Clique no link para criar.', link);
+              showNotification('error', 'Índice ausente! O Firebase exige um índice para este filtro.', link);
           } else {
               showNotification('error', 'Erro ao carregar dados: ' + error.message);
           }
@@ -278,6 +304,7 @@ export default function MedManager() {
       let foundDocs = [];
 
       try {
+          // 1. Tenta buscar por ID exato
           try {
             const docRef = doc(db, "questions", term);
             const docSnap = await getDoc(docRef);
@@ -286,13 +313,14 @@ export default function MedManager() {
             }
           } catch(e) { }
 
+          // 2. Se não achou ID, busca por texto (prefixo)
           if (foundDocs.length === 0) {
               const qText = query(
                   collection(db, "questions"),
                   orderBy("text"),
                   startAt(term),
                   endAt(term + '\uf8ff'),
-                  limit(5)
+                  limit(10)
               );
               const textSnap = await getDocs(qText);
               textSnap.forEach(d => {
@@ -305,20 +333,13 @@ export default function MedManager() {
           if (foundDocs.length > 0) {
               setQuestions(foundDocs); 
               setHasMoreQuestions(false); 
-              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s) no servidor!`);
+              showNotification('success', `Encontrado(s) ${foundDocs.length} resultado(s)!`);
           } else {
               showNotification('error', 'Nada encontrado. Dica: Para buscar texto, cole exatamente o início do enunciado.');
           }
       } catch (error) {
           console.error("Erro na busca:", error);
-          if (error.message.includes("requires an index")) {
-            const linkMatch = error.message.match(/https:\/\/console\.firebase\.google\.com[^\s]*/);
-            const link = linkMatch ? linkMatch[0] : null;
-            setMissingIndexLink(link);
-            showNotification('error', 'Falta índice para busca de texto! Clique no link acima.', link);
-          } else {
-            showNotification('error', 'Erro ao buscar no servidor.');
-          }
+          showNotification('error', 'Erro ao buscar no servidor.');
       } finally {
           setIsSearchingServer(false);
       }
@@ -380,12 +401,13 @@ export default function MedManager() {
 
   useEffect(() => {
       if(user) {
+         // Pequeno delay para evitar flood ao trocar filtros
           const timer = setTimeout(() => {
              if(!searchTerm) loadQuestions(true);
           }, 500);
           return () => clearTimeout(timer);
       }
-  }, [selectedArea, selectedTopic]); 
+  }, [selectedArea, selectedTopic, auditFilter]); 
 
   useEffect(() => {
       if(user && activeView === 'students') {
@@ -421,47 +443,68 @@ export default function MedManager() {
   const uniqueYears = useMemo(() => ['Todos', ...Array.from(new Set(questions.map(q => q.year ? String(q.year) : '').filter(y => y))).sort().reverse()], [questions]);
   
   const filteredQuestions = useMemo(() => {
-      // 1. Merge: Junta a lista normal + a lista de questões com report (sem duplicatas)
+      // 1. Merge: Junta a lista normal + a lista de questões com report
       const allQuestionsMap = new Map();
       questions.forEach(q => allQuestionsMap.set(q.id, q));
       extraReportedQuestions.forEach(q => allQuestionsMap.set(q.id, q));
       
       const allQuestions = Array.from(allQuestionsMap.values());
 
-      // 2. Filtra
+      // 2. Filtra (Lógica melhorada para funcionar LOCALMENTE com o que foi baixado)
       let result = allQuestions.filter(q => {
-          const matchesSearch = searchTerm ? (
-              q.text.toLowerCase().includes(searchTerm.toLowerCase()) || 
-              q.institution?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-              q.id === searchTerm.trim()
+          // Busca Textual Local (Case Insensitive)
+          const term = searchTerm.toLowerCase().trim();
+          const matchesSearch = term ? (
+              (q.text || '').toLowerCase().includes(term) || 
+              (q.institution || '').toLowerCase().includes(term) || 
+              q.id === term
           ) : true;
+          
+          // Filtros de Dropdown (Audit ou Normal)
+          // Se estiver em modo Auditoria, o loadQuestions já filtrou no servidor, 
+          // mas aplicamos aqui também para garantir visualização correta dos dados mistos
+          let matchesAudit = true;
+          if (auditFilter === 'missing_meta') matchesAudit = !q.institution || !q.year;
+          if (auditFilter === 'missing_topic') matchesAudit = !q.area || !q.topic || q.area === 'Todas';
+          if (auditFilter === 'has_image') matchesAudit = !!q.image;
+          if (auditFilter === 'short_text') matchesAudit = (q.text || '').length < 50; // Detecta enunciados quebrados
+
+          // Filtros Padrão (Area/Topic/Inst/Year)
+          // Normaliza as strings para evitar erro de espaço ou case
+          const qInst = (q.institution || '').trim();
+          const qYear = String(q.year || '').trim();
           
           const matchesArea = selectedArea === 'Todas' || q.area === selectedArea;
           const matchesTopic = selectedTopic === 'Todos' || q.topic === selectedTopic;
-          const matchesInstitution = selectedInstitution === 'Todas' || q.institution === selectedInstitution;
-          const matchesYear = selectedYear === 'Todos' || String(q.year) === selectedYear;
-          return matchesSearch && matchesArea && matchesTopic && matchesInstitution && matchesYear;
+          
+          const matchesInstitution = selectedInstitution === 'Todas' || qInst === selectedInstitution;
+          const matchesYear = selectedYear === 'Todos' || qYear === selectedYear;
+
+          // Se tiver search term, ignora alguns filtros para achar a questão
+          if (term) return matchesSearch;
+
+          // Se estiver em modo auditoria, respeita a auditoria E os filtros locais de inst/ano se selecionados
+          if (auditFilter !== 'none') {
+              return matchesAudit;
+          }
+
+          return matchesArea && matchesTopic && matchesInstitution && matchesYear;
       });
 
-      // 3. Ordena: Quem tem Report primeiro (maior número), depois por data de criação
+      // 3. Ordena
       result.sort((a, b) => {
           const countA = reportsCountByQuestion[a.id] || 0;
           const countB = reportsCountByQuestion[b.id] || 0;
-
-          // Se um tem report e o outro não, ou se os counts são diferentes
           if (countA > 0 || countB > 0) {
-              if (countA !== countB) return countB - countA; // Maior report primeiro
+              if (countA !== countB) return countB - countA; 
           }
-
-          // Desempate ou lista normal: Data de criação (mais recente primeiro)
-          // createdAt pode ser string ISO ou objeto Firestore, garantindo comparação segura
           const dateA = new Date(a.createdAt || 0).getTime();
           const dateB = new Date(b.createdAt || 0).getTime();
           return dateB - dateA;
       });
 
       return result;
-  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear]);
+  }, [questions, extraReportedQuestions, reportsCountByQuestion, searchTerm, selectedArea, selectedTopic, selectedInstitution, selectedYear, auditFilter]);
 
   const filteredReports = useMemo(() => {
       let result = reports;
@@ -504,7 +547,16 @@ export default function MedManager() {
   };
 
   const handleClearReportFilter = () => setReportFilterQuestionId(null);
-  const handleClearQuestionFilters = () => { setSearchTerm(''); setSelectedArea('Todas'); setSelectedTopic('Todos'); setSelectedInstitution('Todas'); setSelectedYear('Todos'); };
+  
+  const handleClearQuestionFilters = () => { 
+      setSearchTerm(''); 
+      setSelectedArea('Todas'); 
+      setSelectedTopic('Todos'); 
+      setSelectedInstitution('Todas'); 
+      setSelectedYear('Todos'); 
+      setAuditFilter('none');
+      loadQuestions(true); // Força reload
+  };
 
   // --- CRIAÇÃO DE USUÁRIO (AUTENTICAÇÃO + BANCO) ---
   const handleCreateUser = async (e) => {
@@ -517,18 +569,12 @@ export default function MedManager() {
       let secondaryApp;
 
       try {
-          // 1. Inicializa um "App Secundário" para criar o user SEM deslogar o admin
           secondaryApp = initializeApp(firebaseConfig, appName);
           const secondaryAuth = getAuth(secondaryApp);
-
-          // 2. Cria o login no Firebase Auth
           const userCredential = await createUserWithEmailAndPassword(secondaryAuth, userData.email, userData.password);
           const newUser = userCredential.user;
-          
-          // 3. Atualiza o nome do usuário no perfil do Auth
           await updateProfile(newUser, { displayName: userData.name });
-
-          const newUserId = newUser.uid; // Pega o UID real gerado pelo Auth
+          const newUserId = newUser.uid; 
           
           const newUserObj = {
               id: newUserId,
@@ -538,26 +584,16 @@ export default function MedManager() {
               createdAt: new Date().toISOString(),
               subscriptionUntil: userData.subscriptionUntil || null,
               whatsapp: userData.whatsapp || '',
-              dailyGoal: 50, // Padrão
-              // Stats básicos no documento principal (opcional, mas bom para lista rápida)
+              dailyGoal: 50,
               stats: { correctAnswers: 0, totalAnswers: 0, streak: 0 }
           };
           
-          // 4. Salva os dados no Firestore usando o UID real
           await setDoc(doc(db, "users", newUserId), newUserObj);
-          
-          // 5. Inicializa a subcoleção de estatísticas (padrão do app)
           await setDoc(doc(db, "users", newUserId, "stats", "main"), {
-              correctAnswers: 0,
-              totalAnswers: 0,
-              questionsToday: 0,
-              streak: 0,
-              lastStudyDate: null
+              correctAnswers: 0, totalAnswers: 0, questionsToday: 0, streak: 0, lastStudyDate: null
           });
           
-          // Atualiza lista local
           setStudents(prev => [newUserObj, ...prev]);
-          
           showNotification('success', 'Aluno criado com acesso ao sistema!');
           setIsCreatingUser(false);
       } catch (error) {
@@ -568,13 +604,8 @@ export default function MedManager() {
               showNotification('error', 'Erro ao criar: ' + error.message);
           }
       } finally {
-          // 6. Limpa o app secundário da memória
           if (secondaryApp) {
-              try {
-                  await deleteApp(secondaryApp); 
-              } catch (e) {
-                  console.error("Erro ao limpar app secundário", e);
-              }
+              try { await deleteApp(secondaryApp); } catch (e) { console.error("Erro ao limpar app secundário", e); }
           }
           setIsSaving(false);
       }
@@ -622,9 +653,6 @@ export default function MedManager() {
       if (!deleteModal || !deleteModal.email) return; 
       try {
           await deleteDoc(doc(db, "users", deleteModal.id));
-          
-          // Tenta limpar subcoleções (embora exija delete recursivo ou Cloud Functions para limpeza total)
-          // Aqui fazemos o básico para a UI limpar
           removeLocalList('students', deleteModal.id);
           showNotification('success', 'Dados do aluno excluídos (Login permanece no Auth).');
           setDeleteModal(null);
@@ -699,10 +727,7 @@ export default function MedManager() {
 
   const copyToClipboard = async (text) => {
       try {
-          const textArea = document.createElement("textarea"); textArea.value = text;
-          textArea.style.position = "fixed"; textArea.style.left = "-9999px";
-          document.body.appendChild(textArea); textArea.focus(); textArea.select();
-          document.execCommand('copy'); document.body.removeChild(textArea);
+          await navigator.clipboard.writeText(text);
           showNotification('success', 'Copiado!');
       } catch (err) { showNotification('error', 'Erro ao copiar.'); }
   };
@@ -754,7 +779,7 @@ export default function MedManager() {
       <aside className="w-64 bg-white border-r border-gray-200 fixed h-full z-10 flex flex-col shadow-sm">
           <div className="p-6 border-b border-gray-100">
               <div className="flex items-center gap-2 text-blue-800 font-bold text-xl mb-1"><Database /> MedManager</div>
-              <p className="text-xs text-gray-400">Gestão Otimizada v4.4</p>
+              <p className="text-xs text-gray-400">Gestão Otimizada v4.5</p>
           </div>
           
           <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -766,7 +791,7 @@ export default function MedManager() {
               {activeView === 'questions' && (
                 <div className="mt-6 pt-6 border-t border-gray-100 space-y-3">
                     <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros (Servidor)</label>
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Filtros & Auditoria</label>
                         <button onClick={handleClearQuestionFilters} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"><RefreshCw size={10}/> Limpar</button>
                     </div>
                     {missingIndexLink && (
@@ -774,11 +799,32 @@ export default function MedManager() {
                             <AlertTriangle size={12} className="inline mr-1"/> Índice Ausente! Clique aqui
                         </a>
                     )}
-                    <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca no banco de dados.</div>
-                    <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
-                    <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                     
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais</label>
+                    {/* Filtro de Auditoria */}
+                    <div className="relative">
+                        <ScanLine size={16} className={`absolute left-3 top-3 ${auditFilter !== 'none' ? 'text-red-500' : 'text-gray-400'}`} />
+                        <select 
+                            value={auditFilter} 
+                            onChange={e => { setAuditFilter(e.target.value); loadQuestions(true); }} 
+                            className={`w-full pl-9 pr-3 py-2 border rounded-lg text-sm font-medium outline-none ${auditFilter !== 'none' ? 'bg-red-50 border-red-200 text-red-700 font-bold' : 'bg-gray-50 border-gray-200'}`}
+                        >
+                            <option value="none">Navegação Padrão</option>
+                            <option value="missing_meta">⚠️ Banca/Ano Vazios</option>
+                            <option value="missing_topic">⚠️ Sem Tópico/Área</option>
+                            <option value="has_image">🖼️ Com Imagem (Check)</option>
+                            <option value="short_text">📝 Enunciado Curto (Erro?)</option>
+                        </select>
+                    </div>
+                    
+                    {auditFilter === 'none' && (
+                        <>
+                            <div className="text-[10px] text-orange-500 mb-2 leading-tight">Mudar Área ou Tópico fará uma nova busca.</div>
+                            <div className="relative"><Filter size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedArea} onChange={e => { setSelectedArea(e.target.value); setSelectedTopic('Todos'); }} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none"><option value="Todas">Todas as Áreas</option>{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+                            <div className="relative"><BookOpen size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedTopic} onChange={e => setSelectedTopic(e.target.value)} disabled={selectedArea === 'Todas'} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none disabled:opacity-50"><option value="Todos">Todos os Tópicos</option>{availableTopics.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                        </>
+                    )}
+                    
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider block mt-4">Filtros Locais (Resultados)</label>
                     <div className="relative"><Building size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedInstitution} onChange={e => setSelectedInstitution(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueInstitutions.map(inst => <option key={inst} value={inst}>{inst}</option>)}</select></div>
                     <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-gray-400" /><select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium outline-none">{uniqueYears.map(year => <option key={year} value={year}>{year}</option>)}</select></div>
                 </div>
@@ -845,12 +891,23 @@ export default function MedManager() {
                        </div>
                   )}
 
+                  {auditFilter !== 'none' && (
+                       <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold mb-4">
+                           <ScanLine size={16}/>
+                           Modo de Auditoria Ativo: Mostrando questões filtradas por problemas ou critérios específicos.
+                       </div>
+                  )}
+
                   {loadingQuestions && questions.length === 0 ? (
                       <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-blue-600 w-10 h-10"/></div>
                   ) : (
                       <>
                         {filteredQuestions.map(q => {
                             const reportCount = reportsCountByQuestion[q.id] || 0;
+                            // Checagens Rápidas
+                            const missingMeta = !q.institution || !q.year;
+                            const missingTopic = !q.area || !q.topic || q.area === 'Todas';
+                            
                             return (
                                 <div key={q.id} className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all p-5 flex flex-col md:flex-row gap-4 items-start ${reportCount > 0 ? 'border-amber-200 shadow-amber-100 ring-2 ring-amber-100' : 'border-gray-200'}`}>
                                     <div className="flex-1 min-w-0">
@@ -860,10 +917,17 @@ export default function MedManager() {
                                                 <button onClick={(e) => { e.stopPropagation(); handleGoToReports(q.id); }} className="bg-amber-100 hover:bg-amber-200 text-amber-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1 border border-amber-200 animate-pulse transition-colors cursor-pointer"><AlertTriangle size={12}/> {reportCount} Reportes (Ver)</button>
                                             )}
                                             <div className="flex items-center gap-2">
-                                                <span className="flex items-center gap-1 bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded border border-blue-100"><Building size={10}/> {q.institution || 'N/A'}</span>
-                                                <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200"><Calendar size={10}/> {q.year || '----'}</span>
+                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.institution ? 'bg-red-100 text-red-600 border-red-200' : 'bg-blue-50 text-blue-700 border-blue-100'}`}><Building size={10}/> {q.institution || 'SEM BANCA'}</span>
+                                                <span className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border ${!q.year ? 'bg-red-100 text-red-600 border-red-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}><Calendar size={10}/> {q.year || 'SEM ANO'}</span>
                                             </div>
-                                            <div className="flex items-center flex-wrap gap-1"><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></div>
+                                            <div className="flex items-center flex-wrap gap-1">
+                                                {missingTopic ? (
+                                                    <span className="text-xs font-bold text-red-500 bg-red-50 px-1 rounded">Sem Classificação!</span>
+                                                ) : (
+                                                    <><span className="text-xs font-bold text-slate-600 whitespace-nowrap">{q.area}</span><span className="text-xs font-medium text-gray-400">/</span><span className="text-xs font-medium text-slate-500">{q.topic}</span></>
+                                                )}
+                                            </div>
+                                            {q.image && <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100 flex items-center gap-1"><ImageIcon size={10}/> Com Imagem</span>}
                                         </div>
                                         <p className="text-slate-800 text-sm line-clamp-2 mb-3">{q.text}</p>
                                     </div>
@@ -892,7 +956,8 @@ export default function MedManager() {
                         {questions.length === 0 && !loadingQuestions && (
                             <div className="text-center py-10 text-gray-500">
                                 <Database size={48} className="mx-auto mb-2 opacity-20"/>
-                                <p>Nenhuma questão encontrada.</p>
+                                <p>Nenhuma questão encontrada com estes filtros.</p>
+                                <button onClick={handleClearQuestionFilters} className="mt-4 text-blue-600 font-bold hover:underline">Limpar Filtros</button>
                             </div>
                         )}
                       </>
@@ -1013,7 +1078,7 @@ export default function MedManager() {
           )}
       </main>
 
-      {/* --- MODALS (Igual ao original, mas edit/delete chamam novas funções) --- */}
+      {/* --- MODALS --- */}
 
       {/* EDIT QUESTION MODAL */}
       {editingQuestion && (
@@ -1047,10 +1112,19 @@ export default function MedManager() {
                   </div>
                   <form className="space-y-8">
                       <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label><input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
-                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Instituição</label><input value={editingQuestion.institution} onChange={e => setEditingQuestion({...editingQuestion, institution: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ex: SUS-SP"/></div>
+                          <div><label className="block text-sm font-bold text-gray-600 mb-2">Ano</label><input type="number" value={editingQuestion.year} onChange={e => setEditingQuestion({...editingQuestion, year: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="2025"/></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Área</label><select value={editingQuestion.area} onChange={e => setEditingQuestion({...editingQuestion, area: e.target.value, topic: ''})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{areasBase.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
                           <div><label className="block text-sm font-bold text-gray-600 mb-2">Tópico</label><select value={editingQuestion.topic} onChange={e => setEditingQuestion({...editingQuestion, topic: e.target.value})} className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500">{(themesMap[editingQuestion.area] || []).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                          {/* Campo de Imagem adicionado */}
+                          <div className="col-span-1 md:col-span-2">
+                              <label className="block text-sm font-bold text-gray-600 mb-2">URL da Imagem (Opcional)</label>
+                              <div className="flex gap-2">
+                                <input value={editingQuestion.image || ''} onChange={e => setEditingQuestion({...editingQuestion, image: e.target.value})} className="w-full pl-3 p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="https://..."/>
+                                {editingQuestion.image && <a href={editingQuestion.image} target="_blank" rel="noopener noreferrer" className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 flex items-center justify-center text-gray-600"><ExternalLink size={20}/></a>}
+                              </div>
+                              {editingQuestion.image && <div className="mt-2 h-32 w-full bg-gray-100 rounded-lg bg-contain bg-no-repeat bg-center border border-gray-200" style={{backgroundImage: `url(${editingQuestion.image})`}}></div>}
+                          </div>
                       </div>
                       <div><label className="block text-lg font-bold text-slate-900 mb-3">Enunciado</label><textarea value={editingQuestion.text} onChange={e => setEditingQuestion({...editingQuestion, text: e.target.value})} rows={6} className="w-full p-4 border border-gray-300 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 text-lg leading-relaxed text-slate-800"/></div>
                       <div className="space-y-4"><label className="block text-lg font-bold text-slate-900">Alternativas</label>{editingQuestion.options.map((opt, idx) => (<div key={idx} className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white'}`}><div onClick={() => setEditingQuestion({...editingQuestion, correctOptionId: opt.id})} className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer font-bold flex-shrink-0 mt-1 transition-colors ${editingQuestion.correctOptionId === opt.id ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}>{opt.id.toUpperCase()}</div><textarea value={opt.text} onChange={e => { const newOpts = [...editingQuestion.options]; newOpts[idx].text = e.target.value; setEditingQuestion({...editingQuestion, options: newOpts}); }} rows={2} className="flex-1 bg-transparent border-none outline-none resize-none text-slate-700"/></div>))}</div>
