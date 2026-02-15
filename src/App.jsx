@@ -12,9 +12,6 @@ import {
   CreditCard, Smartphone, Link as LinkIcon, ExternalLink, Loader2
 } from 'lucide-react';
 
-import { db, auth } from './firebase'; // Novo jeito de usar firebase
-import QuestionView from './QuestionView'; // Sua view nova
-import ReportModal from './components/ReportModal'; // Modal que o ReviewExamView tbm usa
 import PerformanceView from './PerformanceView';
 
 // --- FIREBASE IMPORTS ---
@@ -28,6 +25,22 @@ import {
   signOut, onAuthStateChanged, updateProfile, updatePassword, 
   reauthenticateWithCredential, EmailAuthProvider 
 } from "firebase/auth";
+
+// --- CONFIGURAÇÃO FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBhwtINeofqm97BzIE_s9DcG-l3v7zsAAY",
+  authDomain: "bancodequestoes-5cc34.firebaseapp.com",
+  projectId: "bancodequestoes-5cc34",
+  storageBucket: "bancodequestoes-5cc34.firebasestorage.app",
+  messagingSenderId: "174347052858",
+  appId: "1:174347052858:web:d54bbf3b193d30a5f69203",
+  measurementId: "G-XNHXB5BCGF"
+};
+
+// Inicializa Firebase Principal
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
 
 // --- DADOS ESTÁTICOS DAS ÁREAS ---
 const areasBase = [
@@ -246,6 +259,164 @@ function ToastContainer({ toasts, removeToast }) {
 }
 
 // --- MODAIS GLOBAIS ---
+function ReportModal({ isOpen, onClose, questionId, type, userId, addToast }) {
+    const [suggestedInstitution, setSuggestedInstitution] = useState('');
+    const [suggestedYear, setSuggestedYear] = useState('');
+    const [errorCategory, setErrorCategory] = useState('');
+    const [details, setDetails] = useState(''); 
+    const [isSending, setIsSending] = useState(false);
+
+    // Validação de estado
+    const isValid = type === 'error' 
+        ? !!errorCategory // Erro: precisa ter categoria
+        : (!!suggestedInstitution.trim() || !!suggestedYear.trim()); // Sugestão: pelo menos um dos campos
+
+    useEffect(() => {
+        if(isOpen) {
+            setSuggestedInstitution('');
+            setSuggestedYear('');
+            setErrorCategory('');
+            setDetails('');
+            setIsSending(false);
+        }
+    }, [isOpen]);
+
+    if (!isOpen) return null;
+
+    const errorOptions = [
+        "Enunciado incorreto/confuso",
+        "Alternativas com erro",
+        "Gabarito errado",
+        "Área errada",
+        "Tema errado",
+        "Instituição errada",
+        "Ano errado",
+        "Questão repetida",
+        "Outro"
+    ];
+
+    const handleSubmit = async () => {
+        if (!isValid) return;
+
+        setIsSending(true);
+        try {
+            const reportData = {
+                questionId,
+                userId: userId || 'anonymous',
+                type,
+                status: 'pending',
+                createdAt: new Date().toISOString()
+            };
+
+            if (type === 'suggestion') {
+                reportData.category = 'suggestion_update';
+                reportData.suggestedInstitution = suggestedInstitution;
+                reportData.suggestedYear = suggestedYear;
+                reportData.details = `Sugestão: Banca [${suggestedInstitution}] | Ano [${suggestedYear}]`;
+            } else {
+                reportData.category = errorCategory;
+                reportData.details = details;
+            }
+            
+            await addDoc(collection(db, "reports"), reportData);
+            
+            addToast('Recebido!', 'Sua colaboração foi enviada para análise.', 'success');
+            onClose();
+        } catch (error) {
+            console.error(error);
+            addToast('Erro', 'Não foi possível enviar o reporte.', 'error');
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200 m-4">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        {type === 'error' ? <><AlertTriangle size={20} className="text-red-500"/> Reportar Erro</> : <><Edit2 size={20} className="text-blue-500"/> Sugerir Edição</>}
+                    </h3>
+                    <button onClick={onClose}><X size={20} className="text-gray-400 hover:text-gray-600"/></button>
+                </div>
+
+                {type === 'suggestion' ? (
+                    <div className="space-y-4 mb-6">
+                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                            <p className="text-sm text-blue-800">
+                                Preencha a Banca <strong>E/OU</strong> o Ano desta questão.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Banca / Prova</label>
+                            <input 
+                                type="text"
+                                value={suggestedInstitution}
+                                onChange={e => setSuggestedInstitution(e.target.value)}
+                                placeholder="Ex: USP, ENARE, SURCE..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ano</label>
+                            <input 
+                                type="text"
+                                value={suggestedYear}
+                                onChange={e => setSuggestedYear(e.target.value)}
+                                placeholder="Ex: 2023, 2024, 2023/1..."
+                                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    // --- MODO ERRO ---
+                    <>
+                        <div className="space-y-3 mb-4">
+                            <p className="text-sm text-gray-500">Qual o problema com esta questão?</p>
+                            <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                {errorOptions.map(opt => (
+                                    <label key={opt} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${errorCategory === opt ? 'bg-red-50 border-red-200 text-red-700' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`}>
+                                        <input type="radio" name="reportCategory" value={opt} checked={errorCategory === opt} onChange={e => setErrorCategory(e.target.value)} className="text-red-600 focus:ring-red-500" />
+                                        <span className="text-sm font-medium">{opt}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mb-6">
+                            <label className="block text-sm font-bold text-slate-700 mb-2">
+                                Detalhes (Opcional)
+                            </label>
+                            <textarea 
+                                value={details} 
+                                onChange={e => setDetails(e.target.value)}
+                                placeholder="Descreva melhor o erro encontrado..."
+                                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                                rows={3}
+                            />
+                        </div>
+                    </>
+                )}
+
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button>
+                    <button 
+                        onClick={handleSubmit} 
+                        disabled={isSending || !isValid} 
+                        className={`flex-1 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 
+                            ${type === 'error' ? 'bg-red-600 hover:bg-red-700 shadow-red-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}
+                            disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}
+                    >
+                        {isSending ? 'Enviando...' : 'Enviar'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function ExitConfirmationModal({ onClose, onConfirmExit, onSaveAndExit }) {
     return (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -650,106 +821,82 @@ function Dashboard({ user, onLogout }) {
     }
   };
 
-  // Substitua todo o handleLaunchExam por este:
-const handleLaunchExam = (filters = {}, limit = 5) => {
-    // 1. Filtra todas as questões possíveis baseadas no filtro
+  const handleLaunchExam = (filters = {}, limit = 5) => {
     const validQuestionsPool = allQuestions.filter(q => {
-        if (!q || !q.id) return false; // Segurança contra itens nulos
         if (filters.areaId && q.area !== areaNameMap[filters.areaId]) return false;
         if (filters.topics && filters.topics.length > 0 && !filters.topics.includes(q.topic)) return false;
         return true;
     });
 
     if (validQuestionsPool.length === 0) {
-      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros no banco.", type: "info" });
+      setNotification({ title: "Sem questões", message: "Não encontramos questões com estes filtros.", type: "info" });
       return;
     }
 
     let finalSelection = [];
 
-    // Tenta a lógica de distribuição balanceada (Novas vs Antigas)
-    try {
-        if (filters.topics && filters.topics.length > 0) {
-            // MODO 1: TÓPICOS ESPECÍFICOS
-            const questionsByTopic = {};
-            filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
+    // --- MODO 1: TÓPICOS ESPECÍFICOS (Balanceado) ---
+    if (filters.topics && filters.topics.length > 0) {
+        const questionsByTopic = {};
+        filters.topics.forEach(t => questionsByTopic[t] = { new: [], old: [] });
 
-            validQuestionsPool.forEach(q => {
-                // Só adiciona se o tópico existir na chave (segurança extra)
-                if (questionsByTopic[q.topic]) {
-                    if (excludedIds.has(q.id)) {
-                        questionsByTopic[q.topic].old.push(q);
-                    } else {
-                        questionsByTopic[q.topic].new.push(q);
-                    }
-                }
-            });
-
-            const targetPerTopic = Math.ceil(limit / filters.topics.length);
-            let backupPool = [];
-
-            Object.keys(questionsByTopic).forEach(topic => {
-                const { new: newQs, old: oldQs } = questionsByTopic[topic];
-                const shuffledNew = newQs.sort(() => 0.5 - Math.random());
-                const takeNew = shuffledNew.slice(0, targetPerTopic);
-                finalSelection.push(...takeNew);
-
-                const needed = targetPerTopic - takeNew.length;
-                if (needed > 0) {
-                    const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
-                    const takeOld = shuffledOld.slice(0, needed);
-                    finalSelection.push(...takeOld);
-                    backupPool.push(...shuffledOld.slice(needed));
+        validQuestionsPool.forEach(q => {
+            if (questionsByTopic[q.topic]) {
+                if (excludedIds.has(q.id)) {
+                    questionsByTopic[q.topic].old.push(q);
                 } else {
-                    backupPool.push(...oldQs);
+                    questionsByTopic[q.topic].new.push(q);
                 }
-                backupPool.push(...shuffledNew.slice(targetPerTopic));
+            }
+        });
+
+        const targetPerTopic = Math.ceil(limit / filters.topics.length);
+        let backupPool = [];
+
+        Object.keys(questionsByTopic).forEach(topic => {
+            const { new: newQs, old: oldQs } = questionsByTopic[topic];
+            const shuffledNew = newQs.sort(() => 0.5 - Math.random());
+            const takeNew = shuffledNew.slice(0, targetPerTopic);
+            finalSelection.push(...takeNew);
+            const needed = targetPerTopic - takeNew.length;
+            if (needed > 0) {
+                const shuffledOld = oldQs.sort(() => 0.5 - Math.random());
+                const takeOld = shuffledOld.slice(0, needed);
+                finalSelection.push(...takeOld);
+                backupPool.push(...shuffledOld.slice(needed));
+            } else {
+                 backupPool.push(...oldQs);
+            }
+            backupPool.push(...shuffledNew.slice(targetPerTopic));
+        });
+
+        if (finalSelection.length < limit && backupPool.length > 0) {
+            const missing = limit - finalSelection.length;
+            backupPool.sort((a, b) => {
+                const aIsOld = excludedIds.has(a.id);
+                const bIsOld = excludedIds.has(b.id);
+                return aIsOld === bIsOld ? 0.5 - Math.random() : aIsOld ? 1 : -1;
             });
-
-            // Completa com o backup se faltou
-            if (finalSelection.length < limit && backupPool.length > 0) {
-                const missing = limit - finalSelection.length;
-                finalSelection.push(...backupPool.sort(() => 0.5 - Math.random()).slice(0, missing));
-            }
-            // Embaralha o resultado final
-            finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
-
-        } else {
-            // MODO 2: GERAL/ALEATÓRIO
-            const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
-            const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
-            
-            finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
-            if (finalSelection.length < limit) {
-                const missing = limit - finalSelection.length;
-                finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
-            }
-            finalSelection = finalSelection.sort(() => 0.5 - Math.random());
+            finalSelection.push(...backupPool.slice(0, missing));
         }
-    } catch (err) {
-        console.error("Erro na lógica de distribuição:", err);
-    }
 
-    // --- LIMPEZA DE SEGURANÇA ---
-    finalSelection = finalSelection.filter(item => item && item.id);
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random()).slice(0, limit);
 
-    // --- FAILSAFE (A SALVAÇÃO) ---
-    // Se a lógica acima falhou e retornou vazio, mas TEMOS questões válidas,
-    // ignoramos a distribuição complexa e pegamos qualquer questão válida.
-    if (finalSelection.length === 0 && validQuestionsPool.length > 0) {
-        console.warn("Usando fallback de seleção direta");
-        finalSelection = validQuestionsPool.sort(() => 0.5 - Math.random()).slice(0, limit);
-    }
-
-    // Se mesmo assim estiver vazio, aí sim é erro real
-    if (finalSelection.length === 0) {
-      setNotification({ title: "Erro Crítico", message: "Erro ao selecionar questões. Tente novamente.", type: "error" });
-      return;
+    } else {
+        // --- MODO 2: GERAL/ALEATÓRIO ---
+        const newQs = validQuestionsPool.filter(q => !excludedIds.has(q.id));
+        const oldQs = validQuestionsPool.filter(q => excludedIds.has(q.id));
+        finalSelection = newQs.sort(() => 0.5 - Math.random()).slice(0, limit);
+        if (finalSelection.length < limit) {
+            const missing = limit - finalSelection.length;
+            finalSelection.push(...oldQs.sort(() => 0.5 - Math.random()).slice(0, missing));
+        }
+        finalSelection = finalSelection.sort(() => 0.5 - Math.random());
     }
 
     setActiveExamData({ questionsData: finalSelection, answersData: {}, currentIndex: 0, id: Date.now() });
     handleViewSwitch('question_mode');
-};
+  };
 
   // --- NOVA FUNÇÃO: LANÇAR CADERNO DE ERROS ---
   const handleLaunchSmartExam = (questionsList) => {
@@ -1456,4 +1603,125 @@ function AddQuestionView({ onBack, addToast }) {
     return (
         <div className="animate-in fade-in slide-in-from-right-8 duration-500 max-w-4xl mx-auto pb-10"><div className="flex items-center justify-between mb-8"><button onClick={onBack} className="flex items-center text-gray-500 hover:text-blue-600 transition-colors font-medium"><ArrowLeft size={20} className="mr-2" /> Voltar</button><h1 className="text-2xl font-bold">Nova Questão</h1></div><form onSubmit={handleSave} className="space-y-6"><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6"><div><label className="block text-sm font-bold text-slate-700 mb-2">Área</label><select value={area} onChange={e => setArea(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl">{areasBase.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Tema</label><select value={topic} onChange={e => setTopic(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl"><option value="">Selecione...</option>{availableThemes.map(t => <option key={t} value={t}>{t}</option>)}</select></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Instituição (Opcional)</label><input type="text" value={institution} onChange={e => setInstitution(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ex: USP, UNIFESP..." /></div><div><label className="block text-sm font-bold text-slate-700 mb-2">Ano (Opcional)</label><input type="number" value={year} onChange={e => setYear(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-800" placeholder="Ano (opcional)" /></div></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Enunciado</label><textarea value={text} onChange={e => setText(e.target.value)} rows={5} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl resize-y" /></div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4"><h3 className="font-bold text-slate-900 border-b border-gray-100 pb-2 mb-4">Alternativas</h3>{options.map((opt) => (<div key={opt.id} className="flex items-start gap-3"><div className="mt-3"><input type="radio" name="correctOption" checked={correctOptionId === opt.id} onChange={() => setCorrectOptionId(opt.id)} className="w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer"/></div><div className="flex-1"><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Opção {opt.id}</label><textarea value={opt.text} onChange={e => handleOptionChange(opt.id, e.target.value)} rows={2} className={`w-full px-4 py-3 border rounded-xl resize-none ${correctOptionId === opt.id ? 'bg-emerald-50 border-emerald-200 focus:ring-emerald-500' : 'bg-gray-50 border-gray-200 focus:ring-blue-500'}`} placeholder={`Texto da alternativa ${opt.id.toUpperCase()}`} /></div></div>))}</div><div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm"><label className="block text-sm font-bold text-slate-700 mb-2">Comentário</label><textarea value={explanation} onChange={e => setExplanation(e.target.value)} rows={4} className="w-full px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl resize-y" /></div><div className="flex justify-end gap-4"><button type="button" onClick={onBack} className="px-6 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">Cancelar</button><button type="submit" disabled={isSaving} className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50">{isSaving ? 'Salvando...' : 'Salvar Questão'}</button></div></form></div>
     );
+}
+
+// --- QUESTION VIEW ATUALIZADA (COM REPORT E SUGGESTION) ---
+function QuestionView({ area, initialData, user, onExit, onFinish, onPause, onUpdateProgress, addToast }) {
+  const [questions] = useState(() => initialData ? initialData.questionsData : []); 
+  const [userAnswers, setUserAnswers] = useState(() => initialData ? initialData.answersData : {}); 
+  const [currentIndex, setCurrentIndex] = useState(() => initialData ? initialData.currentIndex : 0);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [status, setStatus] = useState('unanswered'); 
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [suggestionModalOpen, setSuggestionModalOpen] = useState(false);
+  const [suggestionType, setSuggestionType] = useState(null); 
+
+  // Notifica o componente pai sobre mudanças para o "Autosave" da navegação segura
+  useEffect(() => {
+     if (onUpdateProgress) {
+         onUpdateProgress(questions, userAnswers, currentIndex, initialData?.id);
+     }
+  }, [questions, userAnswers, currentIndex, onUpdateProgress, initialData?.id]);
+
+  useEffect(() => {
+    if (userAnswers[currentIndex]) {
+      setSelectedOption(userAnswers[currentIndex]);
+      const isCorrect = userAnswers[currentIndex] === questions[currentIndex].correctOptionId;
+      setStatus(isCorrect ? 'correct' : 'incorrect');
+    } else {
+      setSelectedOption(null);
+      setStatus('unanswered');
+    }
+  }, [currentIndex, userAnswers, questions]);
+
+  const currentQuestion = questions[currentIndex];
+  const handleConfirmAnswer = () => { if (!selectedOption) return; const isCorrect = selectedOption === currentQuestion.correctOptionId; setStatus(isCorrect ? 'correct' : 'incorrect'); setUserAnswers(prev => ({ ...prev, [currentIndex]: selectedOption })); };
+  const handleNext = () => { if (currentIndex < questions.length - 1) { setCurrentIndex(prev => prev + 1); window.scrollTo(0,0); } else { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); } };
+  const handlePrevious = () => { if (currentIndex > 0) { setCurrentIndex(prev => prev - 1); window.scrollTo(0,0); } };
+  const handleRedo = () => { setSelectedOption(null); setStatus('unanswered'); };
+  const handleSaveAndExit = () => { onPause(questions, userAnswers, currentIndex, initialData?.id); };
+  
+  const MobileNavBar = () => (
+      <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-3 z-50 flex items-center justify-between shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:hidden">
+          <button onClick={handlePrevious} disabled={currentIndex === 0} className="p-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 rounded-xl bg-gray-50 border border-gray-100"><ArrowLeft size={24} /></button>
+          <div className="flex-1 mx-3">{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="w-full bg-blue-600 disabled:opacity-50 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 active:scale-95 transition-transform">Responder</button>) : (<button onClick={handleRedo} className="w-full text-blue-600 border border-blue-200 bg-blue-50 py-3 rounded-xl font-bold flex items-center justify-center gap-2"><RotateCcw size={18} /> Refazer</button>)}</div><button onClick={handleNext} className="p-3 text-white bg-slate-900 rounded-xl shadow-lg"><ArrowRight size={24} /></button>
+      </div>
+  );
+
+  return (
+    <div className="animate-in fade-in slide-in-from-bottom-8 duration-500 max-w-5xl mx-auto pb-32 md:pb-0 relative">
+      <ReportModal isOpen={reportModalOpen} onClose={() => setReportModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="error" addToast={addToast} />
+      <ReportModal isOpen={suggestionModalOpen} onClose={() => setSuggestionModalOpen(false)} questionId={currentQuestion.id} userId={user?.uid} type="suggestion" category={suggestionType} addToast={addToast} />
+      <div className="flex items-center justify-between mb-6 sticky top-14 md:top-0 bg-gray-50 z-30 py-4 border-b md:border-none border-gray-200">
+          <div className="flex gap-2"><button onClick={handleSaveAndExit} className="flex items-center text-blue-600 hover:text-blue-800 transition-colors font-bold text-sm bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100"><PauseCircle size={18} className="mr-2" /> <span className="hidden md:inline">Salvar e Sair</span><span className="md:hidden">Sair</span></button><button onClick={() => { let correctCount = 0; questions.forEach((q, idx) => { if (userAnswers[idx] === q.correctOptionId) correctCount++; }); onFinish({ total: questions.length, correct: correctCount }, questions, userAnswers, initialData?.id); }} className="flex items-center text-gray-500 hover:text-red-600 transition-colors font-medium text-sm bg-white border border-gray-200 px-3 py-2 rounded-lg"><XCircle size={18} className="mr-2" /> <span className="hidden md:inline">Encerrar</span></button></div>
+          <div className="flex items-center gap-4"><div className="text-sm font-medium text-gray-500">Questão <span className="text-slate-900 font-bold">{currentIndex + 1}</span> de {questions.length}</div><div className="w-20 md:w-32 h-2 bg-gray-200 rounded-full overflow-hidden"><div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }}></div></div></div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-200 relative">
+              <div className="flex justify-between items-start mb-4 border-b border-gray-100 pb-4">
+                  <div className="flex flex-wrap gap-2 items-center">
+                      {/* Botão Unificado para Sugerir Banca/Ano se faltar algo */}
+                      {(!currentQuestion.institution || !currentQuestion.year) && (
+                          <button onClick={() => { setSuggestionType('institution'); setSuggestionModalOpen(true); }} className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-500 bg-blue-50 text-xs font-bold hover:bg-blue-100 transition-colors flex items-center gap-1">
+                              <Edit2 size={10}/> Sugerir Banca/Ano
+                          </button>
+                      )}
+                      
+                      {/* Exibição dos dados existentes */}
+                      {currentQuestion.institution && (
+                         <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2 py-1 rounded uppercase tracking-wide border border-blue-100">
+                            {currentQuestion.institution}
+                         </span>
+                      )}
+                      {currentQuestion.year && (
+                         <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200">
+                            {currentQuestion.year}
+                         </span>
+                      )}
+
+                      <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded border border-gray-200">{currentQuestion.topic}</span>
+                  </div>
+                  
+                  {/* ID e Reportar - USANDO O NOVO COMPONENTE COPYBUTTON */}
+                  <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 text-[10px] md:text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100 font-bold uppercase tracking-wider">
+                          <span>ID</span>
+                          <CopyButton text={currentQuestion.id} />
+                      </div>
+                      <button onClick={() => setReportModalOpen(true)} className="text-red-500 hover:text-red-700 transition-colors" title="Reportar Erro"><AlertTriangle size={18} /></button>
+                  </div>
+              </div>
+              <p className="text-base md:text-lg text-slate-800 leading-relaxed mb-6 font-medium whitespace-pre-line">{currentQuestion.text}</p>
+              
+              {/* --- ÁREA DE IMAGENS (NOVO) --- */}
+              {(currentQuestion.images?.length > 0 || currentQuestion.imageUrl) && (
+                  <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Suporte Híbrido: Exibe array novo OU string antiga */}
+                      {(currentQuestion.images || [currentQuestion.imageUrl]).map((img, idx) => (
+                          <div key={idx} className="relative group rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-gray-50">
+                              <img 
+                                  src={img} 
+                                  alt={`Anexo ${idx + 1}`} 
+                                  className="w-full h-64 object-contain hover:scale-105 transition-transform duration-300 cursor-zoom-in"
+                                  onClick={() => window.open(img, '_blank')} // Abre em nova aba ao clicar
+                              />
+                              <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                  Clique para ampliar
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
+          </div>
+          <div className="space-y-3">{currentQuestion.options.map((option) => { let itemClass = "border-gray-200 hover:border-blue-300 hover:bg-blue-50"; let icon = <div className="w-5 h-5 rounded-full border-2 border-gray-300 group-hover:border-blue-400"></div>; if (selectedOption === option.id) { itemClass = "border-blue-600 bg-blue-50 ring-1 ring-blue-600"; icon = <div className="w-5 h-5 rounded-full border-[5px] border-blue-600 bg-white"></div>; } if (status !== 'unanswered') { if (option.id === currentQuestion.correctOptionId) { itemClass = "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"; icon = <CheckCircle size={20} className="text-emerald-600 fill-emerald-100" />; } else if (selectedOption === option.id && option.id !== currentQuestion.correctOptionId) { itemClass = "border-red-500 bg-red-50 ring-1 ring-red-500"; icon = <XCircle size={20} className="text-red-600 fill-red-100" />; } else { itemClass = "border-gray-100 opacity-50"; } } return (<button key={option.id} disabled={status !== 'unanswered'} onClick={() => setSelectedOption(option.id)} className={`w-full text-left p-4 md:p-5 rounded-xl border-2 transition-all flex items-start gap-4 group ${itemClass}`}><div className="mt-0.5 flex-shrink-0">{icon}</div><span className={`font-medium text-base ${status !== 'unanswered' && option.id === currentQuestion.correctOptionId ? 'text-emerald-800' : 'text-slate-700'}`}><span className="uppercase font-bold mr-2">{option.id})</span>{option.text}</span></button>); })}</div>
+          <div className="hidden md:flex justify-between items-center pt-4 mt-4 border-t border-gray-100"><button onClick={handlePrevious} disabled={currentIndex === 0} className="px-4 py-3 text-slate-500 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-slate-500 font-bold flex items-center gap-2 bg-gray-50 rounded-xl hover:bg-blue-50 transition-colors"><ArrowLeft size={20} /> Anterior</button>{status === 'unanswered' ? (<button onClick={handleConfirmAnswer} disabled={!selectedOption} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-xl font-bold text-lg shadow-lg shadow-blue-200 transition-all transform active:scale-95 flex-1 mx-4">Responder</button>) : (<button onClick={handleRedo} className="text-gray-500 hover:text-blue-600 font-bold flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-blue-50 transition-colors border border-gray-200 mx-4"><RotateCcw size={18} /> Refazer</button>)}<button onClick={handleNext} className="px-4 py-3 text-blue-600 hover:text-blue-800 font-bold flex items-center gap-2 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors">{currentIndex === questions.length - 1 ? 'Finalizar' : 'Próxima'} <ArrowRight size={20} /></button></div>
+        </div>
+        <div className="lg:col-span-1 space-y-6">
+           {status !== 'unanswered' && (<div className={`p-6 rounded-2xl border animate-in slide-in-from-right-4 duration-500 ${status === 'correct' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}><div className="flex items-center gap-3 mb-3">{status === 'correct' ? (<div className="p-2 bg-emerald-100 rounded-full"><Check size={24} className="text-emerald-600" /></div>) : (<div className="p-2 bg-red-100 rounded-full"><X size={24} className="text-red-600" /></div>)}<h3 className={`text-xl font-bold ${status === 'correct' ? 'text-emerald-800' : 'text-red-800'}`}>{status === 'correct' ? 'Excelente!' : 'Não foi dessa vez.'}</h3></div><p className={`text-sm mb-4 font-medium ${status === 'correct' ? 'text-emerald-700' : 'text-red-700'}`}>Gabarito: Letra {currentQuestion.correctOptionId.toUpperCase()}</p><div className="bg-white/60 p-4 rounded-xl text-sm text-slate-700 leading-relaxed border border-black/5"><span className="font-bold block mb-1">Comentário do Professor:</span>{currentQuestion.explanation}</div></div>)}
+        </div>
+      </div>
+      <MobileNavBar />
+    </div>
+  );
 }
